@@ -72,6 +72,29 @@ export const RETRIEVAL = Object.freeze({
     TIER2_TAU_CONFIDENCE: 2.0,
     /** Tier 2 exit: minimum (top − #2) score gap required to shortcut. Spec §5; opening value, Phase 9 tunes. */
     TIER2_TAU_GAP: 0.5,
+    /** Tier 3 seeds drawn from Tier 2's top-K. Spec §5.1. */
+    TIER3_SEEDS_K: 3,
+    /** Tier 3 beam width. Not in spec; opening value, Phase 9 tunes. */
+    TIER3_BEAM_WIDTH: 5,
+    /** Max edges per source entry. Spec §12.2 resolution. */
+    EDGE_CAP_PER_ENTRY: 20,
+    /** Weight for edges from extractor-asserted @relations. Spec §4 / §6.3. */
+    EXPLICIT_RELATION_WEIGHT: 1.0,
+    /** Weight for edges from entity co-occurrence (capitalized noun match). Spec §4 / §6.3. */
+    COOCCURRENCE_WEIGHT: 0.5,
+});
+
+/**
+ * Tier 3 edge-type match weights per query intent. Spec §5.1 table.
+ * `contradicts` is included for completeness but v2.0 edgeBuilder never emits
+ * that type — the row is dormant until drift detection lands.
+ */
+export const EDGE_TYPE_WEIGHTS = Object.freeze({
+    supports:      Object.freeze({ factual: 0.9, relational: 0.5, temporal: 0.3 }),
+    mentions:      Object.freeze({ factual: 0.7, relational: 0.9, temporal: 0.3 }),
+    same_topic:    Object.freeze({ factual: 0.5, relational: 0.8, temporal: 0.5 }),
+    temporal_next: Object.freeze({ factual: 0.3, relational: 0.4, temporal: 0.9 }),
+    contradicts:   Object.freeze({ factual: 0.2, relational: 0.3, temporal: 0.2 }),
 });
 
 /** Consolidation trigger thresholds. Spec §6.2, §6.3, §6.4. */

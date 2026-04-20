@@ -5,6 +5,7 @@ import {
     MATURITY_TIERS,
     LIFECYCLE,
     RETRIEVAL,
+    EDGE_TYPE_WEIGHTS,
     CONSOLIDATION,
     TRACE_BUFFER_CAP,
 } from '../../../src/core/constants.js';
@@ -63,6 +64,27 @@ describe('constants', () => {
     test('RETRIEVAL Tier 2 exit thresholds', () => {
         expect(RETRIEVAL.TIER2_TAU_CONFIDENCE).toBe(2.0);
         expect(RETRIEVAL.TIER2_TAU_GAP).toBe(0.5);
+    });
+
+    test('RETRIEVAL Phase 5 graph/Tier 3 constants', () => {
+        expect(RETRIEVAL.TIER3_SEEDS_K).toBe(3);
+        expect(RETRIEVAL.TIER3_BEAM_WIDTH).toBe(5);
+        expect(RETRIEVAL.EDGE_CAP_PER_ENTRY).toBe(20);
+        expect(RETRIEVAL.EXPLICIT_RELATION_WEIGHT).toBe(1.0);
+        expect(RETRIEVAL.COOCCURRENCE_WEIGHT).toBe(0.5);
+    });
+
+    test('EDGE_TYPE_WEIGHTS matches spec §5.1 table', () => {
+        expect(EDGE_TYPE_WEIGHTS.supports).toEqual({ factual: 0.9, relational: 0.5, temporal: 0.3 });
+        expect(EDGE_TYPE_WEIGHTS.mentions).toEqual({ factual: 0.7, relational: 0.9, temporal: 0.3 });
+        expect(EDGE_TYPE_WEIGHTS.same_topic).toEqual({ factual: 0.5, relational: 0.8, temporal: 0.5 });
+        expect(EDGE_TYPE_WEIGHTS.temporal_next).toEqual({ factual: 0.3, relational: 0.4, temporal: 0.9 });
+        expect(EDGE_TYPE_WEIGHTS.contradicts).toEqual({ factual: 0.2, relational: 0.3, temporal: 0.2 });
+    });
+
+    test('EDGE_TYPE_WEIGHTS covers all produced edge types + contradicts', () => {
+        const keys = Object.keys(EDGE_TYPE_WEIGHTS).sort();
+        expect(keys).toEqual(['contradicts', 'mentions', 'same_topic', 'supports', 'temporal_next']);
     });
 
     test('CONSOLIDATION defaults match spec §6', () => {
