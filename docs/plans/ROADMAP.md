@@ -447,6 +447,60 @@ These are v2.1+ considerations. Do not implement them in any phase.
 
 _Appended after each phase ships. Format: `## Phase N—<date>`, with notes on surprises, scope changes, and lessons for subsequent phases._
 
+## Phase 5—2026-04-20
+
+**What shipped:** Graph store (`src/memory/graph.js`, pure `addEdge`/`removeEdge`/`listEdges` + per-call `buildAdjacency`/`neighborsOf`), pure edge builder (`src/memory/edgeBuilder.js`, explicit `@relations` at weight 1.0 + entity co-occurrence at weight 0.5 via `/\b[A-Z][a-z]{2,}\b/g` with a stop-word filter, cap at 20 with weight-preferring eviction returning `{ newEdges, evicted }`), Tier 3 intent-routed beam search (`src/retrieval/tier3-graph.js`, 2 hops × beam 5, edge-type × intent weights from spec §5.1 table, single bm25-over-corpus pass for lookup), ladder integration replacing the Phase 4 identity stub (Floor branch factored into `runFloorBranch` helper, Tier 3 falls through to Floor when rescore zeros everything), new memory barrel (`src/memory/index.js`), extended retrieval barrel. 7 commits this phase plus plan + retro. **262 tests passing across 26 suites** (210 Phase 0-4 baseline + 52 new Phase 5 tests: 4 constants delta + 16 graph + 17 edgeBuilder + 11 tier3 + 2 memory barrel + 1 retrieval barrel + 3 ladder integration, minus two baseline tests that were covered by new ones).
+
+**Execution mode:** Subagent-driven with reviews skipped per skill criteria (verbatim code + static checks per task). Tasks 1–4 delegated serially; Tasks 0 (constants) and 5 (barrel + retro) done in the controller. Task 4 (ladder) flagged for no-skip-review in the plan; the subagent self-audited invariants via grep and the controller confirmed them post-delegation. Zero sandbox-path strays. Two subagents flagged real issues I'd missed in the plan — saved a round of fixes each.
+
+**Decisions locked in the planning conversation (all held through execution):**
+
+1. Edge weights: explicit `@relations`=1.0, co-occurrence=0.5.
+2. Co-occurrence edge type: `mentions`.
+3. Beam width B=5 (opening value, Phase 9 tunes).
+4. Edge cap per source=20 (spec §12.2 resolution), weight-preferring eviction.
+5. Adjacency built per-call, not persisted.
+6. Entity matcher: `/\b[A-Z][a-z]{2,}\b/g`, case-sensitive, plus stop-word filter (deviation from plan — see Surprises §1).
+7. Tier 3 gating: always fires when Tier 2 has seeds and missed exit. Intent steers edge weights, doesn't gate.
+8. Tier 3 trace: `perTier['3']` is Tier-3-specific output, distinct from `perTier['2']`.
+9. Tier 3 output cap: `k` from ladder (default 5).
+10. `contradicts` edges reserved in `EDGE_TYPE_WEIGHTS` table but never emitted by `buildEdges`.
+11. `buildEdges` is pure, returns `{ newEdges, evicted }`; Phase 6 applies inside the write lock.
+
+**Surprises:**
+
+1. **Plan prose and regex disagreed on entity filter.** The plan said "requires ≥3 lowercase chars after capital → filters 'A', 'I', 'The'" but the regex was `{2,}` (≥2 lowercase chars), which lets "The" through (capital T + 2 lowercase = fires). The subagent caught it and resolved with a stop-word filter rather than tightening the regex to `{3,}` (which would drop valid 3-letter names like "Bob"). Correct call — the stop-word list handles the specific noise words without sacrificing short names. Some entries in the stop-word set are redundant (most are <3 chars and never match anyway) but harmless. Phase 9 traces will tell us if the entity pipeline needs NER after all.
+
+2. **Phase 3's scorer zero-BM25 fast-path broke the 2-hop test.** The Tier 3 unit test "respects 2-hop max" seeded entries with content "Bob", "Carol", "Dan" and queried "alice" — BM25 for "alice" against those entries is 0, the scorer's `bm25 === 0 → return 0` fast-path zeroed their final scores, and the zero-filter dropped them before they could demonstrate 2-hop reach. The subagent fixed by adding "Alice" to each entry's content so BM25 is nonzero. This is a test-data bug in my plan, not a code bug, but it reveals something important for Phase 9: **Tier 3 entries are meaningless if they have zero BM25 signal against the query.** The scorer's multiplicative form means graph structure alone cannot surface an entry — BM25 > 0 is required. That's actually a feature (no lexically-disconnected entries surface via graph alone) but worth calling out for the benchmarking harness.
+
+3. **The Floor-factor-out refactor was cheap insurance.** Separating the refactor commit from the Tier 3 wire-in commit meant the diff for each was reviewable in isolation. Subagent nailed both without needing a review round. The `runFloorBranch` helper now serves two call sites (ordinary Floor fall-through AND Tier 3 empty fallthrough), and the `perTier2` optional prefix threads diagnostic data through cleanly — Phase 9's benchmark traces can distinguish "Floor reached because nothing matched" from "Floor reached because Tier 2 had seeds but Tier 3 dropped them."
+
+4. **Task 4's fallthrough-to-Floor test was skipped as planned.** Producing a clean scenario requires either coupling to scorer internals (fragile) or a multi-stage call-counting scorer (brittle). Plan explicitly permitted skipping; the code path is visually obvious and Phase 9 will exercise it on real data.
+
+**Notes for Phase 6 (Consolidation):**
+
+- `buildEdges(entry, allEntries, state) → { newEdges, evicted }` is the contract. Inside the write lock: iterate `newEdges` → `addEdge(state, e)`, iterate `evicted` → `removeEdge(state, e.from, e.to, e.type)`, then `invalidateTier0Cache(state)` once at end of batch.
+- The entity matcher is case-sensitive and has a stop-word list. If Phase 9 traces show missed relationships because "alice" in dialogue doesn't match "Alice" in narration, lift case-sensitivity in `extractEntities` at the cost of false positives. Defer until measured.
+- Edge cap enforcement happens at `buildEdges` time only. If Phase 6 or later adds edges via a non-`buildEdges` path (e.g., manual UI action in Phase 8), those paths need their own cap check.
+- `runFloorBranch`'s `tracePrefix.perTier2` optional field is how Phase 6's consolidation-trace UI can surface "Floor was reached with Tier 2 seeds available" — useful diagnostic.
+
+**Notes for Phase 8 (SillyTavern Integration):**
+
+- Memory Viewer's Graph tab renders `state.graph.edges`. Scales: ~5–20 edges per entry × a few hundred entries = a few thousand edges. Force-directed layout handles that; no pagination needed in v2.0.
+- Tier 3 trace's `perTier['3']` exposes the scored beam-search output. Traces tab can render it alongside `perTier['2']` (Tier 2's seeds) to show "what the graph added" — that's the clearest demonstration of Tier 3 earning its keep.
+- A Floor trace with `perTier['2']` populated means "we had seeds but couldn't rank them" — good signal for a "tune your τ_confidence" hint.
+
+**Notes for Phase 9 (Benchmarking):**
+
+- λ₁=1.0 / λ₂=0.3 is the spec default. First thing to tune against LoCoMo — these govern how much the graph earns over pure BM25.
+- Beam width 5 × 2 hops is an educated guess. If benchmarks show Tier 3 under-expanding (low recall@k), bump to 10. If latency blows, drop to 3.
+- Co-occurrence weight 0.5 vs explicit 1.0 is a 2× ratio. If Phase 9 shows explicit-relation corpora outperforming co-occurrence heavily, widen the gap. If both carry similar signal, narrow it.
+- Edge cap=20 was a guess from §12.2. Traces will show per-entry edge counts; if the cap is binding on >20% of entries, it's too tight.
+- AdaMem ablation claims graph expansion is worth 2.02 F1. If Phase 9 numbers on a matched benchmark show <0.5 F1 lift vs Tier-2-only, something structural is wrong — do NOT tune λ values to paper over a structural bug.
+- **Critical:** the scorer's `bm25 === 0` fast-path means Tier 3 entries require some lexical overlap with the query. Graph-only surfacing (zero BM25, edge-only relevance) is structurally impossible under the current multiplicative scorer. If Phase 9 benchmarks demand it, the scorer needs a pluggable additive mode — file that as a v2.1 concern, don't hack it into v2.0.
+
+---
+
 ## Phase 4—2026-04-20
 
 **What shipped:** Scorer registry refactor (`src/retrieval/scorer.js`, string-keyed via `registerScorer` / `setScorer(id)` / `getScorerId`), Tier 0 exact cache (`src/retrieval/tier0-exact.js`, FNV-1a hash of trim+lowercase query, `invalidateTier0Cache` hook for Phase 6), Tier 1 Jaccard fuzzy over recent query token sets (`src/retrieval/tier1-fuzzy.js`, θ=0.6 with `>=` comparison), Tier 2 BM25 wrapper with exit condition (`src/retrieval/tier2-bm25.js`, τ_conf=2.0 / τ_gap=0.5, zero-score filter pre-gap), Floor pure fallback (`src/retrieval/floor.js`, recency × (1 + importance/100) × maturity_boost), trace logger (`src/retrieval/trace.js`, 128-cap ring buffer with `scorerId` in trace shape), ladder orchestrator (`src/retrieval/ladder.js`, Tier 3 = identity stub until Phase 5), extended barrel (`src/retrieval/index.js`). 10 commits this phase plus plan + retro. **210 tests passing across 22 suites** (144 Phase 0-3 baseline + 66 new Phase 4 tests: 2 constants delta + 5 scorer registry delta + 14 tier0 + 17 tier1 + 8 tier2 + 7 floor + 5 trace + 9 ladder integration + barrel additions).
