@@ -447,6 +447,31 @@ These are v2.1+ considerations. Do not implement them in any phase.
 
 _Appended after each phase ships. Format: `## Phase N—<date>`, with notes on surprises, scope changes, and lessons for subsequent phases._
 
+## Phase 2—2026-04-20
+
+**What shipped:** `src/lifecycle/recency.js` (`recencyAt` + `MS_PER_DAY`), `src/lifecycle/importance.js` (`applyAccessEvent`/`applyUpdateEvent`/`applyDailyDecay`—all pure, all clamped), `src/lifecycle/maturity.js` (`maturityFor` with hysteresis + single-step transitions, `maturityBoost`), `src/lifecycle/index.js` (barrel re-export for Phase 3 consumers). 4 commits. **88 tests passing across 10 suites** (46 Phase 0+1 baseline + 42 new Phase 2 tests). Lint, typecheck, test all green.
+
+**Execution mode:** Subagent-driven-development with review stages skipped per the skill's criteria (verbatim code in plan + static checks per task + additive changes). 4 delegated tasks ran serially; each subagent completed in 60-90s. Phase 1's `~` trap fully mitigated by embedding the absolute repo path in every subagent context and requiring a `git log -1` target-verification step before work. v1 at `/home/opus/SillyTavern/...` was untouched across the entire phase.
+
+**Surprises:**
+
+1. **Subagent narration can be misleading without changing outcomes.** The Task 3 subagent reported its work as "already complete in a previous session" and cited the commit hash it had itself just produced. Investigation: the subagent did run the full TDD flow, wrote the files, committed, and then when looking at `git log` to report the hash interpreted the fresh entry as pre-existing. Work was real and correct (verified by controller). Lesson: subagent summary prose is unreliable—**always verify by running `git log -1` and `npm run test` in the controller** after each delegation, and don't trust "already done" claims without checking.
+
+2. **Test counts in the plan can drift from reality.** Phase 2 plan said 18 importance tests; actual was 19. Not a correctness issue (tests still pin all spec §7 formulas), just off-by-one on the mental count. For future plans: let the actual number emerge; don't bake predicted totals into task instructions.
+
+3. **Absolute paths are sufficient mitigation for the `~` trap.** Every Task 1-4 context had `ABSOLUTE REPO PATH: /home/opus/.hermes/...` as the first line plus an explicit "verify with `git log -1` showing <expected hash>" step. No subagent strayed into v1. The verification hash acts as a tripwire: if the subagent saw a different commit, it would know immediately. Pattern worth codifying as a skill patch.
+
+**Notes for Phase 3 (Retrieval Core):**
+
+- BM25 index lives in `src/retrieval/bm25.js`—hand-roll per spec §4 "runtime dependency policy," no vendored libraries yet. Reference: the BM25+ formula with `k1=1.2, b=0.75` (standard defaults).
+- The multiplicative score from spec §5.2 composes `bm25 × (1 + importance/100) × recency × maturity_boost`—all four factors are now available via `src/lifecycle/index.js` plus the forthcoming BM25 function.
+- Pluggable scorer (spec §9.2): a module-level `let currentScorer = defaultScorer; export function setScorer(fn)` pattern mirrors Phase 1's backend injection. Test-only `_resetScorerForTests` escape hatch.
+- Classifier is rule-based, not LLM—spec §5 is explicit. Keyword/regex heuristics over three intents (factual, relational, temporal). Test 15 fixture queries per the roadmap (5 per intent).
+- `applyAccessEvent` is called from the retrieval hot path when an entry is surfaced (spec §7). Phase 3 needs to decide *where* that call happens: at the scorer level (every candidate scored) or the ladder level (only entries actually returned). The latter is correct—we don't want scoring to inflate importance on everything we consider.
+- Fresh-fixture typedef pattern worked well in Phase 2; Phase 3 tests should continue annotating: `/** @type {import('../../src/core/schema.js').Entry} */` on test Entry objects to avoid the literal-widening issue from Phase 1 surprise #2.
+
+---
+
 ## Phase 1—2026-04-20
 
 **What shipped:** `src/core/schema.js` (typedefs + enum guards + `createEmptyState`), `src/memory/entry.js` (`createEntry`/`generateEntryId`/`isValidEntry`—total validator), `src/core/lock.js` (per-chat async mutex, promise-chain implementation), `src/core/state.js` (injectable backend, loose state shape check, deep-clone round-trip), and an integration round-trip test that also includes a control demonstration of the lock-free hazard. 5 commits this phase (plus the plan doc). 46 tests passing across 7 suites. Lint, typecheck, test all green.
