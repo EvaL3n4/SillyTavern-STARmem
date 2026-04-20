@@ -1,12 +1,17 @@
 /**
  * State I/O. Bridges STARmem's in-memory State tree to SillyTavern's
- * chatMetadata['STARmem'] slot. The backend is injectable so unit tests
- * substitute an in-memory Map for ST globals.
+ * chatMetadata slot. The backend is injectable so unit tests substitute
+ * an in-memory Map for ST globals.
  *
  * Spec §3 says the entire STARmem tree lives at chatMetadata['STARmem'].
+ * The canonical extension API is `SillyTavern.getContext()`, which returns
+ * `{ chatMetadata, saveMetadataDebounced, ... }`. ST swaps the active
+ * chatMetadata object when the user switches chats, so we resolve it on
+ * every read/write rather than caching a reference.
+ *
  * ChatId is the lock key (see core/lock.js) and a log discriminator, not
- * a storage key—ST swaps the active chatMetadata when the user switches
- * chats, so our default backend reads whatever is current.
+ * a storage key—the backend reads whatever is current on the getContext
+ * return value.
  *
  * @module core/state
  * @see docs/specs/2026-04-20-starmem-v2-design.md §3
@@ -22,21 +27,44 @@ const METADATA_KEY = 'STARmem';
  * @property {(chatId: string, value: unknown) => void} write
  */
 
+/**
+ * Resolve SillyTavern's extension context. Returns undefined if we're
+ * not running inside ST (e.g. during unit tests, before the DOM is ready,
+ * or if the API shape changes). Callers must null-check.
+ *
+ * @returns {{ chatMetadata?: Record<string, unknown>, saveMetadataDebounced?: () => void } | undefined}
+ */
+function getSTContext() {
+    const g = /** @type {any} */ (globalThis);
+    const api = g.SillyTavern;
+    if (api && typeof api.getContext === 'function') {
+        try {
+            return api.getContext();
+        } catch {
+            return undefined;
+        }
+    }
+    return undefined;
+}
+
 /** @returns {Backend} */
 function makeDefaultBackend() {
     return {
         read: (_chatId) => {
-            const meta = /** @type {Record<string, unknown> | undefined} */ (
-                /** @type {any} */ (globalThis).chat_metadata
-            );
-            return meta?.[METADATA_KEY];
+            const ctx = getSTContext();
+            return ctx?.chatMetadata?.[METADATA_KEY];
         },
         write: (_chatId, value) => {
-            const g = /** @type {any} */ (globalThis);
-            g.chat_metadata = g.chat_metadata ?? {};
-            g.chat_metadata[METADATA_KEY] = value;
-            if (typeof g.saveMetadataDebounced === 'function') {
-                g.saveMetadataDebounced();
+            const ctx = getSTContext();
+            if (!ctx || !ctx.chatMetadata) {
+                throw new Error(
+                    'state.write: SillyTavern.getContext().chatMetadata is not available; '
+                    + 'call setBackend() before persistState() when running outside ST.'
+                );
+            }
+            ctx.chatMetadata[METADATA_KEY] = value;
+            if (typeof ctx.saveMetadataDebounced === 'function') {
+                ctx.saveMetadataDebounced();
             }
         },
     };
