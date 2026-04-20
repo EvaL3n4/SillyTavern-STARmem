@@ -249,3 +249,69 @@ describe('localMove', () => {
     });
 });
 
+import { refine } from '../../../../src/consolidation/raptor/leiden.js';
+
+describe('refine', () => {
+    test('empty graph → empty refined partition', () => {
+        const g = { nodes: [], adjacency: new Map(), totalWeight: 0 };
+        const p = { membership: new Map(), communityCount: 0 };
+        const { refined, parentOf } = refine(g, p, 1.0);
+        expect(refined.communityCount).toBe(0);
+        expect(parentOf.size).toBe(0);
+    });
+
+    test('well-connected community stays intact through refinement', () => {
+        // Triangle {a,b,c} fully connected at w=1. Starting from a single
+        // parent community {a,b,c}, refinement should keep all three together.
+        const edges = [['a', 'b', 1], ['b', 'c', 1], ['a', 'c', 1]];
+        const g = buildGraph(/** @type {any} */ (edges));
+        const parent = partitionFrom({ a: 0, b: 0, c: 0 });
+        const { refined } = refine(g, parent, 1.0);
+        const ra = refined.membership.get('a');
+        expect(refined.membership.get('b')).toBe(ra);
+        expect(refined.membership.get('c')).toBe(ra);
+        expect(refined.communityCount).toBe(1);
+    });
+
+    test('weakly-bridged community is preserved if well-connectedness threshold allows', () => {
+        // Two triangles bridged by ONE weak edge a—d at w=0.1, all placed in one
+        // parent community. Refinement may or may not split them depending on γ;
+        // at γ=1.0 and weak bridge, the threshold typically keeps them together
+        // or splits them — the test verifies the refinement output is VALID
+        // (each refined community contains only nodes from one parent) and that
+        // modularity does NOT decrease under the refined partition.
+        const edges = [
+            ['a', 'b', 1], ['b', 'c', 1], ['a', 'c', 1],
+            ['d', 'e', 1], ['e', 'f', 1], ['d', 'f', 1],
+            ['a', 'd', 0.1],
+        ];
+        const g = buildGraph(/** @type {any} */ (edges));
+        const parent = partitionFrom({ a: 0, b: 0, c: 0, d: 0, e: 0, f: 0 });
+        const { refined, parentOf } = refine(g, parent, 1.0);
+
+        // Hierarchical invariant: every refined community maps to EXACTLY one parent.
+        for (const [a] of refined.membership) {
+            const sub = refined.membership.get(a);
+            expect(sub !== undefined).toBe(true);
+            const par = parent.membership.get(a);
+            expect(parentOf.get(/** @type {number} */ (sub))).toBe(par);
+        }
+
+        // Modularity should not decrease (refinement is a non-decreasing operation).
+        const qBefore = modularity(g, parent, 1.0);
+        const qAfter = modularity(g, refined, 1.0);
+        expect(qAfter).toBeGreaterThanOrEqual(qBefore - 1e-9);
+    });
+
+    test('parentOf map is well-formed: each refined id maps to exactly one parent', () => {
+        const edges = [['a', 'b', 1], ['b', 'c', 1], ['d', 'e', 1]];
+        const g = buildGraph(/** @type {any} */ (edges));
+        const parent = partitionFrom({ a: 0, b: 0, c: 0, d: 1, e: 1 });
+        const { refined, parentOf } = refine(g, parent, 1.0);
+        // Every refined id that appears in membership must be in parentOf.
+        const refinedIds = new Set(refined.membership.values());
+        for (const rid of refinedIds) {
+            expect(parentOf.has(rid)).toBe(true);
+        }
+    });
+});

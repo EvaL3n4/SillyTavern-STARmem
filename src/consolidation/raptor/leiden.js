@@ -311,3 +311,170 @@ export function localMove(graph, partition, gamma, seed = 1) {
     return totalMoves;
 }
 
+/**
+ * Leiden refinement phase. Given a graph and a "parent" partition from
+ * localMove, produce a refined partition where each parent community may be
+ * split into well-connected sub-communities.
+ *
+ * Algorithm (Traag 2019, section "Refinement of the partition"):
+ *   1. Start with each node in its own singleton sub-community.
+ *   2. Iterate nodes in randomized order. For each node i:
+ *      a. Find i's parent community C_p = parent.membership.get(i).
+ *      b. Enumerate candidate sub-communities: {i's current sub-community}
+ *         ∪ {sub-communities of i's neighbors in C_p}.
+ *      c. Filter candidates to those that are "well-connected" within C_p
+ *         (total weight to C_p \ subcommunity ≥ γ × sub.tot × (C_p.tot - sub.tot) / (2m)).
+ *      d. Compute modularity gain for each candidate; pick the best positive.
+ *      e. Apply the move.
+ *   3. Single pass — refinement does not iterate like localMove; we accept the
+ *      first-pass result per Traag's paper.
+ *
+ * Returns the refined partition. Parent community membership is preserved as
+ * an auxiliary map so aggregation can maintain the hierarchy.
+ *
+ * @param {KnnGraph} graph
+ * @param {Partition} parent
+ * @param {number} gamma
+ * @param {number} [seed=1]
+ * @returns {{ refined: Partition, parentOf: Map<number, number> }}
+ *          parentOf maps each refined community id to the parent community id
+ */
+export function refine(graph, parent, gamma, seed = 1) {
+    const twoM = 2 * graph.totalWeight;
+    // Initialize: each node a singleton.
+    /** @type {Map<string, number>} */
+    const refinedMembership = new Map();
+    let nextCid = 0;
+    for (const node of graph.nodes) {
+        refinedMembership.set(node, nextCid++);
+    }
+    /** @type {Partition} */
+    const refined = { membership: refinedMembership, communityCount: nextCid };
+
+    if (twoM === 0) {
+        return { refined, parentOf: new Map() };
+    }
+
+    const stats = buildCommunityStats(graph, refined);
+
+    // Precompute parent-community total degrees (denominator for well-connected check)
+    /** @type {Map<number, number>} */
+    const parentTot = new Map();
+    for (const node of graph.nodes) {
+        const p = parent.membership.get(node);
+        if (p === undefined) continue;
+        const d = degreeOf(graph, node);
+        parentTot.set(p, (parentTot.get(p) ?? 0) + d);
+    }
+
+    const shuffledNodes = shuffled(graph.nodes, seed);
+    for (const node of shuffledNodes) {
+        const parentC = parent.membership.get(node);
+        if (parentC === undefined) continue;
+        const currentSub = refined.membership.get(node);
+        if (currentSub === undefined) continue;
+        const deg = degreeOf(graph, node);
+
+        // Candidate sub-communities: own + neighbors (ONLY those sharing the same parent).
+        /** @type {Set<number>} */
+        const candidates = new Set([currentSub]);
+        for (const n of graph.adjacency.get(node)?.keys() ?? []) {
+            if (parent.membership.get(n) !== parentC) continue;
+            const sc = refined.membership.get(n);
+            if (sc !== undefined) candidates.add(sc);
+        }
+
+        // "Leave current" delta.
+        const wToSelf = weightToCommunity(graph, refined, node, currentSub);
+        const totSelf = (stats.get(currentSub)?.tot ?? 0) - deg;
+        const leaveTerm = (wToSelf / graph.totalWeight)
+            - gamma * deg * totSelf / (twoM * graph.totalWeight);
+
+        let bestSub = currentSub;
+        let bestGain = 0;
+
+        for (const sub of candidates) {
+            if (sub === currentSub) continue;
+            // Well-connectedness check: sub must be sufficiently connected to
+            // its parent. Weight from `sub` to (parent \ sub) must be at least
+            // γ × sub.tot × (parentTot - sub.tot) / (2m).
+            const subTot = stats.get(sub)?.tot ?? 0;
+            const parentTotC = parentTot.get(parentC) ?? 0;
+            const weightToParentRest = subExternalToParent(graph, refined, parent, sub, parentC);
+            const threshold = gamma * subTot * (parentTotC - subTot) / twoM;
+            if (weightToParentRest < threshold) continue;
+
+            const wToC = weightToCommunity(graph, refined, node, sub);
+            const totC = stats.get(sub)?.tot ?? 0;
+            const joinTerm = (wToC / graph.totalWeight)
+                - gamma * deg * totC / (twoM * graph.totalWeight);
+            const gain = joinTerm - leaveTerm;
+            if (gain > bestGain) { bestGain = gain; bestSub = sub; }
+        }
+
+        if (bestSub !== currentSub && bestGain > 1e-10) {
+            const oldStats = stats.get(currentSub);
+            const newStats = stats.get(bestSub) ?? { in: 0, tot: 0 };
+            if (oldStats) {
+                oldStats.tot -= deg;
+                oldStats.in -= 2 * wToSelf;
+                if (oldStats.tot <= 0 && oldStats.in <= 0) stats.delete(currentSub);
+            }
+            newStats.tot += deg;
+            newStats.in += 2 * weightToCommunity(graph, refined, node, bestSub);
+            stats.set(bestSub, newStats);
+            refined.membership.set(node, bestSub);
+        }
+    }
+
+    // Build parentOf: refined community id → parent community id.
+    /** @type {Map<number, number>} */
+    const parentOf = new Map();
+    for (const node of graph.nodes) {
+        const sub = refined.membership.get(node);
+        const par = parent.membership.get(node);
+        if (sub !== undefined && par !== undefined) parentOf.set(sub, par);
+    }
+
+    const compact = compactPartition(refined);
+    // Rebuild parentOf for the compacted community ids.
+    /** @type {Map<number, number>} */
+    const compactParentOf = new Map();
+    for (const node of graph.nodes) {
+        const newSub = compact.membership.get(node);
+        const par = parent.membership.get(node);
+        if (newSub !== undefined && par !== undefined) compactParentOf.set(newSub, par);
+    }
+
+    return { refined: compact, parentOf: compactParentOf };
+}
+
+/**
+ * Total edge weight from sub-community `sub` to other nodes inside parent
+ * community `parentC` but NOT inside `sub`.
+ *
+ * @param {KnnGraph} graph
+ * @param {Partition} refined
+ * @param {Partition} parent
+ * @param {number} sub
+ * @param {number} parentC
+ * @returns {number}
+ */
+function subExternalToParent(graph, refined, parent, sub, parentC) {
+    let w = 0;
+    for (const [a, row] of graph.adjacency) {
+        if (refined.membership.get(a) !== sub) continue;
+        for (const [b, ew] of row) {
+            if (refined.membership.get(b) === sub) continue;
+            if (parent.membership.get(b) !== parentC) continue;
+            w += ew;
+        }
+    }
+    // Each edge is counted twice (once for each endpoint's iteration) unless
+    // one endpoint is inside sub — but we filter to a ∈ sub only, so we
+    // catch each (sub → non-sub inside parent) edge exactly once per endpoint
+    // in sub, which means once total for the a ∈ sub case. Good.
+    return w;
+}
+
+
