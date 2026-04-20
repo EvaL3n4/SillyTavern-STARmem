@@ -447,6 +447,62 @@ These are v2.1+ considerations. Do not implement them in any phase.
 
 _Appended after each phase ships. Format: `## Phase N—<date>`, with notes on surprises, scope changes, and lessons for subsequent phases._
 
+## Phase 6—2026-04-20
+
+**What shipped:** Consolidation pipeline — `src/consolidation/consolidate.js` (single long-term mutator, holds write lock, drains `BATCH_SIZE`=5 working-buffer entries, extracts via user-configured LLM, dedupes same-subject + Jaccard≥0.7, adds/updates, builds edges for new entries, invalidates Tier 0 cache, flips `pendingPersonaRebuild` at 100 new episodics), `src/consolidation/extractFacts.js` (JSON-schema-constrained prompt with strip-fences JSON parser + permissive-where-spec-allows shape validator; silently drops reserved `contradicts` relations per spec §4; 2048 max_tokens for extraction), `src/consolidation/dedup.js` (`findDuplicate` + exported `jaccard` helper sharing `tokenize` with BM25), `src/consolidation/llmClient.js` (injectable wrapper over ST's `ConnectionManagerRequestService.sendRequest` with lazy `SillyTavern.getContext()` resolution, test-mock hooks), `src/consolidation/triggers.js` (`maybeConsolidate` gating + per-chat idle timer via module-level `setTimeout` map, not persisted), `src/consolidation/index.js` barrel, `tests/unit/consolidation/no-other-mutators.test.js` (one-path invariant test, grep-based, verified via tripwire sentinel), `tests/integration/consolidation/pipeline.test.js` (12-turn end-to-end). 7 feature commits + barrel + invariant/integration + retro = 10 commits this phase. **341 tests passing across 33 suites** (262 Phase 5 baseline + 79 new: 2 constants/schema delta + 12 dedup + 7 llmClient + 20 extractFacts + 10 consolidate + 9 triggers + ~17 invariant (one per non-whitelisted src file) + 2 integration).
+
+**Execution mode:** Subagent-driven with reviews skipped per the skill's criteria (verbatim code + static checks per task), with controller-side invariant audit after Task 4 (consolidate) and tripwire verification of the one-path test after Task 6. Six delegations ran serially. Zero sandbox-path strays. Zero merge conflicts. Three subagent deviations from plan code (all correct fixes, reported up-front, controller verified and folded into the same commit). The `~` trap did not recur — every subagent context passed absolute paths + tripwire hash.
+
+**Decisions locked in the planning conversation (all held through execution):**
+
+1. Dedup criterion: same subject + Jaccard ≥ 0.7 over BM25 tokenization.
+2. Dedup update semantics: keep older content, bump lifecycle via `applyUpdateEvent` only.
+3. LLM client: `ConnectionManagerRequestService.sendRequest(profileId, messages, maxTokens)` with user-selected profile, injectable for tests via `_setLLMClientForTests`.
+4. JSON parse/validate: fail-closed, no retry in `consolidate` (buffer stays intact → natural retry on next trigger).
+5. In-flight guard: `state.runtime.consolidating` flag, checked before lock, set inside, cleared in finally.
+6. New runtime fields: `consolidating: boolean`, `episodicCountSinceLastRebuild: number`.
+7. Idle timer: module-level per-chat `setTimeout`, not persisted; `resetIdleTimer` debounces, `cancelIdleTimer` tears down.
+8. One-path invariant: grep-based test in `no-other-mutators.test.js` with explicit whitelist + tripwire-verified.
+9. Batch size r = 5 verbatim from spec §6.3.
+
+**Surprises:**
+
+1. **Three verbatim-code plan bugs, caught by subagents during TDD.** Worth tracking because the pattern repeats:
+   - **`EXTRACT_MAX_TOKENS = ***`** in the plan — the heredoc I used to author Task 3 tripped the editing-near-secrets guard, which redacted the numeric literal `2048` to `***` on write. Subagent sensibly picked `500` as a safe fallback, reported, and I patched both the source and the plan to `2048` before amending the commit. Pattern for future plans: when writing plans via heredoc, avoid looking-like-credentials constants, or use a placeholder like `/* TODO fill in */` and assign explicitly in a follow-up.
+   - **`makeLogger('scope')` → `createLogger({ debug: false }).scope('scope')`** — my plan used a function that didn't exist. The real API is `createLogger(options).scope(name)`. Caught by Task 4's subagent; Task 5's subagent applied the same fix pre-emptively because I flagged the known bug in the delegation context.
+   - **`.by train` Jaccard = 0.667, below threshold 0.7** — same plan-side mistake in three places (Task 1 dedup test, Task 4 consolidate test, Task 4 mock-LLM dedup test). `.train` alone gives 4/5 = 0.8. The Task 1 subagent caught and fixed it; the Task 4 subagent independently applied the same fix. Consistency across subagents here was better than my consistency across the plan.
+
+2. **Invariant test regex was too naive for first commit.** `state.entries[` matches reads too (`const e = state.entries[id]`). `applyUpdateEvent\s*\(` matches the function definition line too (`function applyUpdateEvent(l, now = ...)`). Task 6's subagent surfaced two false positives against tier3-graph.js (read) and lifecycle/importance.js (definition) and — correctly — stopped without modifying the whitelist. Controller fix: tighten writes to require an assignment operator after the bracket (`state\.entries\[[^\]]*\]\s*(?:=|\+=|...)`), add lookbehinds to exclude `function` declarations, and add `src/lifecycle/importance.js` to the whitelist as the definition site. Tripwire test after the fix: injected `// TEST-SENTINEL: state.entries['bogus'] = 1` into tier3-graph.js, confirmed the invariant test failed with a clear "Spec §2 principle 2 violation" message pointing at the file and line, then reverted. Test is now genuinely load-bearing.
+
+3. **Subagent-reported test counts drifted from plan predictions by a small, honest amount.** Task 3 shipped 20 tests, not the plan's predicted 22. The plan listed "4 parseLLMJson + 8 validate + 1 renderPrompt + 9 extractFacts" but the verbatim code only contained 7 extractFacts tests, so 4+8+1+7 = 20. The writing-plans skill already says "let the actual number emerge; don't bake predicted totals into task instructions" — this reconfirms. Baking totals is future-you staring at a 2-off arithmetic error with no good way to reconcile.
+
+4. **Concurrent-consolidation test passed on first run with zero flakes.** The `Promise.all([consolidate, consolidate])` test relies on `withWriteLock` serializing two fresh runs such that the second sees `workingBuffer.length === 2` after the first drained 5 of 7. If there were any `await` re-ordering bugs in the consolidate pipeline, this test would catch them. It didn't, which means the "capture batch before mutation" discipline in the plan held.
+
+**Notes for Phase 7 (Persona Rebuild):**
+
+- `runtime.pendingPersonaRebuild` flips at `PERSONA_REBUILD_SUGGESTION_THRESHOLD = 100` cumulative new episodic entries. Phase 7's rebuild pipeline should clear that flag on completion AND reset `runtime.episodicCountSinceLastRebuild` to 0.
+- `consolidate()` holds the chatId's write lock during its run. Persona rebuild is heavier (seconds to minutes); it should NOT run under the same lock — otherwise consolidation queues up behind rebuild. Options: a second lock primitive keyed by `${chatId}:persona`, or a rebuild-in-progress flag + explicit "rebuild mutates state.entries Persona slice only, consolidation mutates Episodic slice only" carve-out. The carve-out means rebuild can bypass the write lock if (and only if) it touches disjoint state. Decide in the phase-7 plan, not here.
+- The extractor-label pattern (`"<model>@consolidation-v1"`) is the template for rebuild provenance: `"<model>@persona-rebuild-v1"`. Phase 7 entries should carry this in `provenance.extractor`.
+- The one-path invariant test already whitelists `src/consolidation/` — Phase 7's rebuild code should live under `src/consolidation/persona-rebuild/` (or similar) to inherit the whitelist, OR be added as an explicit new whitelist entry with a comment explaining why.
+
+**Notes for Phase 8 (SillyTavern Integration):**
+
+- `ConsolidateOptions.messageOf` is the interceptor's hook — maps a Working entry to a `{ role, content }` batch message. This is where roleplay-specific formatting lives (system/assistant role preservation, author notes stripped, etc.). Phase 8's interceptor provides the real implementation.
+- Settings UI needs a connection-profile dropdown for `profileId` (spec §8). Default: whatever ST reports as the active profile at install time. Wire `ConnectionManagerRequestService.getProfiles()` (or equivalent — check ST's API) into the dropdown.
+- Idle timer requires the interceptor to call `resetIdleTimer(chatId, opts)` on every user activity event (generation request, message send). `cancelIdleTimer(chatId)` on chat switch or extension teardown. Module-level timer map means no cleanup needed across chats — just cancel the specific one.
+- Consolidation indicator (spec §8) keys off `state.runtime.consolidating` — Phase 8 polls or subscribes. The flag is cleared in a `finally` inside the write lock, so polling frequency doesn't matter for correctness.
+- The Memory Viewer Traces tab doesn't render consolidation events yet — Phase 6 doesn't produce traces, only Phase 4's retrieval ladder does. If Eva wants a "consolidation log" tab, we'd hook it off the `consolidate()` return value `{ added, updated, drained }` — file as a v2.1 enhancement if the retrieval traces prove insufficient.
+
+**Notes for Phase 9 (Benchmarking):**
+
+- `DEDUP_JACCARD_THRESHOLD = 0.7` is an opening value. Watch the ratio of `added : updated` in traces. If updates are rare (< 10%), threshold is too strict — near-dupes are being added rather than merged. If updates are very common (> 50%), threshold is too lax — distinct facts are being collapsed.
+- The fact-extraction `SYSTEM_PROMPT` lives in `src/consolidation/extractFacts.js`. Treat it as a Phase 9 tunable — benchmarks against LoCoMo vs LongMemEval may need corpus-specific prompt variants. Plumb a `promptVariant` option into `extractFacts` if A/B testing warrants.
+- The `{ added, updated, drained }` return from `consolidate` is the natural place to hang consolidation traces. Shape TBD in Phase 9 — consider mirroring the retrieval trace shape (timestamp, batch ids, extractor label, result counts, latency per stage).
+- `EXTRACT_MAX_TOKENS = 2048` was a guess. If Phase 9 shows the LLM hitting the cap (response ends in `,` or `"...`), bump. If responses always fit in < 500 tokens, drop to save cost.
+- The 12-turn integration test drains 5 of 12 — the real roleplay cadence matters: if sessions are 100+ turns with 2 consolidations of 5 each, we have 90+ Working entries accumulating until idle fires. Watch `runtime.episodicCountSinceLastRebuild` over session histories — if it hits 100 often on realistic transcripts, the Persona rebuild prompt will appear frequently, which may or may not be what Eva wants.
+
+---
+
 ## Phase 5—2026-04-20
 
 **What shipped:** Graph store (`src/memory/graph.js`, pure `addEdge`/`removeEdge`/`listEdges` + per-call `buildAdjacency`/`neighborsOf`), pure edge builder (`src/memory/edgeBuilder.js`, explicit `@relations` at weight 1.0 + entity co-occurrence at weight 0.5 via `/\b[A-Z][a-z]{2,}\b/g` with a stop-word filter, cap at 20 with weight-preferring eviction returning `{ newEdges, evicted }`), Tier 3 intent-routed beam search (`src/retrieval/tier3-graph.js`, 2 hops × beam 5, edge-type × intent weights from spec §5.1 table, single bm25-over-corpus pass for lookup), ladder integration replacing the Phase 4 identity stub (Floor branch factored into `runFloorBranch` helper, Tier 3 falls through to Floor when rescore zeros everything), new memory barrel (`src/memory/index.js`), extended retrieval barrel. 7 commits this phase plus plan + retro. **262 tests passing across 26 suites** (210 Phase 0-4 baseline + 52 new Phase 5 tests: 4 constants delta + 16 graph + 17 edgeBuilder + 11 tier3 + 2 memory barrel + 1 retrieval barrel + 3 ladder integration, minus two baseline tests that were covered by new ones).

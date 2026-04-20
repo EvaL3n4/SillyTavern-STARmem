@@ -301,7 +301,7 @@ describe('findDuplicate', () => {
     });
 
     test('returns match when subject matches and Jaccard ≥ 0.7', () => {
-        const candidate = ep({ subject: 'alice', content: 'alice traveled to marseille by train' });
+        const candidate = ep({ subject: 'alice', content: 'alice traveled to marseille train' });
         const existing = ep({ subject: 'alice', content: 'alice traveled to marseille' });
         const found = findDuplicate(candidate, [existing]);
         expect(found).not.toBeNull();
@@ -1002,9 +1002,9 @@ import { applyUpdateEvent } from '../lifecycle/index.js';
 import { invalidateTier0Cache } from '../retrieval/tier0-exact.js';
 import { extractFacts } from './extractFacts.js';
 import { findDuplicate } from './dedup.js';
-import { makeLogger } from '../core/logger.js';
+import { createLogger } from '../core/logger.js';
 
-const log = makeLogger('consolidation');
+const log = createLogger({ debug: false }).scope('consolidation');
 
 const {
     BATCH_SIZE,
@@ -1298,7 +1298,7 @@ describe('consolidate', () => {
         _setLLMClientForTests(async () => JSON.stringify({
             entries: [
                 // Near-duplicate content of existing
-                { content: 'alice traveled to marseille by train', subject: 'alice' },
+                { content: 'alice traveled to marseille train', subject: 'alice' },
             ],
         }));
 
@@ -1528,9 +1528,9 @@ grep -rn "state\.graph\.edges" src/ | grep -v "src/consolidation/" | grep -v "sr
 import { loadState } from '../core/state.js';
 import { CONSOLIDATION } from '../core/constants.js';
 import { consolidate } from './consolidate.js';
-import { makeLogger } from '../core/logger.js';
+import { createLogger } from '../core/logger.js';
 
-const log = makeLogger('triggers');
+const log = createLogger({ debug: false }).scope('triggers');
 const { WORKING_BUFFER_THRESHOLD, IDLE_TRIGGER_SECONDS } = CONSOLIDATION;
 
 /** @type {Map<string, ReturnType<typeof setTimeout>>} */
