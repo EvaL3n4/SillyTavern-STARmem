@@ -575,3 +575,134 @@ export function unliftPartition(origGraph, refinedAtThisLevel, aggPartition) {
     const communityCount = new Set(membership.values()).size;
     return compactPartition({ membership, communityCount });
 }
+
+import { PERSONA_REBUILD } from '../../core/constants.js';
+
+const {
+    GAMMA_BASE,
+    GAMMA_STEP,
+    LEIDEN_TOLERANCE,
+    LEIDEN_MAX_OUTER_ITERATIONS,
+} = PERSONA_REBUILD;
+
+/**
+ * Depth-adaptive resolution. Spec §6.4: γ_base=1.0, γ_step=0.2, so d=0 → 1.0,
+ * d=1 → 0.8, d=2 → 0.6. Decreases upward: coarser groupings at higher layers.
+ *
+ * @param {number} depth
+ * @returns {number}
+ */
+export function gammaForDepth(depth) {
+    if (typeof depth !== 'number' || depth < 0) {
+        throw new Error('gammaForDepth: depth must be a non-negative number');
+    }
+    return Math.max(0.01, GAMMA_BASE - depth * GAMMA_STEP);
+}
+
+/**
+ * @typedef {object} ClusterResult
+ * @property {Map<string, number>} clusters   - Original nodeId → community id
+ * @property {number} communityCount
+ * @property {number} modularity
+ * @property {number} iterations
+ */
+
+/**
+ * Run Leiden to convergence on a graph. Returns the final flat partition of
+ * the ORIGINAL graph's nodes (not aggregated nodes).
+ *
+ * @param {KnnGraph} graph
+ * @param {number} gamma
+ * @param {{seed?: number, signal?: AbortSignal}} [opts]
+ * @returns {ClusterResult}
+ */
+export function leidenCluster(graph, gamma, opts = {}) {
+    const { seed = 1, signal } = opts;
+    const throwIfAborted = () => {
+        if (signal?.aborted) {
+            const err = new Error('leidenCluster: aborted');
+            err.name = 'AbortError';
+            throw err;
+        }
+    };
+
+    // Guard: empty or trivial graph.
+    if (graph.nodes.length === 0) {
+        return {
+            clusters: new Map(),
+            communityCount: 0,
+            modularity: 0,
+            iterations: 0,
+        };
+    }
+    if (graph.nodes.length === 1) {
+        return {
+            clusters: new Map([[graph.nodes[0], 0]]),
+            communityCount: 1,
+            modularity: 0,
+            iterations: 0,
+        };
+    }
+
+    // Maintain two parallel graph states:
+    //   - `origGraph` / `origPartition`: the level-0 (original node) mapping
+    //   - `workGraph` / `workPartition`: the aggregated graph we iterate on
+    //
+    // We keep a chain of (refinedPartition, parentOf) pairs so we can unlift
+    // the final workPartition back onto the original graph.
+    let workGraph = graph;
+    let workPartition = singletonPartition(graph);
+    /** @type {Array<{origGraph: KnnGraph, refined: Partition}>} */
+    const hierarchy = [];
+    let currentSeed = seed;
+    let prevQ = modularity(graph, workPartition, gamma);
+    let iterations = 0;
+
+    for (; iterations < LEIDEN_MAX_OUTER_ITERATIONS; iterations++) {
+        throwIfAborted();
+        currentSeed = (currentSeed * 1103515245 + 12345) >>> 0;
+
+        // Phase 1: local moving on workGraph/workPartition.
+        const moves = localMove(workGraph, workPartition, gamma, currentSeed);
+        workPartition = compactPartition(workPartition);
+
+        // If no moves AND no change from previous iteration, we converged.
+        if (moves === 0 && iterations > 0) break;
+
+        // Phase 2: refine.
+        currentSeed = (currentSeed * 1103515245 + 12345) >>> 0;
+        const { refined, parentOf } = refine(workGraph, workPartition, gamma, currentSeed);
+
+        // Convergence: if refined and workPartition describe the same clustering
+        // AND localMove found 0 moves this iteration, stop.
+        const sameCount = refined.communityCount === workPartition.communityCount;
+        if (moves === 0 && sameCount) break;
+
+        // Phase 3: aggregate the refined partition; lift workPartition onto it.
+        hierarchy.push({ origGraph: workGraph, refined });
+        const aggGraph = aggregate(workGraph, refined);
+        const aggPartition = liftPartition(aggGraph, parentOf);
+
+        const qAgg = modularity(aggGraph, aggPartition, gamma);
+        if (Math.abs(qAgg - prevQ) < LEIDEN_TOLERANCE && iterations > 0) break;
+        prevQ = qAgg;
+
+        workGraph = aggGraph;
+        workPartition = aggPartition;
+    }
+
+    // Unlift: collapse the hierarchy back onto the original graph's nodes.
+    let finalPartition = workPartition;
+    for (let i = hierarchy.length - 1; i >= 0; i--) {
+        finalPartition = unliftPartition(hierarchy[i].origGraph, hierarchy[i].refined, finalPartition);
+    }
+    finalPartition = compactPartition(finalPartition);
+
+    const finalQ = modularity(graph, finalPartition, gamma);
+    return {
+        clusters: finalPartition.membership,
+        communityCount: finalPartition.communityCount,
+        modularity: finalQ,
+        iterations: iterations + 1,
+    };
+}

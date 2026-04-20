@@ -316,7 +316,104 @@ describe('refine', () => {
     });
 });
 
-import { aggregate, liftPartition, unliftPartition } from '../../../../src/consolidation/raptor/leiden.js';
+import { aggregate, liftPartition, unliftPartition, leidenCluster, gammaForDepth } from '../../../../src/consolidation/raptor/leiden.js';
+
+describe('gammaForDepth', () => {
+    test('depth 0 → GAMMA_BASE (1.0)', () => {
+        expect(gammaForDepth(0)).toBeCloseTo(1.0, 6);
+    });
+    test('depth 1 → 0.8', () => {
+        expect(gammaForDepth(1)).toBeCloseTo(0.8, 6);
+    });
+    test('depth 2 → 0.6', () => {
+        expect(gammaForDepth(2)).toBeCloseTo(0.6, 6);
+    });
+    test('rejects negative depth', () => {
+        expect(() => gammaForDepth(-1)).toThrow(/non-negative/);
+    });
+    test('never returns below 0.01 (safety floor)', () => {
+        expect(gammaForDepth(100)).toBeCloseTo(0.01, 6);
+    });
+});
+
+describe('leidenCluster (end-to-end)', () => {
+    test('empty graph → empty result', () => {
+        const g = { nodes: [], adjacency: new Map(), totalWeight: 0 };
+        const r = leidenCluster(g, 1.0);
+        expect(r.communityCount).toBe(0);
+        expect(r.clusters.size).toBe(0);
+    });
+
+    test('single node → one community', () => {
+        const g = buildGraph(/** @type {any} */ ([]));
+        g.nodes.push('solo');
+        g.adjacency.set('solo', new Map());
+        const r = leidenCluster(g, 1.0);
+        expect(r.communityCount).toBe(1);
+        expect(r.clusters.get('solo')).toBe(0);
+    });
+
+    test('two-triangle graph recovers the obvious split', () => {
+        const edges = [
+            ['a', 'b', 1], ['b', 'c', 1], ['a', 'c', 1],
+            ['d', 'e', 1], ['e', 'f', 1], ['d', 'f', 1],
+            ['a', 'd', 0.1],
+        ];
+        const g = buildGraph(/** @type {any} */ (edges));
+        const r = leidenCluster(g, 1.0, { seed: 42 });
+        expect(r.communityCount).toBe(2);
+        // All of {a,b,c} share one community; all of {d,e,f} share the other.
+        const ca = r.clusters.get('a');
+        expect(r.clusters.get('b')).toBe(ca);
+        expect(r.clusters.get('c')).toBe(ca);
+        const cd = r.clusters.get('d');
+        expect(r.clusters.get('e')).toBe(cd);
+        expect(r.clusters.get('f')).toBe(cd);
+        expect(ca).not.toBe(cd);
+        expect(r.modularity).toBeGreaterThan(0.4);
+    });
+
+    test('three dense clusters with sparse inter-cluster edges', () => {
+        /** @type {[string, string, number][]} */
+        const edges = [
+            // Cluster 1: a, b, c
+            ['a', 'b', 1], ['b', 'c', 1], ['a', 'c', 1],
+            // Cluster 2: d, e, f
+            ['d', 'e', 1], ['e', 'f', 1], ['d', 'f', 1],
+            // Cluster 3: g, h, i
+            ['g', 'h', 1], ['h', 'i', 1], ['g', 'i', 1],
+            // Sparse bridges
+            ['a', 'd', 0.05], ['d', 'g', 0.05], ['a', 'g', 0.05],
+        ];
+        const g = buildGraph(edges);
+        const r = leidenCluster(g, 1.0, { seed: 7 });
+        expect(r.communityCount).toBe(3);
+    });
+
+    test('higher gamma produces more (smaller) clusters on the same graph', () => {
+        /** @type {[string, string, number][]} */
+        const edges = [
+            ['a', 'b', 1], ['b', 'c', 1], ['a', 'c', 1],
+            ['c', 'd', 0.5],
+            ['d', 'e', 1], ['e', 'f', 1], ['d', 'f', 1],
+        ];
+        const g = buildGraph(edges);
+        const low = leidenCluster(g, 0.3, { seed: 3 });
+        const high = leidenCluster(g, 1.5, { seed: 3 });
+        // At high γ the bridge c—d is penalized, so 2+ clusters expected.
+        // At low γ the same graph collapses toward 1 cluster.
+        expect(high.communityCount).toBeGreaterThanOrEqual(low.communityCount);
+    });
+
+    test('respects AbortSignal', () => {
+        /** @type {[string, string, number][]} */
+        const edges = [['a', 'b', 1], ['b', 'c', 1], ['a', 'c', 1]];
+        const g = buildGraph(edges);
+        const controller = new AbortController();
+        controller.abort();
+        expect(() => leidenCluster(g, 1.0, { signal: controller.signal })).toThrow(/aborted/);
+    });
+});
 
 describe('aggregate', () => {
     test('empty graph aggregates to empty graph', () => {
