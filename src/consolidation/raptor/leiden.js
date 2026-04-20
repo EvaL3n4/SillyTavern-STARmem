@@ -477,4 +477,101 @@ function subExternalToParent(graph, refined, parent, sub, parentC) {
     return w;
 }
 
+/**
+ * Aggregate a graph along a refined partition. Each refined community becomes
+ * a node in the new graph; edges are summed. Self-loops (intra-community
+ * weight) are preserved as `adjacency[id][id] = sum_of_internal_edges × 2`
+ * (×2 because of undirected double-counting convention).
+ *
+ * @param {KnnGraph} graph
+ * @param {Partition} refined
+ * @returns {KnnGraph}
+ */
+export function aggregate(graph, refined) {
+    /** @type {Map<string, Map<string, number>>} */
+    const adj = new Map();
+    /** @type {string[]} */
+    const nodes = [];
+    const idOf = (/** @type {number} */ c) => `agg_${c}`;
 
+    // Initialize all community-nodes
+    const uniqueCs = new Set(refined.membership.values());
+    for (const c of uniqueCs) {
+        const id = idOf(c);
+        nodes.push(id);
+        adj.set(id, new Map());
+    }
+
+    let totalWeight = 0;
+    for (const [a, row] of graph.adjacency) {
+        for (const [b, w] of row) {
+            if (a >= b) continue;
+            const ca = refined.membership.get(a);
+            const cb = refined.membership.get(b);
+            if (ca === undefined || cb === undefined) continue;
+            const idA = idOf(ca);
+            const idB = idOf(cb);
+            if (idA === idB) {
+                // Intra-community edge → self-loop on the aggregated node
+                const row2 = adj.get(idA);
+                if (!row2) continue;
+                row2.set(idA, (row2.get(idA) ?? 0) + 2 * w);
+                totalWeight += w;
+            } else {
+                const rowA = adj.get(idA);
+                const rowB = adj.get(idB);
+                if (!rowA || !rowB) continue;
+                rowA.set(idB, (rowA.get(idB) ?? 0) + w);
+                rowB.set(idA, (rowB.get(idA) ?? 0) + w);
+                totalWeight += w;
+            }
+        }
+    }
+
+    return { nodes, adjacency: adj, totalWeight };
+}
+
+/**
+ * Lift a parent-level partition onto an aggregated graph. Each aggregated
+ * node (named `agg_<cid>`) inherits the parent community id of its
+ * constituent original community.
+ *
+ * @param {KnnGraph} aggGraph
+ * @param {Map<number, number>} parentOf   - refined community id → parent community id
+ * @returns {Partition}
+ */
+export function liftPartition(aggGraph, parentOf) {
+    /** @type {Map<string, number>} */
+    const membership = new Map();
+    for (const aggId of aggGraph.nodes) {
+        // aggId format: "agg_<N>"
+        const cid = Number(aggId.slice(4));
+        const par = parentOf.get(cid);
+        if (par !== undefined) membership.set(aggId, par);
+    }
+    const communityCount = new Set(membership.values()).size;
+    return compactPartition({ membership, communityCount });
+}
+
+/**
+ * Unlift a partition from an aggregated graph back onto the original graph's
+ * nodes. Each original node inherits its refined community's parent assignment.
+ *
+ * @param {KnnGraph} origGraph
+ * @param {Partition} refinedAtThisLevel
+ * @param {Partition} aggPartition
+ * @returns {Partition}
+ */
+export function unliftPartition(origGraph, refinedAtThisLevel, aggPartition) {
+    /** @type {Map<string, number>} */
+    const membership = new Map();
+    for (const node of origGraph.nodes) {
+        const refinedC = refinedAtThisLevel.membership.get(node);
+        if (refinedC === undefined) continue;
+        const aggId = `agg_${refinedC}`;
+        const par = aggPartition.membership.get(aggId);
+        if (par !== undefined) membership.set(node, par);
+    }
+    const communityCount = new Set(membership.values()).size;
+    return compactPartition({ membership, communityCount });
+}

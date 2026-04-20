@@ -315,3 +315,51 @@ describe('refine', () => {
         }
     });
 });
+
+import { aggregate, liftPartition, unliftPartition } from '../../../../src/consolidation/raptor/leiden.js';
+
+describe('aggregate', () => {
+    test('empty graph aggregates to empty graph', () => {
+        const g = { nodes: [], adjacency: new Map(), totalWeight: 0 };
+        const p = { membership: new Map(), communityCount: 0 };
+        const agg = aggregate(g, p);
+        expect(agg.nodes).toEqual([]);
+        expect(agg.totalWeight).toBe(0);
+    });
+
+    test('two triangles + bridge → aggregated 2-node graph', () => {
+        const edges = [
+            ['a', 'b', 1], ['b', 'c', 1], ['a', 'c', 1],
+            ['d', 'e', 1], ['e', 'f', 1], ['d', 'f', 1],
+            ['a', 'd', 0.1],
+        ];
+        const g = buildGraph(/** @type {any} */ (edges));
+        const part = partitionFrom({ a: 0, b: 0, c: 0, d: 1, e: 1, f: 1 });
+        const agg = aggregate(g, part);
+        expect(agg.nodes.length).toBe(2);
+        // Aggregated totalWeight equals original totalWeight
+        expect(agg.totalWeight).toBeCloseTo(g.totalWeight, 6);
+        // The bridge edge a—d (w=0.1) becomes an edge between agg_0 and agg_1
+        const rowA = agg.adjacency.get('agg_0');
+        expect(rowA?.get('agg_1')).toBeCloseTo(0.1, 6);
+        // Self-loops carry the intra-triangle weight (3 edges × 2 = 6 each)
+        expect(rowA?.get('agg_0')).toBeCloseTo(6, 6);
+    });
+});
+
+describe('liftPartition + unliftPartition round-trip', () => {
+    test('lift then unlift recovers the original parent mapping', () => {
+        const edges = [['a', 'b', 1], ['c', 'd', 1]];
+        const g = buildGraph(/** @type {any} */ (edges));
+        const refined = partitionFrom({ a: 0, b: 0, c: 1, d: 1 });
+        // Pretend parent says {a,b} and {c,d} are both in parent community 0
+        const parentOf = new Map([[0, 0], [1, 0]]);
+        const agg = aggregate(g, refined);
+        const lifted = liftPartition(agg, parentOf);
+        // After lifting, both aggregated nodes map to parent 0
+        expect(lifted.membership.get('agg_0')).toBe(lifted.membership.get('agg_1'));
+        // And unlifting back onto the original graph places all 4 nodes in 1 parent
+        const unlifted = unliftPartition(g, refined, lifted);
+        expect(new Set(unlifted.membership.values()).size).toBe(1);
+    });
+});
