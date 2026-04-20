@@ -28,6 +28,7 @@ describe('retrieval barrel exports', () => {
         expect(typeof retrieval.logTrace).toBe('function');
         expect(typeof retrieval.buildTrace).toBe('function');
         expect(typeof retrieval.retrieve).toBe('function');
+        expect(typeof retrieval.tier3).toBe('function');
     });
 
     test('re-exports are reference-equal to the source modules', async () => {

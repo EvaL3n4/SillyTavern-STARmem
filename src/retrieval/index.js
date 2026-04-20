@@ -16,3 +16,4 @@ export { tier2 } from './tier2-bm25.js';
 export { floor } from './floor.js';
 export { logTrace, buildTrace } from './trace.js';
 export { retrieve } from './ladder.js';
+export { tier3 } from './tier3-graph.js';
