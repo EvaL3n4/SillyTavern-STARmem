@@ -18,6 +18,19 @@ This is **STARmem v2**, a clean-break rewrite. If you were trained on or have se
 
 Scaffold only. Manifest, package.json, gitignore, README, license, index.js stub, style.css stub, this file. `src/` and `tests/` do not exist yet—they'll be created by the implementation plan.
 
+## How SillyTavern loads this extension (critical)
+
+**SillyTavern installs extensions via `git clone` only.** The user clones this repo into `public/scripts/extensions/third-party/SillyTavern-STARmem/` and ST loads `index.js` directly in the browser. **There is no build step. There is no `npm install` at install time.**
+
+This means:
+
+- **`package.json` is development-only.** `eslint`, `jest`, `typescript`, and anything in `devDependencies` exist solely for lint/typecheck/test at development time. **They are not available at runtime.**
+- **`dependencies` must stay empty** (or at most contain libraries we've bundled into a single file via rollup and committed — we have not opted into this yet).
+- **Runtime code (`index.js`, `src/**/*.js`) cannot `import` from `node_modules`.** Only valid imports are: relative paths inside this repo (`./src/...`), and SillyTavern's own exposed modules (`../../../../script.js`, `../../../extensions.js`, etc.).
+- **No transpilation.** The code that runs in the browser is the code in the repo, as-is. Target: modern ES2022 modules, no TypeScript emit, no Babel.
+
+If you find yourself wanting to `npm install <runtime-lib>`, stop. Either find a pure-JS implementation to vendor in `src/vendor/`, or implement it yourself. BM25, Jaccard, graph traversal, Leiden clustering—all of it gets hand-written in vanilla JS.
+
 ## Conventions
 
 - **Internal identifier:** `STARmem` (capital STAR). Used in `chatMetadata['STARmem']`, `STARmemInterceptor`, etc. The package name (`starmem`) and repo slug (`SillyTavern-STARmem`) are the only lowercased exceptions—npm convention and ST naming convention.
