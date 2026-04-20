@@ -60,6 +60,11 @@ describe('constants', () => {
         expect(RETRIEVAL.TAG_BOOST).toBe(2);
     });
 
+    test('RETRIEVAL Tier 2 exit thresholds', () => {
+        expect(RETRIEVAL.TIER2_TAU_CONFIDENCE).toBe(2.0);
+        expect(RETRIEVAL.TIER2_TAU_GAP).toBe(0.5);
+    });
+
     test('CONSOLIDATION defaults match spec §6', () => {
         expect(CONSOLIDATION.WORKING_BUFFER_THRESHOLD).toBe(10);
         expect(CONSOLIDATION.IDLE_TRIGGER_SECONDS).toBe(60);
@@ -67,7 +72,7 @@ describe('constants', () => {
         expect(CONSOLIDATION.PERSONA_REBUILD_SUGGESTION_THRESHOLD).toBe(100);
     });
 
-    test('TRACE_BUFFER_CAP matches spec §9.1', () => {
-        expect(TRACE_BUFFER_CAP).toBe(100);
+    test('TRACE_BUFFER_CAP matches Phase 4 decision (spec §12.4 resolution)', () => {
+        expect(TRACE_BUFFER_CAP).toBe(128);
     });
 });

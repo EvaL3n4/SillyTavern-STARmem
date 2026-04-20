@@ -68,6 +68,10 @@ export const RETRIEVAL = Object.freeze({
     SUBJECT_BOOST: 2,
     /** Integer replication factor for tag tokens in the BM25 document. */
     TAG_BOOST: 2,
+    /** Tier 2 exit: minimum top score required to shortcut the ladder. Spec §5; opening value, Phase 9 tunes. */
+    TIER2_TAU_CONFIDENCE: 2.0,
+    /** Tier 2 exit: minimum (top − #2) score gap required to shortcut. Spec §5; opening value, Phase 9 tunes. */
+    TIER2_TAU_GAP: 0.5,
 });
 
 /** Consolidation trigger thresholds. Spec §6.2, §6.3, §6.4. */
@@ -82,5 +86,5 @@ export const CONSOLIDATION = Object.freeze({
     PERSONA_REBUILD_SUGGESTION_THRESHOLD: 100,
 });
 
-/** Trace ring buffer cap. Spec §9.1. */
-export const TRACE_BUFFER_CAP = 100;
+/** Trace ring buffer cap. Spec §9.1; resolution of §12.4 "make configurable"—default 128, settings hook deferred to Phase 8. */
+export const TRACE_BUFFER_CAP = 128;
