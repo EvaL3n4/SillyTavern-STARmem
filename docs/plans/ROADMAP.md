@@ -459,6 +459,8 @@ _Appended after each phase ships. Format: `## Phase N—<date>`, with notes on s
 
 3. **Destructure-for-delete pattern doesn't satisfy eslint+tsc together.** Tried `const { provenance: _p, ...rest } = baseFields` in the "rejects missing provenance" test. eslint flagged `_p` as unused despite the underscore prefix (the flat config's `no-unused-vars` has `argsIgnorePattern: '^_'` but not `varsIgnorePattern`). Switched to mutating `delete` on a shallow copy. Worth adding `varsIgnorePattern: '^_'` to the eslint rule in Phase 2 if this pattern recurs.
 
+4. **ST has two metadata APIs; extensions must use the camelCase one.** Initial `state.js` read `globalThis.chat_metadata` directly, banking on ST's module binding (`export let chat_metadata = {}` in `public/script.js`) leaking onto the window. Eva caught this at Phase 1 close. The canonical extension surface is `SillyTavern.getContext()`, which returns `{ chatMetadata, saveMetadataDebounced, ... }` — see `public/scripts/st-context.js` lines 132-133 for the mapping. Direct globals are fragile and not ST's documented API. Fixed in commit `50b8e72`: resolve `getContext()` on every read/write (ST swaps `chatMetadata` on chat switch), and `write()` throws a descriptive error when context is absent so Phase 8 integration bugs fail loud instead of persisting to a dangling global. **For Phase 8:** when wiring the ST integration, confirm `SillyTavern.getContext()` is available at APP_READY, not earlier.
+
 **Notes for Phase 2 (Lifecycle):**
 
 - Lifecycle math lives in `src/lifecycle/*.js`—pure functions, no state mutation. Import types from `core/schema.js` (already has `Lifecycle` and `Maturity` typedefs).
