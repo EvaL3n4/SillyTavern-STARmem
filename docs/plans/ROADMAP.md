@@ -447,7 +447,25 @@ These are v2.1+ considerations. Do not implement them in any phase.
 
 _Appended after each phase ships. Format: `## Phase N—<date>`, with notes on surprises, scope changes, and lessons for subsequent phases._
 
-_(To be filled as we go.)_
+## Phase 1—2026-04-20
+
+**What shipped:** `src/core/schema.js` (typedefs + enum guards + `createEmptyState`), `src/memory/entry.js` (`createEntry`/`generateEntryId`/`isValidEntry`—total validator), `src/core/lock.js` (per-chat async mutex, promise-chain implementation), `src/core/state.js` (injectable backend, loose state shape check, deep-clone round-trip), and an integration round-trip test that also includes a control demonstration of the lock-free hazard. 5 commits this phase (plus the plan doc). 46 tests passing across 7 suites. Lint, typecheck, test all green.
+
+**Surprises:**
+
+1. **Subagent `~` trap.** Dispatched Task 1 via `delegate_task` expecting `cd ~/SillyTavern/...` to hit Eva's profile sandbox (`/home/opus/.hermes/profiles/hanami/home/...`). It didn't—subagent shells resolve `~` to the real `/home/opus`, so the subagent modified v1 at `/home/opus/SillyTavern/...` instead. Aborted, reverted v1, and switched to controller-executed tasks for the rest of Phase 1. **For Phase 2+:** if subagents are used, always pass absolute paths and never rely on `~` or relative home resolution. Verify post-delegation with `git log -1` on the intended target.
+
+2. **Test fixtures need explicit `@type` for literal-narrowing.** The entry tests' `baseFields` object with `scope: 'episodic'` was widened to `string` by tsc, which then rejected subsequent `createEntry({ ...baseFields })` calls because `Scope` is a union of three literals. Fix: annotate the fixture with `/** @type {Parameters<typeof createEntry>[0]} */`. Phase 2+ lifecycle tests will likely hit the same pattern with `Maturity`.
+
+3. **Destructure-for-delete pattern doesn't satisfy eslint+tsc together.** Tried `const { provenance: _p, ...rest } = baseFields` in the "rejects missing provenance" test. eslint flagged `_p` as unused despite the underscore prefix (the flat config's `no-unused-vars` has `argsIgnorePattern: '^_'` but not `varsIgnorePattern`). Switched to mutating `delete` on a shallow copy. Worth adding `varsIgnorePattern: '^_'` to the eslint rule in Phase 2 if this pattern recurs.
+
+**Notes for Phase 2 (Lifecycle):**
+
+- Lifecycle math lives in `src/lifecycle/*.js`—pure functions, no state mutation. Import types from `core/schema.js` (already has `Lifecycle` and `Maturity` typedefs).
+- The hysteresis test is the important one: oscillate importance 60→70→60 and verify maturity stays `validated`. Golden-value tests are the easiest way to pin formulas; the roadmap lists the expected value `importance=50 → 7 accesses → 71`.
+- If lifecycle tests use a fixture Lifecycle object, annotate it with `/** @type {import('../../src/core/schema.js').Lifecycle} */` from the start to avoid the widening issue from surprise #2.
+- `withWriteLock` exists but is not imported by lifecycle—lifecycle is pure. The lock is caller's responsibility at mutation sites (consolidation in Phase 6).
+- The `_resetLocksForTests` and `_resetBackendForTests` escape hatches are the model: test-only exports get a leading underscore and a comment explaining they're not production code.
 
 ## Phase 0—2026-04-20
 
