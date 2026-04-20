@@ -94,6 +94,10 @@ describe('constants', () => {
         expect(CONSOLIDATION.PERSONA_REBUILD_SUGGESTION_THRESHOLD).toBe(100);
     });
 
+    test('DEDUP_JACCARD_THRESHOLD is 0.7 (spec §6.3; Phase 9 tunes)', () => {
+        expect(CONSOLIDATION.DEDUP_JACCARD_THRESHOLD).toBe(0.7);
+    });
+
     test('TRACE_BUFFER_CAP matches Phase 4 decision (spec §12.4 resolution)', () => {
         expect(TRACE_BUFFER_CAP).toBe(128);
     });

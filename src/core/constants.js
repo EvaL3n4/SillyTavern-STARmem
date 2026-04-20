@@ -107,6 +107,8 @@ export const CONSOLIDATION = Object.freeze({
     BATCH_SIZE: 5,
     /** Episodic entries added before suggesting a Persona rebuild. Spec §6.4. */
     PERSONA_REBUILD_SUGGESTION_THRESHOLD: 100,
+    /** Dedup Jaccard threshold for same-subject merge. Spec §6.3; opening value, Phase 9 tunes. */
+    DEDUP_JACCARD_THRESHOLD: 0.7,
 });
 
 /** Trace ring buffer cap. Spec §9.1; resolution of §12.4 "make configurable"—default 128, settings hook deferred to Phase 8. */

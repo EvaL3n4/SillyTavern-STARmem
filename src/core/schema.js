@@ -69,6 +69,8 @@ import { SCOPES, EDGE_TYPES, MATURITY_TIERS } from './constants.js';
  * @typedef {object} Runtime
  * @property {string | null} lastConsolidation   - ISO timestamp or null.
  * @property {boolean} pendingPersonaRebuild
+ * @property {boolean} consolidating              - True while consolidate() holds the write lock.
+ * @property {number} episodicCountSinceLastRebuild - Increments per new Episodic entry; flips pendingPersonaRebuild at threshold.
  * @property {object[]} traces                    - Ring buffer, cap TRACE_BUFFER_CAP.
  */
 
@@ -123,6 +125,8 @@ export function createEmptyState() {
         runtime: {
             lastConsolidation: null,
             pendingPersonaRebuild: false,
+            consolidating: false,
+            episodicCountSinceLastRebuild: 0,
             traces: [],
         },
     };

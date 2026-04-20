@@ -42,6 +42,8 @@ describe('schema', () => {
         expect(s.tierCaches).toEqual({ exact: {}, fuzzy: {} });
         expect(s.runtime.lastConsolidation).toBe(null);
         expect(s.runtime.pendingPersonaRebuild).toBe(false);
+        expect(s.runtime.consolidating).toBe(false);
+        expect(s.runtime.episodicCountSinceLastRebuild).toBe(0);
         expect(s.runtime.traces).toEqual([]);
     });
 
