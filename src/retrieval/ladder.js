@@ -3,20 +3,18 @@
  * with working-buffer prepend, access-event bumps on returned entries, and
  * a single trace per call.
  *
- * Tier 3 is currently an identity stub — resolves when Tier 2 had results
- * but missed its exit condition. Phase 5 replaces the stub with MAGMA-lite
- * beam search on the graph.
- *
  * @module retrieval/ladder
  * @see docs/specs/2026-04-20-starmem-v2-design.md §5
  */
 
+import { RETRIEVAL } from '../core/constants.js';
 import { applyAccessEvent } from '../lifecycle/index.js';
 import { classify } from './classifier.js';
 import { getScorerId } from './scorer.js';
 import { tier0, recordTier0 } from './tier0-exact.js';
 import { tier1, recordTier1 } from './tier1-fuzzy.js';
 import { tier2 } from './tier2-bm25.js';
+import { tier3 } from './tier3-graph.js';
 import { floor } from './floor.js';
 import { logTrace, buildTrace } from './trace.js';
 import { prependWorking } from './workingBuffer.js';
@@ -221,23 +219,32 @@ export function retrieve(state, queryStr, opts = {}) {
         };
     }
 
-    // --- Tier 3 (stub: identity passthrough of Tier 2's scored seeds) ---
+    // --- Tier 3: intent-routed graph expansion ---
     if (t2.scored.length > 0) {
-        const topK = t2.scored.slice(0, k);
+        const seeds = t2.scored.slice(0, RETRIEVAL.TIER3_SEEDS_K).map(r => r.entry);
+        const t3Scored = tier3(state, seeds, queryStr, classifier, { now, k });
+
+        // Tier 3 produced nothing — fall through to Floor with Tier 2 prefix in trace
+        if (t3Scored.length === 0) {
+            return runFloorBranch(state, queryStr, classifier, scorerId, working, now, k, {
+                perTier2: t2.scored.map(r => ({ id: r.entry.id, bm25: r.bm25, score: r.score })),
+            });
+        }
+
+        const topK = t3Scored;
         const entriesOnly = topK.map(r => r.entry);
         let cached = recordTier0(state, queryStr, entriesOnly);
         cached = recordTier1(cached, queryStr, entriesOnly);
         const final = applyAccessEventsToReturned(cached, entriesOnly);
         const prepended = prependWorking(topK, working, now);
-        const tierDetails = topK.map(r => ({ id: r.entry.id, bm25: r.bm25, score: r.score }));
         const trace = buildTrace({
             timestamp: now.toISOString(),
             query: queryStr,
             classifier,
             tierResolved: 3,
             perTier: {
-                '2': tierDetails,
-                '3': tierDetails,     // stub: same as Tier 2 seeds; Phase 5 diverges
+                '2': t2.scored.map(r => ({ id: r.entry.id, bm25: r.bm25, score: r.score })),
+                '3': topK.map(r => ({ id: r.entry.id, bm25: r.bm25, score: r.score })),
             },
             finalRanking: prepended.map(r => r.entry.id),
             scorerId,

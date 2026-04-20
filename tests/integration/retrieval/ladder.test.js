@@ -128,3 +128,59 @@ describe('retrieve (ladder integration)', () => {
         expect(r.entries.length).toBeGreaterThan(0);
     });
 });
+
+describe('retrieve — Tier 3 (real, Phase 5)', () => {
+    afterEach(() => _resetScorerForTests());
+
+    test('Tier 3 expands beyond Tier 2 seeds via graph edges', () => {
+        registerScorer('flat', () => 1.0);
+        setScorer('flat');
+        const entries = [
+            ep('a', 'Alice Marseille', 'alice', ['location']),
+            ep('b', 'Alice Paris', 'alice', ['location']),
+            ep('c', 'Bob Tokyo', 'bob', ['location']),
+        ];
+        const s = seed(entries);
+        s.graph.edges.push({ from: 'a', to: 'b', type: /** @type {'mentions'} */ ('mentions'), weight: 0.5 });
+        const r = retrieve(s, 'alice', { now });
+        expect(r.tierResolved).toBe(3);
+        const ids = r.entries.map(e => e.id);
+        expect(ids).toContain('a');
+        expect(ids).toContain('b');
+    });
+
+    test("Tier 3 trace records its own perTier['3'] (not a copy of '2')", () => {
+        registerScorer('flat', () => 1.0);
+        setScorer('flat');
+        const s = seed([
+            ep('a', 'Alice Marseille'),
+            ep('b', 'Alice Paris'),
+        ]);
+        s.graph.edges.push({ from: 'a', to: 'b', type: /** @type {'mentions'} */ ('mentions'), weight: 0.5 });
+        const r = retrieve(s, 'alice', { now });
+        expect(r.tierResolved).toBe(3);
+        const perTier2 = r.trace.perTier['2'];
+        const perTier3 = r.trace.perTier['3'];
+        expect(Array.isArray(perTier2)).toBe(true);
+        expect(Array.isArray(perTier3)).toBe(true);
+        expect(perTier3).not.toBe(perTier2);
+    });
+
+    test('Tier 3 resolution: access events fire on Tier 3 output only, not Tier 2 seeds', () => {
+        registerScorer('flat', () => 1.0);
+        setScorer('flat');
+        const s = seed([
+            ep('a', 'Alice Marseille'),
+            ep('b', 'Alice Paris'),
+            ep('c', 'Carol Tokyo'),
+        ]);
+        s.graph.edges.push({ from: 'a', to: 'b', type: /** @type {'mentions'} */ ('mentions'), weight: 0.5 });
+        const r = retrieve(s, 'alice', { now, k: 2 });
+        expect(r.tierResolved).toBe(3);
+        const returnedIds = r.entries.map(e => e.id);
+        for (const id of returnedIds) {
+            expect(r.state.entries[id].lifecycle.accessCount).toBe(1);
+        }
+        expect(r.state.entries['c'].lifecycle.accessCount).toBe(0);
+    });
+});
