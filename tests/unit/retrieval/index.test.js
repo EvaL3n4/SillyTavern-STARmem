@@ -9,6 +9,8 @@ describe('retrieval barrel exports', () => {
         expect(typeof retrieval.defaultScorer).toBe('function');
         expect(typeof retrieval.setScorer).toBe('function');
         expect(typeof retrieval.getScorer).toBe('function');
+        expect(typeof retrieval.getScorerId).toBe('function');
+        expect(typeof retrieval.registerScorer).toBe('function');
         expect(typeof retrieval._resetScorerForTests).toBe('function');
         expect(typeof retrieval.prependWorking).toBe('function');
     });

@@ -2,6 +2,8 @@ import {
     defaultScorer,
     setScorer,
     getScorer,
+    getScorerId,
+    registerScorer,
     _resetScorerForTests,
 } from '../../../src/retrieval/scorer.js';
 import { createEntry } from '../../../src/memory/entry.js';
@@ -70,28 +72,52 @@ describe('defaultScorer', () => {
     });
 });
 
-describe('scorer injection', () => {
+describe('scorer registry', () => {
     afterEach(() => _resetScorerForTests());
 
     test('getScorer returns defaultScorer initially', () => {
         expect(getScorer()).toBe(defaultScorer);
     });
 
-    test('setScorer replaces the active scorer', () => {
-        const constant = () => 42;
-        setScorer(constant);
-        expect(getScorer()).toBe(constant);
-        expect(getScorer()(entry(), 'q', { now: new Date(), bm25: 1 })).toBe(42);
+    test('getScorerId returns "default" initially', () => {
+        expect(getScorerId()).toBe('default');
     });
 
-    test('_resetScorerForTests restores the default', () => {
-        setScorer(() => 0);
+    test('registerScorer + setScorer switches the active scorer by id', () => {
+        const constant = () => 42;
+        registerScorer('constant-42', constant);
+        setScorer('constant-42');
+        expect(getScorer()).toBe(constant);
+        expect(getScorerId()).toBe('constant-42');
+    });
+
+    test('setScorer throws on unregistered id', () => {
+        expect(() => setScorer('nope')).toThrow(/registered/);
+    });
+
+    test('registerScorer rejects non-string id', () => {
+        expect(() => registerScorer(/** @type {any} */ (42), () => 0)).toThrow(/id/);
+    });
+
+    test('registerScorer rejects non-function fn', () => {
+        expect(() => registerScorer('x', /** @type {any} */ (null))).toThrow(/function/);
+    });
+
+    test('registerScorer rejects collision with existing non-default id', () => {
+        registerScorer('x', () => 1);
+        expect(() => registerScorer('x', () => 2)).toThrow(/already/);
+    });
+
+    test('registerScorer permits re-registering "default" with defaultScorer (idempotent)', () => {
+        expect(() => registerScorer('default', defaultScorer)).not.toThrow();
+    });
+
+    test('_resetScorerForTests restores default registry and active id', () => {
+        registerScorer('x', () => 1);
+        setScorer('x');
         _resetScorerForTests();
         expect(getScorer()).toBe(defaultScorer);
-    });
-
-    test('setScorer rejects non-functions', () => {
-        expect(() => setScorer(/** @type {any} */ (null))).toThrow(/function/);
-        expect(() => setScorer(/** @type {any} */ (42))).toThrow(/function/);
+        expect(getScorerId()).toBe('default');
+        expect(() => setScorer('x')).toThrow(/registered/);
     });
 });

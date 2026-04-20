@@ -48,28 +48,60 @@ export const defaultScorer = (entry, _query, context) => {
         * maturityBoost(maturity);
 };
 
-/** @type {Scorer} */
-let current = defaultScorer;
+/** @type {Map<string, Scorer>} */
+const scorers = new Map([['default', defaultScorer]]);
+
+/** @type {string} */
+let currentId = 'default';
 
 /**
- * Register a new scorer. Phase 8's settings UI calls this when the user
- * switches scorer in A/B mode.
+ * Register a scorer under a string id. Traces record the id, so pick a stable
+ * symbolic name. Re-registering the literal `defaultScorer` under 'default' is
+ * a no-op; any other collision throws.
  *
+ * @param {string} id
  * @param {Scorer} fn
  */
-export function setScorer(fn) {
-    if (typeof fn !== 'function') {
-        throw new Error(`setScorer: fn must be a function, got ${typeof fn}`);
+export function registerScorer(id, fn) {
+    if (typeof id !== 'string' || id.length === 0) {
+        throw new Error(`registerScorer: id must be a non-empty string, got ${typeof id}`);
     }
-    current = fn;
+    if (typeof fn !== 'function') {
+        throw new Error(`registerScorer: fn must be a function, got ${typeof fn}`);
+    }
+    if (id === 'default' && fn === defaultScorer) return;
+    if (scorers.has(id)) {
+        throw new Error(`registerScorer: id '${id}' is already registered`);
+    }
+    scorers.set(id, fn);
+}
+
+/**
+ * Activate a registered scorer by id. Phase 8's settings UI calls this when
+ * the user switches scorer in A/B mode.
+ *
+ * @param {string} id
+ */
+export function setScorer(id) {
+    if (!scorers.has(id)) {
+        throw new Error(`setScorer: id '${id}' is not registered`);
+    }
+    currentId = id;
 }
 
 /** @returns {Scorer} */
 export function getScorer() {
-    return current;
+    return /** @type {Scorer} */ (scorers.get(currentId));
 }
 
-/** Test-only escape hatch. */
+/** @returns {string} */
+export function getScorerId() {
+    return currentId;
+}
+
+/** Test-only escape hatch. Clears the registry back to the default-only state. */
 export function _resetScorerForTests() {
-    current = defaultScorer;
+    scorers.clear();
+    scorers.set('default', defaultScorer);
+    currentId = 'default';
 }

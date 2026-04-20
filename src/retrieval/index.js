@@ -7,5 +7,5 @@
 
 export { buildIndex, query, tokenize } from './bm25.js';
 export { classify } from './classifier.js';
-export { defaultScorer, setScorer, getScorer, _resetScorerForTests } from './scorer.js';
+export { defaultScorer, setScorer, getScorer, getScorerId, registerScorer, _resetScorerForTests } from './scorer.js';
 export { prependWorking } from './workingBuffer.js';
