@@ -58,6 +58,16 @@ export const RETRIEVAL = Object.freeze({
     TIER3_LAMBDA_2: 0.3,
     /** Tier 3 max hops. Spec §5.1. */
     TIER3_MAX_HOPS: 2,
+    /** BM25+ term-frequency saturation. Standard default. */
+    BM25_K1: 1.2,
+    /** BM25+ length normalization. Standard default. */
+    BM25_B: 0.75,
+    /** BM25+ lower-bound delta (Lv & Zhai 2011). */
+    BM25_DELTA: 1.0,
+    /** Integer replication factor for subject tokens in the BM25 document. */
+    SUBJECT_BOOST: 2,
+    /** Integer replication factor for tag tokens in the BM25 document. */
+    TAG_BOOST: 2,
 });
 
 /** Consolidation trigger thresholds. Spec §6.2, §6.3, §6.4. */

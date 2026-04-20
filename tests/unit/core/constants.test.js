@@ -52,6 +52,14 @@ describe('constants', () => {
         expect(RETRIEVAL.TIER3_MAX_HOPS).toBe(2);
     });
 
+    test('RETRIEVAL BM25 constants match plan Phase 3', () => {
+        expect(RETRIEVAL.BM25_K1).toBe(1.2);
+        expect(RETRIEVAL.BM25_B).toBe(0.75);
+        expect(RETRIEVAL.BM25_DELTA).toBe(1.0);
+        expect(RETRIEVAL.SUBJECT_BOOST).toBe(2);
+        expect(RETRIEVAL.TAG_BOOST).toBe(2);
+    });
+
     test('CONSOLIDATION defaults match spec §6', () => {
         expect(CONSOLIDATION.WORKING_BUFFER_THRESHOLD).toBe(10);
         expect(CONSOLIDATION.IDLE_TRIGGER_SECONDS).toBe(60);
