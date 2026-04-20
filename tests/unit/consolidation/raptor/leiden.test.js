@@ -150,3 +150,102 @@ describe('modularity — golden values', () => {
         expect(diffHigh).toBeGreaterThan(diffLow);
     });
 });
+
+import { buildCommunityStats, localMove, shuffled } from '../../../../src/consolidation/raptor/leiden.js';
+
+describe('shuffled', () => {
+    test('deterministic for same seed', () => {
+        const a = shuffled(['a', 'b', 'c', 'd', 'e'], 42);
+        const b = shuffled(['a', 'b', 'c', 'd', 'e'], 42);
+        expect(a).toEqual(b);
+    });
+    test('different seeds yield different orders (probabilistic)', () => {
+        const a = shuffled(['a', 'b', 'c', 'd', 'e', 'f', 'g'], 1);
+        const b = shuffled(['a', 'b', 'c', 'd', 'e', 'f', 'g'], 2);
+        expect(a).not.toEqual(b);
+    });
+    test('preserves set of elements', () => {
+        const a = shuffled(['a', 'b', 'c'], 7);
+        expect(new Set(a)).toEqual(new Set(['a', 'b', 'c']));
+    });
+});
+
+describe('buildCommunityStats', () => {
+    test('empty graph → empty stats', () => {
+        const g = { nodes: [], adjacency: new Map(), totalWeight: 0 };
+        const s = buildCommunityStats(g, { membership: new Map(), communityCount: 0 });
+        expect(s.size).toBe(0);
+    });
+
+    test('two-triangle graph stats', () => {
+        const edges = [
+            ['a', 'b', 1], ['b', 'c', 1], ['a', 'c', 1],
+            ['d', 'e', 1], ['e', 'f', 1], ['d', 'f', 1],
+            ['a', 'd', 0.1],
+        ];
+        const g = buildGraph(/** @type {any} */ (edges));
+        const part = partitionFrom({ a: 0, b: 0, c: 0, d: 1, e: 1, f: 1 });
+        const s = buildCommunityStats(g, part);
+        // Community 0: {a, b, c}, 3 internal edges × 2 = 6 internal; degrees 2.1, 2, 2 → 6.1 tot
+        expect(s.get(0)?.in).toBeCloseTo(6, 6);
+        expect(s.get(0)?.tot).toBeCloseTo(6.1, 6);
+        expect(s.get(1)?.in).toBeCloseTo(6, 6);
+        expect(s.get(1)?.tot).toBeCloseTo(6.1, 6);
+    });
+});
+
+describe('localMove', () => {
+    test('converges to the obvious two-cluster partition on two-triangle graph', () => {
+        const edges = [
+            ['a', 'b', 1], ['b', 'c', 1], ['a', 'c', 1],
+            ['d', 'e', 1], ['e', 'f', 1], ['d', 'f', 1],
+            ['a', 'd', 0.1],
+        ];
+        const g = buildGraph(/** @type {any} */ (edges));
+        const part = singletonPartition(g);
+        const moves = localMove(g, part, 1.0, 42);
+        expect(moves).toBeGreaterThan(0);
+
+        // Post-move: a, b, c share a community; d, e, f share a different community.
+        const ca = part.membership.get('a');
+        expect(part.membership.get('b')).toBe(ca);
+        expect(part.membership.get('c')).toBe(ca);
+        const cd = part.membership.get('d');
+        expect(part.membership.get('e')).toBe(cd);
+        expect(part.membership.get('f')).toBe(cd);
+        expect(ca).not.toBe(cd);
+    });
+
+    test('localMove on an already-optimal partition does nothing', () => {
+        const edges = [
+            ['a', 'b', 1], ['b', 'c', 1], ['a', 'c', 1],
+            ['d', 'e', 1], ['e', 'f', 1], ['d', 'f', 1],
+            ['a', 'd', 0.1],
+        ];
+        const g = buildGraph(/** @type {any} */ (edges));
+        const part = partitionFrom({ a: 0, b: 0, c: 0, d: 1, e: 1, f: 1 });
+        const moves = localMove(g, part, 1.0, 7);
+        expect(moves).toBe(0);
+    });
+
+    test('modularity is non-decreasing after localMove', () => {
+        const edges = [
+            ['a', 'b', 0.8], ['b', 'c', 0.9], ['a', 'c', 0.7],
+            ['c', 'd', 0.3],
+            ['d', 'e', 0.85], ['e', 'f', 0.75], ['d', 'f', 0.9],
+        ];
+        const g = buildGraph(/** @type {any} */ (edges));
+        const part = singletonPartition(g);
+        const qBefore = modularity(g, part, 1.0);
+        localMove(g, part, 1.0, 3);
+        const qAfter = modularity(g, part, 1.0);
+        expect(qAfter).toBeGreaterThanOrEqual(qBefore - 1e-9);
+    });
+
+    test('empty graph → 0 moves', () => {
+        const g = { nodes: [], adjacency: new Map(), totalWeight: 0 };
+        const p = { membership: new Map(), communityCount: 0 };
+        expect(localMove(g, p, 1.0)).toBe(0);
+    });
+});
+
