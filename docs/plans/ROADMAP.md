@@ -447,6 +447,32 @@ These are v2.1+ considerations. Do not implement them in any phase.
 
 _Appended after each phase ships. Format: `## Phase N—<date>`, with notes on surprises, scope changes, and lessons for subsequent phases._
 
+## Phase 3—2026-04-20
+
+**What shipped:** BM25+ index (`src/retrieval/bm25.js`, hand-rolled, subject/tag boost via integer replication), rule-based 3-type classifier (`src/retrieval/classifier.js`, temporal > relational > factual priority), pluggable scorer with context-object signature (`src/retrieval/scorer.js`, deviation from spec §9.2 — see below), unconditional working-buffer prepend (`src/retrieval/workingBuffer.js`, sentinel `score: Infinity`), barrel (`src/retrieval/index.js`). 6 commits this phase plus plan + retro. **144 tests passing across 15 suites** (88 Phase 0-2 baseline + 56 new Phase 3 tests: 9 constants delta + 15 bm25 + 20 classifier + 11 scorer + 7 workingBuffer + 2 barrel).
+
+**Execution mode:** Subagent-driven, review stages skipped, absolute-path + tripwire-hash protocols from the skill. Five delegations ran serially; total wall-clock for implementation ~5 minutes. BM25 (Task 1) was the biggest risk — math could be wrong in ways that only show up at benchmark time. All 15 BM25 tests including the 6 golden-ranking cases passed on first run; the Alice/Bob/Marseille corpus produces sensible orderings.
+
+**Surprises:**
+
+1. **TAG_BOOST chose integer 2, not plan's fractional 1.5.** The plan explicitly called out that "fractional boosts belong at scorer level, not tokenizer level," which implies integer replication at the tokenizer. The plan's own ALGO section also says "Use integer replication for SUBJECT_BOOST/TAG_BOOST—they're weights, not fractions, at this level." So the 1.5 was plan-text inconsistency. Resolved by setting TAG_BOOST=2. If Phase 9 benchmarking shows tag matches outrank subject matches in unhelpful ways, this is the knob to tune — but it needs fractional support first, which means a refactor.
+
+2. **All five subagent tasks passed first try.** Zero regex tweaks in the classifier, zero BM25 ranking debug, zero context-object signature confusion. The "verbatim code in plan + static checks + additive changes" recipe from the skill paid off again. Fourth phase in a row with clean subagent delegation; the pattern is solid.
+
+3. **Scorer signature deviation is now permanent.** `(entry, query, context)` with `context = { now, bm25, intent? }` differs from spec §9.2's `(entry, query, lifecycle)`. Reasons: spec signature had no clock (forcing implicit `new Date()`, non-deterministic) and redundant `lifecycle` (already inside `entry.lifecycle`). Eva flagged the risk before execution, so this was caught at plan time, not later. **Spec needs amendment** — `docs/specs/2026-04-20-starmem-v2-design.md` §9.2 should be updated to match what's shipped, or we carry a persistent "code disagrees with spec" lint against our own docs. Defer to a standalone `docs(spec)` commit when we can spare the context switch.
+
+**Notes for Phase 4 (Retrieval Tiers):**
+
+- Inter-phase contract at the top of `docs/plans/phase-3-retrieval-core.md` is stable and imported-from throughout `src/retrieval/index.js`. Phase 4's ladder orchestrator can `import { buildIndex, query, tokenize, classify, defaultScorer, getScorer, prependWorking } from '../retrieval/index.js'`.
+- `applyAccessEvent` (lifecycle) is still NOT wired. Phase 4's ladder should call it only for entries actually returned to the user, not every candidate scored. This is a behavior decision, not a code one.
+- `runtime.traces` ring buffer is Phase 4 territory. The trace shape in spec §9.1 includes the active scorer's identity — when `setScorer` is non-default, traces need a label. Consider adding an optional `.name` property to Scorer functions, or a registry, before traces start recording.
+- Tier 1 Jaccard reuses `tokenize` from `bm25.js` — already exported. Good.
+- Tier 0 cache is keyed on query hash; normalize the query (trim + lowercase) before hashing to avoid trivial misses. The classifier can stay case-sensitive because its patterns use `/i` flag.
+- Tier 2's "exit condition" is `top score ≥ τ_confidence AND gap ≥ τ_gap`. These thresholds aren't in `constants.js` yet — Phase 4 task 0 should add them as sub-commit before the ladder lands.
+- Multiplicative scorer can produce a zero score when any factor is zero. The workingBuffer prepend bypasses this via `Infinity`, but Phase 4 should decide how to handle Tier 2 results with `score === 0` — probably exclude them from the Floor fallback (they'd sort below useful results anyway).
+
+---
+
 ## Phase 2—2026-04-20
 
 **What shipped:** `src/lifecycle/recency.js` (`recencyAt` + `MS_PER_DAY`), `src/lifecycle/importance.js` (`applyAccessEvent`/`applyUpdateEvent`/`applyDailyDecay`—all pure, all clamped), `src/lifecycle/maturity.js` (`maturityFor` with hysteresis + single-step transitions, `maturityBoost`), `src/lifecycle/index.js` (barrel re-export for Phase 3 consumers). 4 commits. **88 tests passing across 10 suites** (46 Phase 0+1 baseline + 42 new Phase 2 tests). Lint, typecheck, test all green.
