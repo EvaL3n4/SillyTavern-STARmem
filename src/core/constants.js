@@ -111,5 +111,29 @@ export const CONSOLIDATION = Object.freeze({
     DEDUP_JACCARD_THRESHOLD: 0.7,
 });
 
+/** Persona rebuild (Enhanced RAPTOR) parameters. Spec §6.4 / wiki/raptor.md. */
+export const PERSONA_REBUILD = Object.freeze({
+    /** k-NN base neighbor count at the bottom layer. Spec §6.4. */
+    K_BASE: 15,
+    /** k-NN increment per layer ascending. Spec §6.4. */
+    K_STEP: 5,
+    /** Leiden resolution parameter base at bottom layer. Spec §6.4. */
+    GAMMA_BASE: 1.0,
+    /** Leiden resolution decrement per layer. Spec §6.4. */
+    GAMMA_STEP: 0.2,
+    /** Maximum tree depth. Stop recursing beyond this. */
+    MAX_DEPTH: 3,
+    /** Minimum nodes required to attempt clustering (need >= 2 x this to form 2 clusters). */
+    MIN_CLUSTER_SIZE: 2,
+    /** Leiden convergence tolerance - stop when modularity gain is below this across an outer iteration. */
+    LEIDEN_TOLERANCE: 1e-6,
+    /** Leiden maximum outer iterations, safety cap. */
+    LEIDEN_MAX_OUTER_ITERATIONS: 32,
+    /** LLM max tokens per cluster summary. Persona summaries are compact. */
+    SUMMARY_MAX_TOKENS: 512,
+    /** Embedding dimension for the synthetic test client. Production dimension is provider-dependent. */
+    SYNTHETIC_EMBEDDING_DIM: 16,
+});
+
 /** Trace ring buffer cap. Spec §9.1; resolution of §12.4 "make configurable"—default 128, settings hook deferred to Phase 8. */
 export const TRACE_BUFFER_CAP = 128;

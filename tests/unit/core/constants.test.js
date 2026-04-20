@@ -7,6 +7,7 @@ import {
     RETRIEVAL,
     EDGE_TYPE_WEIGHTS,
     CONSOLIDATION,
+    PERSONA_REBUILD,
     TRACE_BUFFER_CAP,
 } from '../../../src/core/constants.js';
 
@@ -100,5 +101,18 @@ describe('constants', () => {
 
     test('TRACE_BUFFER_CAP matches Phase 4 decision (spec §12.4 resolution)', () => {
         expect(TRACE_BUFFER_CAP).toBe(128);
+    });
+
+    test('PERSONA_REBUILD matches spec §6.4 verbatim', () => {
+        expect(PERSONA_REBUILD.K_BASE).toBe(15);
+        expect(PERSONA_REBUILD.K_STEP).toBe(5);
+        expect(PERSONA_REBUILD.GAMMA_BASE).toBe(1.0);
+        expect(PERSONA_REBUILD.GAMMA_STEP).toBe(0.2);
+        expect(PERSONA_REBUILD.MAX_DEPTH).toBe(3);
+        expect(PERSONA_REBUILD.MIN_CLUSTER_SIZE).toBe(2);
+        expect(PERSONA_REBUILD.LEIDEN_TOLERANCE).toBeCloseTo(1e-6, 10);
+        expect(PERSONA_REBUILD.LEIDEN_MAX_OUTER_ITERATIONS).toBe(32);
+        expect(PERSONA_REBUILD.SUMMARY_MAX_TOKENS).toBe(512);
+        expect(PERSONA_REBUILD.SYNTHETIC_EMBEDDING_DIM).toBe(16);
     });
 });
