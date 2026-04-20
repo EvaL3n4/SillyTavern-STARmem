@@ -86,6 +86,49 @@ function applyAccessEventsToReturned(state, entries) {
 }
 
 /**
+ * Run the Floor branch of the ladder. Factored out so Tier 3 can fall through
+ * to Floor when graph expansion yields nothing.
+ *
+ * @param {State} state
+ * @param {string} queryStr
+ * @param {'factual'|'relational'|'temporal'} classifier
+ * @param {string} scorerId
+ * @param {Entry[]} working
+ * @param {Date} now
+ * @param {number} k
+ * @param {{ perTier2?: { id: string, bm25: number, score: number }[] }} [tracePrefix]
+ * @returns {RetrieveResult}
+ */
+function runFloorBranch(state, queryStr, classifier, scorerId, working, now, k, tracePrefix = {}) {
+    const floorResults = floor(state, { now, k });
+    let s1 = state;
+    if (floorResults.length > 0) {
+        const final = applyAccessEventsToReturned(s1, floorResults.map(r => r.entry));
+        s1 = final.state;
+    }
+    const prepended = prependWorking(floorResults, working, now);
+    /** @type {Record<string, unknown>} */
+    const perTier = {};
+    if (tracePrefix.perTier2) perTier['2'] = tracePrefix.perTier2;
+    const trace = buildTrace({
+        timestamp: now.toISOString(),
+        query: queryStr,
+        classifier,
+        tierResolved: 'floor',
+        perTier,
+        finalRanking: prepended.map(r => r.entry.id),
+        scorerId,
+    });
+    const nextState = logTrace(s1, trace);
+    return {
+        entries: prepended.map(r => r.entry),
+        tierResolved: 'floor',
+        trace,
+        state: nextState,
+    };
+}
+
+/**
  * Run the full retrieval ladder. Single entry point — Phase 8's
  * STARmemInterceptor calls this on every user turn.
  *
@@ -209,27 +252,5 @@ export function retrieve(state, queryStr, opts = {}) {
     }
 
     // --- Floor ---
-    const floorResults = floor(state, { now, k });
-    let s1 = state;
-    if (floorResults.length > 0) {
-        const final = applyAccessEventsToReturned(s1, floorResults.map(r => r.entry));
-        s1 = final.state;
-    }
-    const prepended = prependWorking(floorResults, working, now);
-    const trace = buildTrace({
-        timestamp: now.toISOString(),
-        query: queryStr,
-        classifier,
-        tierResolved: 'floor',
-        perTier: {},
-        finalRanking: prepended.map(r => r.entry.id),
-        scorerId,
-    });
-    const nextState = logTrace(s1, trace);
-    return {
-        entries: prepended.map(r => r.entry),
-        tierResolved: 'floor',
-        trace,
-        state: nextState,
-    };
+    return runFloorBranch(state, queryStr, classifier, scorerId, working, now, k);
 }
