@@ -1,0 +1,35 @@
+# Dependencies
+node_modules/
+.pnp.*
+.yarn/
+
+# Build artifacts
+dist/
+build/
+coverage/
+.nyc_output/
+
+# Test artifacts
+test-results/
+playwright-report/
+*.tsbuildinfo
+
+# Editor / OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Env
+.env
+.env.local
+.env.*.local
+
+# Logs
+*.log
+npm-debug.log*
+
+# Scratch
+*.tmp
+scratch/

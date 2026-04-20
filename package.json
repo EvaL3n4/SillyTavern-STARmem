@@ -1,0 +1,16 @@
+{
+    "name": "starmem",
+    "version": "2.0.0-dev",
+    "description": "STARmem — deterministic memory for SillyTavern roleplay",
+    "type": "module",
+    "private": true,
+    "scripts": {
+        "typecheck": "tsc --noEmit",
+        "lint": "eslint 'src/**/*.js'",
+        "lint:fix": "eslint 'src/**/*.js' --fix",
+        "test": "node --experimental-vm-modules node_modules/.bin/jest",
+        "test:watch": "node --experimental-vm-modules node_modules/.bin/jest --watch"
+    },
+    "devDependencies": {},
+    "dependencies": {}
+}

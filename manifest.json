@@ -1,0 +1,12 @@
+{
+    "display_name": "STARmem",
+    "loading_order": 100,
+    "requires": [],
+    "optional": [],
+    "generate_interceptor": "STARmemInterceptor",
+    "js": "index.js",
+    "css": "style.css",
+    "author": "EvaL3n4",
+    "version": "2.0.0-dev",
+    "homePage": "https://github.com/EvaL3n4/SillyTavern-STARmem"
+}
