@@ -447,6 +447,57 @@ These are v2.1+ considerations. Do not implement them in any phase.
 
 _Appended after each phase ships. Format: `## Phase N—<date>`, with notes on surprises, scope changes, and lessons for subsequent phases._
 
+## Phase 4—2026-04-20
+
+**What shipped:** Scorer registry refactor (`src/retrieval/scorer.js`, string-keyed via `registerScorer` / `setScorer(id)` / `getScorerId`), Tier 0 exact cache (`src/retrieval/tier0-exact.js`, FNV-1a hash of trim+lowercase query, `invalidateTier0Cache` hook for Phase 6), Tier 1 Jaccard fuzzy over recent query token sets (`src/retrieval/tier1-fuzzy.js`, θ=0.6 with `>=` comparison), Tier 2 BM25 wrapper with exit condition (`src/retrieval/tier2-bm25.js`, τ_conf=2.0 / τ_gap=0.5, zero-score filter pre-gap), Floor pure fallback (`src/retrieval/floor.js`, recency × (1 + importance/100) × maturity_boost), trace logger (`src/retrieval/trace.js`, 128-cap ring buffer with `scorerId` in trace shape), ladder orchestrator (`src/retrieval/ladder.js`, Tier 3 = identity stub until Phase 5), extended barrel (`src/retrieval/index.js`). 10 commits this phase plus plan + retro. **210 tests passing across 22 suites** (144 Phase 0-3 baseline + 66 new Phase 4 tests: 2 constants delta + 5 scorer registry delta + 14 tier0 + 17 tier1 + 8 tier2 + 7 floor + 5 trace + 9 ladder integration + barrel additions).
+
+**Execution mode:** Subagent-driven, reviews skipped per the skill's criteria (verbatim code + static checks per task), with Task 7 (ladder) flagged for eyeball verification in the controller. Seven delegations: Tasks 1, 2, 3, 6, 7 serial; Tasks 4 + 5 in parallel. Task 0 (constants delta) and Task 8 (barrel + retro) done directly in the controller — too mechanical for a subagent. Zero sandbox-path strays, zero summary confabulations requiring rework. Task 7 ladder landed green first try on all 9 integration tests including the applyAccessEvent-called-once-per-returned invariant; `grep`-based invariant audit in the controller confirmed five branches, five `logTrace`s, five `prependWorking`s, zero accidental double-bumps.
+
+**Decisions locked in the planning conversation (all held through execution):**
+
+1. τ_confidence=2.0, τ_gap=0.5 — opening values. Phase 9 will tune against real BM25 score distributions on LoCoMo/LongMemEval.
+2. TRACE_BUFFER_CAP bumped 100 → 128. Spec §12.4 "make configurable" deferred to Phase 8 settings panel; default stays in `constants.js`.
+3. Scorer identity via string registry (`registerScorer('id', fn)`, `getScorerId()`), NOT `.name`. Survives minification, re-exports, JSONL roundtrip. Breaking change from Phase 3's `setScorer(fn)` — no external callers existed yet.
+4. Tier 0 invalidation: long-term writes only (Phase 6's `consolidate()` calls `invalidateTier0Cache(state)`). Working-buffer appends do NOT invalidate — the prepend runs downstream of the cache.
+5. Tier 0 keys: FNV-1a 32-bit of trim+lowercase query, 8-char lowercase hex.
+6. Tier 1 candidate source: recent query token sets from `state.tierCaches.fuzzy`, NOT raw entry tokens. Matches spec §5's "near-duplicate queries" wording.
+7. Tier 2: zero-scored candidates filtered BEFORE the gap check (so `score===0` never counts as the #2 result).
+8. Floor: pure fallback. Runs only when Tiers 0-3 all yield empty scored lists.
+9. applyAccessEvent: called at ladder level, once per entry in the final returned list. Never on candidates that were scored but not returned. Verified by the `r.state.entries[id].lifecycle.accessCount` assertion in ladder.test.js.
+10. Tier 3 stub: identity passthrough of Tier 2's scored seeds when Tier 2 misses exit condition. Phase 5 replaces with MAGMA-lite beam search.
+
+**Surprises:**
+
+1. **Parallel subagent dispatch worked cleanly for Tasks 4 + 5.** Floor needs a JSDoc type import from tier2-bm25.js, which didn't exist yet in the Floor subagent's view of the worktree. The plan called this out and documented the fallback (inline object type for `@returns`); the Floor subagent took the fallback path. Task 4's subagent landed first, so the fallback wasn't strictly needed, but the guard was cheap insurance. No merge conflicts, no `git add -A` leaks.
+
+2. **Ladder invariant audit via grep was faster than re-reading 235 lines.** `grep -n "applyAccessEventsToReturned\|logTrace\|prependWorking\|recordTier"` showed the exact call-site distribution across the five branches in one pass. Saved a good five minutes of manual tracing and caught zero bugs — the subagent's implementation was correct the first time.
+
+3. **Floor running as pure fallback means Tier 3 stub resolves a LOT of queries right now.** Any query where Tier 2 has BM25 hits but the exit condition (τ_conf=2.0 with default scorer) isn't met falls through to Tier 3, which passes Tier 2's seeds unchanged. On LoCoMo-sized corpora this is probably most queries, because τ_conf=2.0 is a guess. Phase 9 benchmarking will move those thresholds; expect a shift in the tierResolved distribution toward Tier 2 once tuned.
+
+4. **The scorer registry was surprisingly small.** Only ~40 new LOC for `registerScorer` + `setScorer(id)` + `getScorerId` + `_resetScorerForTests` combined. The `.name`-based alternative would have been similar length but lossier across the JSONL roundtrip Phase 8's Traces tab needs. The decision from planning held up cleanly.
+
+**Notes for Phase 5 (Graph + Tier 3):**
+
+- `src/retrieval/ladder.js` has an explicit Tier 3 branch that resolves when `t2.scored.length > 0 && !t2.hit`. Phase 5's real `tier3(state, seeds, queryStr, intent)` slots into that branch — signature `(state, Entry[], string, Intent) → ScoredEntry[]`. The identity stub currently reuses Tier 2's scored list as the output; Phase 5's version should produce reranked results under the spec §5.1 beam-search formula.
+- `state.runtime.traces[i].perTier['3']` is currently populated with Tier 2's scored list as a placeholder. Phase 5 should emit its own Tier 3 scored list with different content (beam-search outputs, reranked under the multiplicative formula). The integration test `'Tier 3 stub: when Tier 2 misses exit condition but has results, ladder resolves at Tier 3'` will need a counterpart once Tier 3 is real: "Tier 3 changes ordering vs Tier 2 seeds on a multi-hop query."
+- `recordTier0` / `recordTier1` both run on Tier 3 resolutions — same cache layer as Tier 2 hits. Phase 5 doesn't need a separate cache for graph-expanded results; they share the query key.
+- If Phase 5 mutates state (it shouldn't — graph building is Phase 6's responsibility), it must also call `invalidateTier0Cache`. Better: keep Phase 5 pure.
+
+**Notes for Phase 6 (Consolidation):**
+
+- `invalidateTier0Cache(state)` is the hook. Call it inside the write lock after any long-term mutation that could change Tier 2's answer: new episodic entry added, edge written, importance/maturity bumped. Exported from `src/retrieval/tier0-exact.js` and re-exported from the barrel.
+- Tier 1's fuzzy cache is NOT invalidated on long-term writes. Rationale: fuzzy matches return entry ids, and `tier1()` derefs through `state.entries` at read time — stale ids get silently skipped. If Phase 9 traces show a high skipped-id rate (>~5%), add fuzzy invalidation as well. Defer until measured.
+- The scorer registry is module-level global. Phase 8's settings UI should call `registerScorer(id, fn)` on startup for each alternate scorer, then `setScorer(id)` when the user switches in A/B mode. Traces record whichever id is active at call time, so A/B comparisons are a JSONL filter away.
+
+**Notes for Phase 9 (Benchmarking):**
+
+- τ_confidence and τ_gap are the first knobs. Expect substantial movement — the guesses came from the planning conversation, not measurement. BM25+ with SUBJECT_BOOST=TAG_BOOST=2 pushes on-target matches into the 3-8 range on small corpora; τ_conf=2.0 and τ_gap=0.5 are conservative "something obvious happened" values.
+- FNV-1a collision rate over a 1000-query session: should be essentially zero at 32 bits with natural-language queries. Worth a smoke test in the eval harness to catch edge cases (e.g. bot-generated query variants that happen to hash-collide).
+- Trace shape is JSONL-ready. Memory Viewer Traces tab (Phase 8) exports `state.runtime.traces` as JSONL; Phase 9's harness reads the same JSONL. No format bridge needed.
+- The scorer registry supports A/B evaluation natively — `evalAgainstCorpus(corpus, { scorer: 'default' })` vs `{ scorer: 'my-experimental' }` is a one-line switch in the harness.
+
+---
+
 ## Phase 3—2026-04-20
 
 **What shipped:** BM25+ index (`src/retrieval/bm25.js`, hand-rolled, subject/tag boost via integer replication), rule-based 3-type classifier (`src/retrieval/classifier.js`, temporal > relational > factual priority), pluggable scorer with context-object signature (`src/retrieval/scorer.js`, deviation from spec §9.2 — see below), unconditional working-buffer prepend (`src/retrieval/workingBuffer.js`, sentinel `score: Infinity`), barrel (`src/retrieval/index.js`). 6 commits this phase plus plan + retro. **144 tests passing across 15 suites** (88 Phase 0-2 baseline + 56 new Phase 3 tests: 9 constants delta + 15 bm25 + 20 classifier + 11 scorer + 7 workingBuffer + 2 barrel).
