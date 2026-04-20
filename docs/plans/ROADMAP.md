@@ -447,4 +447,23 @@ These are v2.1+ considerations. Do not implement them in any phase.
 
 _Appended after each phase ships. Format: `## Phase N—<date>`, with notes on surprises, scope changes, and lessons for subsequent phases._
 
-_(Empty. To be filled as we go.)_
+_(To be filled as we go.)_
+
+## Phase 0—2026-04-20
+
+**What shipped:** dev toolchain (eslint 9 flat config, jest ESM, tsc JSDoc mode), empty `src/` tree per spec §10, `constants.js` with 8 golden-value tests, structured logger with 5 tests (injectable console, debug gate, scoped children), `index.js` wired to logger. 9 commits. 13 tests passing. Lint, typecheck, test all green.
+
+**Surprises:**
+
+1. **The plan's Tasks 2-4 verification steps were wrong.** They ask you to run `npm run lint|typecheck|test` immediately after writing each config, on an empty `src/` tree. All three tools exit *non-zero* on "no files matched" — eslint 9 errors loudly, tsc emits TS18003, jest reports 0 matches. The real first green-check is after Task 6 lands `constants.js` + its test. Plan has been demoted to "verify at Task 6, not earlier" for Phase 1's equivalent.
+
+2. **`@types/jest` was missing from the plan's devDependencies.** Without it, `tsc --noEmit` fails on the test file with TS2304/TS2582 on `expect`/`test` globals. Added it during Task 6. Phase 1+ plans should list `@types/jest` alongside the other dev tooling up front.
+
+3. **No logger-scope accumulation test** was in the plan but would be worth adding (calling `.scope('a').scope('b')` should produce `[STARmem:a:b]`). The implementation supports it (recursive `makeLogger`), but it's untested.
+
+**Notes for Phase 1:**
+
+- Storage layer will need a mock for ST's `chatMetadata` and `saveMetadataDebounced` — design those test fixtures early.
+- The write lock from §2 principle 2 is a real concurrency primitive, not just a flag — unit test should assert that a second `withWriteLock` call genuinely waits (use `jest.useFakeTimers()` + promise microtask drain, or a real async barrier).
+- Consider adding a `scope-accumulation` test to the logger suite before Phase 1 starts. It's a 4-line addition.
+- Plan's verification steps should always check the state *after* the code exists, never on an empty tree.
