@@ -447,6 +447,76 @@ These are v2.1+ considerations. Do not implement them in any phase.
 
 _Appended after each phase ships. Format: `## Phase N—<date>`, with notes on surprises, scope changes, and lessons for subsequent phases._
 
+## Phase 7—2026-04-20
+
+**What shipped:** Persona rebuild pipeline — `src/consolidation/personaRebuild.js` (orchestrator: snapshot → chunk → loop(knn → leiden → summarize) → atomic swap; AbortSignal threaded through every stage with 8 `throwIfAborted` call sites; 8-stage `onProgress` callback), six RAPTOR internals under `src/consolidation/raptor/`:
+  - `chunking.js` — identity stub per Decision 6 (1 entry = 1 leaf)
+  - `embeddings.js` — injectable ST Vectors client (`/api/vector/insert|query|purge`) + deterministic synthetic client for tests + exported hashText/syntheticEmbedding/cosineSimilarity helpers
+  - `knn.js` — adaptive k (K_BASE=15, K_STEP=5), symmetric adjacency via max-weight per pair
+  - `leiden.js` — full Leiden (708 LOC): modularity + partition helpers, localMove with incremental stats, refinement with well-connectedness threshold, aggregation + lift/unlift, outer-loop driver, public `leidenCluster` + depth-aware `gammaForDepth`, per Traag et al. 2019
+  - `summarize.js` — per-cluster LLM summarization reusing Phase 6's `callLLM`
+  - `atomic.js` — subject-scoped Persona replacement under `withWriteLock`, functional-swap via `entriesNext`, resets `pendingPersonaRebuild` and `episodicCountSinceLastRebuild`
+
+`src/consolidation/index.js` barrel extended to export `rebuildPersona`. `tests/integration/consolidation/personaRebuild.test.js` — 20-entry two-theme corpus end-to-end + idempotent-rebuild test. 13 feature commits + plan + integration test + retro = **15 commits this phase**. **440 tests passing across 41 suites** (341 Phase 6 baseline + 99 new: 1 constants delta + 6 chunking + 19 embeddings + 14 knn + 36 leiden + 8 summarize + 6 atomic + 7 personaRebuild unit + 2 integration). Lint, typecheck, test all green. **~1,636 LOC** across `src/consolidation/` additions.
+
+**Deliberate spec deviations (documented up front, TODO list for a standalone `docs(spec)` commit):**
+
+1. **Embeddings permitted in persona rebuild** — spec §11's "no embeddings anywhere" is about the hot retrieval path. Persona rebuild is user-initiated, offline, and not on the query path; embeddings are OK there. **Amendment needed:** §11 should clarify the hot-path scope; §6.4 should name SillyTavern Vectors as the embedding source.
+2. **Semantic chunking skipped** — spec §6.4 prescribes semantic chunking (τ=0.7) but Episodic entries from Phase 6 are already atomic third-person facts. Chunking them would fragment coherent statements. `raptor/chunking.js` is an identity stub; v2.1 can reinstate if long documents ever enter Episodic.
+3. **Per-task commit discipline slipped by one** — Task 8 Step 1 prescribed a standalone `"feat(consolidation): export rebuildPersona from barrel"` commit. The Task 7 subagent folded the one-line barrel change into its orchestrator commit (`661ee54`). Minor, harmless, caught during the Task 7 audit. Not worth retroactive history editing; just note that Task 8 ended up being "integration test + retro" rather than "barrel + integration test + retro."
+
+**Execution mode:** Subagent-driven, reviews skipped per the skill's criteria (verbatim code + static checks per task), with controller-side audits after Task 4.5 (Leiden convergence determinism over 10 seeds), Task 6 (atomic mutator one-path invariant + functional-swap verification), and Task 7 (orchestrator abort-propagation grep). Tasks 4.1–4.5 were the highest-risk stretch; all passed first try thanks to hand-computed golden modularity values serving as a tripwire. Zero sandbox-path strays across 10 delegations.
+
+**Decisions locked in the planning conversation (all held through execution):**
+
+1. Embedding source: SillyTavern Vectors API, injectable client, synthetic test fallback.
+2. Clustering algorithm: **Leiden** (not Louvain, not agglomerative) — spec-faithful; well-connectedness guarantee materially matters on Eva's target corpora (thousands of turns → hundreds of Episodic facts per subject).
+3. Tree depth/stop: `MAX_DEPTH=3`, clusters<2, leaves<`MIN_CLUSTER_SIZE`×2.
+4. What becomes a Persona entry: every non-leaf layer's summary + root (merged layer if MAX_DEPTH exited without collapse).
+5. Atomic replacement: delete-where-subject + add new, one `withWriteLock`. Dangling edges left alone.
+6. Skip semantic chunking: Episodic entries are already atomic facts.
+7. Cancellation: `AbortSignal` threaded through every stage; `throwIfAborted()` helper.
+8. Counter reset: `rebuildPersona` on success clears `pendingPersonaRebuild` and zeroes `episodicCountSinceLastRebuild`.
+9. Test embeddings: deterministic synthetic FNV-based client, no real embeddings in unit tests.
+10. Module structure: `personaRebuild.js` orchestrator + six `raptor/*.js` modules.
+
+**Surprises:**
+
+1. **Two genuine plan-side bugs surfaced by subagents during TDD** — the same class Phase 6 saw:
+   - **Task 1 (chunking):** the plan used `over.subject ?? 'alice'` to default a subject. Nullish-coalescing doesn't fire on explicit `null`, which the test fixture was passing. Subagent caught this on the first test run and picked the right fix. Lesson: `??` vs `||` is a spec-semantics choice that should be decided at plan time, not left to an idiom tax on the subagent.
+   - **Task 8 (integration test):** three typos in the verbatim-code block — `FIXED_NOW_time()` instead of `FIXED_NOW.getTime()` (flat typo), an awkward `firstPersonaIds` block that triggered lint noise, and a JSDoc `@param` that should have been `@returns`. Subagent fixed all three and committed.
+   The writing-plans skill's "don't bake predicted totals into task instructions" generalises: don't trust verbatim code in a ~4K-line plan to be free of copy-paste drift. Subagent TDD catches it, but it's friction.
+
+2. **Task 4.5 (Leiden public API) shipped dead code from the plan.** `refinedMatchesWork` was computed but only used inside the scope it was defined in — the outer comparison never referenced it. Subagent replaced it with a cleaner `sameCount` convergence check. Same root cause as surprise #1: the plan was 3948 lines and the Leiden section carried enough state to lose track of. The fact the subagent noticed rather than just transcribing is a quality signal for the approach.
+
+3. **Leiden landed deterministic on the first try.** The Task 4.5 controller audit ran the two-triangle fixture across 10 random seeds; 10/10 converged to the correct 2-community split. The Task 4.1 modularity golden value matched hand computation within 1.7e-16 (`Q = 0.4836065573770493` vs expected `0.483606`). This is the biggest positive surprise: Leiden is notorious for subtle convergence bugs and we shipped ~700 LOC of it with zero convergence defects. Two things earned this: (a) splitting Task 4 into five reviewable sub-commits with tests after each, (b) anchoring 4.1 with a hand-computed golden value so every downstream stage inherited a tripwire.
+
+4. **Snapshot-then-swap concurrency held.** `rebuildPersona` takes the write lock only for the final atomic swap; the heavy LLM/clustering phase runs lock-free. No test observed a rebuild-consolidate interleaving problem because the atomic swap is subject-scoped and consolidation mutates `state.entries` via its own lock — the race windows don't overlap on data. Phase 8 should re-verify this under real usage but the static analysis holds.
+
+5. **Integration test passes with synthetic (hash-based) embeddings.** The `newCount ≥ 1` assertion is loose enough that even semantically-meaningless vectors produce *some* Leiden partition, so the integration test validates the pipeline wiring but NOT cluster quality. This is known and explicit (see Phase 9 notes), but worth calling out: green integration tests here do not imply good character sheets in production. Phase 9's real-embedding benchmarks are what actually stress cluster quality.
+
+**Notes for Phase 8 (SillyTavern Integration):**
+
+- `rebuildPersona(chatId, subject, opts)` is the public entry point. Phase 8's Memory Viewer "Persona rebuild" button → call this with the active chat + subject.
+- `opts.onProgress({stage, depth?, clusters?})` lets the UI render a progress indicator. Known stages: `snapshot`, `chunk`, `knn`, `cluster`, `summarize`, `summarize-root`, `summarize-root-direct`, `atomic-swap` (8 total).
+- `opts.signal: AbortSignal` lets the UI cancel mid-run (e.g. navigation away or Cancel click). Throws `AbortError`; UI should distinguish this from real errors.
+- The extractor-label `"<model>@persona-rebuild-v1"` needs to be computed by Phase 8 from the active ST connection profile name. Phase 7 doesn't hard-code it.
+- Embedding source is whatever the user has configured in ST's Vectors extension. Phase 8 should surface a warning if Vectors is disabled/misconfigured: rebuild will fail cleanly with a descriptive fetch error, but a pre-flight check is friendlier.
+- The one-path invariant test already whitelists `src/consolidation/` — no update needed for Phase 7's new files.
+- `SillyTavern.getContext()` is already the canonical access pattern (Phase 1 locked this in); the Phase 7 code does not introduce any new ST integration surface — all ST calls are via the injectable `embeddingClient` and `callLLM`.
+
+**Notes for Phase 9 (Benchmarking):**
+
+- Leiden seed is pinned to 1 by default in `leidenCluster`. For A/B evaluations, vary the seed and measure stability of cluster assignments — if the assignment changes materially between seeds, the cluster is poorly supported by the graph structure.
+- `K_BASE=15`, `K_STEP=5` are spec values, never measured on real corpora. If benchmarks show sparse graphs (many isolated components) on small Episodic corpora, lower `K_BASE`. If graphs are near-complete (every node neighbours every other), raise it.
+- `GAMMA_BASE=1.0`, `GAMMA_STEP=0.2` — same story. Higher γ produces more, smaller clusters. Phase 9 can sweep γ on a fixed corpus and measure cluster count / modularity curves.
+- **The synthetic embedding client in `raptor/embeddings.js` is NOT suitable for benchmark runs** — hash-based embeddings have no semantic structure. Phase 9 must use real ST Vectors (user-configured provider) for meaningful eval.
+- `SUMMARY_MAX_TOKENS=512`. If Phase 9 shows summaries consistently truncated (response ends in `,` or `"…`), bump to 1024; if they're always under 200 tokens, drop to save cost. Same "tunable-under-benchmark" treatment as Phase 6's `EXTRACT_MAX_TOKENS`.
+- Layer count per rebuild should converge in 2–4 layers on corpora of ~100–500 Episodic entries. If hitting `MAX_DEPTH=3` frequently, clusters are too granular; consider lowering `GAMMA_BASE`.
+- Integration-test assertion is `newCount ≥ 1` — deliberately loose because synthetic embeddings can't support tighter bounds. Phase 9's real-embedding tests should pin expected cluster count on a fixed golden corpus.
+
+---
+
 ## Phase 6—2026-04-20
 
 **What shipped:** Consolidation pipeline — `src/consolidation/consolidate.js` (single long-term mutator, holds write lock, drains `BATCH_SIZE`=5 working-buffer entries, extracts via user-configured LLM, dedupes same-subject + Jaccard≥0.7, adds/updates, builds edges for new entries, invalidates Tier 0 cache, flips `pendingPersonaRebuild` at 100 new episodics), `src/consolidation/extractFacts.js` (JSON-schema-constrained prompt with strip-fences JSON parser + permissive-where-spec-allows shape validator; silently drops reserved `contradicts` relations per spec §4; 2048 max_tokens for extraction), `src/consolidation/dedup.js` (`findDuplicate` + exported `jaccard` helper sharing `tokenize` with BM25), `src/consolidation/llmClient.js` (injectable wrapper over ST's `ConnectionManagerRequestService.sendRequest` with lazy `SillyTavern.getContext()` resolution, test-mock hooks), `src/consolidation/triggers.js` (`maybeConsolidate` gating + per-chat idle timer via module-level `setTimeout` map, not persisted), `src/consolidation/index.js` barrel, `tests/unit/consolidation/no-other-mutators.test.js` (one-path invariant test, grep-based, verified via tripwire sentinel), `tests/integration/consolidation/pipeline.test.js` (12-turn end-to-end). 7 feature commits + barrel + invariant/integration + retro = 10 commits this phase. **341 tests passing across 33 suites** (262 Phase 5 baseline + 79 new: 2 constants/schema delta + 12 dedup + 7 llmClient + 20 extractFacts + 10 consolidate + 9 triggers + ~17 invariant (one per non-whitelisted src file) + 2 integration).
