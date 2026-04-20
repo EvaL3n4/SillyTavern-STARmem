@@ -22,7 +22,8 @@ tokenize(text: string): string[]                    // exported for tier 1 Jacca
 classify(query: string): 'factual' | 'relational' | 'temporal'
 
 // scorer.js
-type Scorer = (entry: Entry, query: string, now: Date, bm25Score: number) => number
+type ScorerContext = { now: Date; bm25: number; intent?: 'factual' | 'relational' | 'temporal' }
+type Scorer = (entry: Entry, query: string, context: ScorerContext) => number
 defaultScorer: Scorer                               // multiplicative per §5.2
 setScorer(fn: Scorer): void
 getScorer(): Scorer
@@ -543,7 +544,7 @@ export function classify(query) {
 ### Formula
 
 ```
-score(entry, query, now, bm25) = bm25 × (1 + importance/100) × recency × maturity_boost
+score(entry, query, { now, bm25 }) = bm25 × (1 + importance/100) × recency × maturity_boost
 ```
 
 - `bm25` is computed externally (Phase 4 passes it in) — scorer doesn't re-run BM25.
@@ -580,17 +581,18 @@ describe('defaultScorer', () => {
     test('baseline: importance=50, draft, fresh, bm25=1.0', () => {
         const e = entry();
         // (1 + 50/100) × exp(0) × 0.85 = 1.5 × 1 × 0.85 = 1.275
-        expect(defaultScorer(e, 'q', now, 1.0)).toBeCloseTo(1.275, 4);
+        expect(defaultScorer(e, 'q', { now, bm25: 1.0 })).toBeCloseTo(1.275, 4);
     });
 
     test('bm25 of zero produces zero score (multiplicative dominance)', () => {
-        expect(defaultScorer(entry(), 'q', now, 0)).toBe(0);
+        expect(defaultScorer(entry(), 'q', { now, bm25: 0 })).toBe(0);
     });
 
     test('higher importance raises score', () => {
         const low = entry({ lifecycle: { ...entry().lifecycle, importance: 10 } });
         const high = entry({ lifecycle: { ...entry().lifecycle, importance: 90 } });
-        expect(defaultScorer(high, 'q', now, 1.0)).toBeGreaterThan(defaultScorer(low, 'q', now, 1.0));
+        expect(defaultScorer(high, 'q', { now, bm25: 1.0 }))
+            .toBeGreaterThan(defaultScorer(low, 'q', { now, bm25: 1.0 }));
     });
 
     test('older entry scores lower than newer (recency dominates when other factors equal)', () => {
@@ -598,14 +600,15 @@ describe('defaultScorer', () => {
         const old = entry({
             lifecycle: { ...entry().lifecycle, createdAt: '2025-04-20T12:00:00Z' }, // 1 year ago
         });
-        expect(defaultScorer(fresh, 'q', now, 1.0)).toBeGreaterThan(defaultScorer(old, 'q', now, 1.0));
+        expect(defaultScorer(fresh, 'q', { now, bm25: 1.0 }))
+            .toBeGreaterThan(defaultScorer(old, 'q', { now, bm25: 1.0 }));
     });
 
     test('core maturity boosts score vs draft at same importance', () => {
         const draftE = entry({ lifecycle: { ...entry().lifecycle, maturity: 'draft' } });
         const coreE = entry({ lifecycle: { ...entry().lifecycle, maturity: 'core' } });
-        const draftScore = defaultScorer(draftE, 'q', now, 1.0);
-        const coreScore = defaultScorer(coreE, 'q', now, 1.0);
+        const draftScore = defaultScorer(draftE, 'q', { now, bm25: 1.0 });
+        const coreScore = defaultScorer(coreE, 'q', { now, bm25: 1.0 });
         // core boost (1.2) / draft boost (0.85) = 1.4118x
         expect(coreScore / draftScore).toBeCloseTo(1.2 / 0.85, 4);
     });
@@ -615,7 +618,14 @@ describe('defaultScorer', () => {
             lifecycle: { ...entry().lifecycle, importance: 100, maturity: 'core' },
         });
         // 0.5 × (1 + 100/100) × 1.0 × 1.2 = 0.5 × 2 × 1 × 1.2 = 1.2
-        expect(defaultScorer(e, 'q', now, 0.5)).toBeCloseTo(1.2, 6);
+        expect(defaultScorer(e, 'q', { now, bm25: 0.5 })).toBeCloseTo(1.2, 6);
+    });
+
+    test('ignores unknown context fields (forward compat)', () => {
+        const e = entry();
+        const withExtras = defaultScorer(e, 'q', /** @type {any} */ ({ now, bm25: 1.0, intent: 'factual', futureFactor: 42 }));
+        const plain = defaultScorer(e, 'q', { now, bm25: 1.0 });
+        expect(withExtras).toBe(plain);
     });
 });
 
@@ -630,7 +640,7 @@ describe('scorer injection', () => {
         const constant = () => 42;
         setScorer(constant);
         expect(getScorer()).toBe(constant);
-        expect(getScorer()(entry(), 'q', new Date(), 1)).toBe(42);
+        expect(getScorer()(entry(), 'q', { now: new Date(), bm25: 1 })).toBe(42);
     });
 
     test('_resetScorerForTests restores the default', () => {
@@ -661,11 +671,17 @@ describe('scorer injection', () => {
 import { recencyAt, maturityBoost } from '../lifecycle/index.js';
 
 /**
+ * @typedef {object} ScorerContext
+ * @property {Date} now                                  - Reference clock for recency.
+ * @property {number} bm25                               - Pre-computed BM25 score (Phase 4 supplies).
+ * @property {'factual'|'relational'|'temporal'} [intent] - Reserved for intent-aware scorers (Phase 5+).
+ */
+
+/**
  * @typedef {(
  *   entry: import('../core/schema.js').Entry,
  *   query: string,
- *   now: Date,
- *   bm25: number
+ *   context: ScorerContext
  * ) => number} Scorer
  */
 
@@ -673,9 +689,14 @@ import { recencyAt, maturityBoost } from '../lifecycle/index.js';
  * The spec §5.2 multiplicative scorer. Factor order is decorative—
  * multiplication commutes—but matches the spec for readability.
  *
+ * The context parameter is deliberately an object (not positional args)
+ * so later factors (intent, query length, classifier confidence) can be
+ * added without breaking registered scorers. Unknown keys are ignored.
+ *
  * @type {Scorer}
  */
-export const defaultScorer = (entry, _query, now, bm25) => {
+export const defaultScorer = (entry, _query, context) => {
+    const { now, bm25 } = context;
     if (bm25 === 0) return 0;                       // fast path
     const { importance, maturity, createdAt } = entry.lifecycle;
     return bm25
@@ -715,7 +736,16 @@ export function _resetScorerForTests() {
 
 TDD. Write test → FAIL → implement → green → commit: `feat(retrieval): add pluggable scorer with multiplicative default per spec §5.2`.
 
-Expected test count: 10 new tests.
+Expected test count: 11 new tests.
+
+### Deliberate deviation from spec §9.2
+
+Spec §9.2 gives the scorer signature as `(entry, query, lifecycle) => number`. We deviate in two ways:
+
+1. **Drop `lifecycle`** — it's already reachable via `entry.lifecycle`; passing it separately is redundant and invites divergence.
+2. **Replace positional `now`/`bm25` with a `ScorerContext` object** — the spec signature has no clock at all (so `recencyAt` would have to call `new Date()` internally, making scorers non-deterministic and hard to test) and hardcodes the factor list to what v2.0 needs. An open context object lets Phase 5 add `intent`, Phase 9 add `queryTokens`, and future scorers consume or ignore as needed — without a breaking signature change for every registered scorer.
+
+This deviation should be reflected in `docs/specs/2026-04-20-starmem-v2-design.md` §9.2 at some point. Flag it in the Phase 3 retro and leave a spec-amendment note.
 
 ---
 
