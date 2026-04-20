@@ -1,0 +1,76 @@
+/**
+ * STARmem core constants—single source of truth for spec-derived values.
+ * Any number referenced by the spec more than once lives here.
+ *
+ * @module core/constants
+ * @see docs/specs/2026-04-20-starmem-v2-design.md
+ */
+
+/** Memory scopes. Spec §4. */
+export const SCOPES = Object.freeze(['working', 'episodic', 'persona']);
+
+/** Edge types. Spec §4. `contradicts` is reserved but not emitted in v2.0. */
+export const EDGE_TYPES = Object.freeze({
+    PRODUCED: Object.freeze(['mentions', 'supports', 'same_topic', 'temporal_next']),
+    RESERVED: Object.freeze(['contradicts']),
+});
+
+/** Query classifier intents. Spec §5 (3-type classifier). */
+export const QUERY_INTENTS = Object.freeze(['factual', 'relational', 'temporal']);
+
+/** Maturity tiers. Spec §7. */
+export const MATURITY_TIERS = Object.freeze(['draft', 'validated', 'core']);
+
+/** Lifecycle math constants. Spec §7, verbatim from ByteRover's AKL. */
+export const LIFECYCLE = Object.freeze({
+    /** Importance bonus on access. Spec §7. */
+    ACCESS_BONUS: 3,
+    /** Importance bonus on update. Spec §7. */
+    UPDATE_BONUS: 5,
+    /** Daily decay multiplier (~0.5% daily). Spec §7. */
+    DAILY_DECAY: 0.995,
+    /** Recency decay time constant in days (~21-day half-life). Spec §7. */
+    RECENCY_TAU_DAYS: 30,
+    /** Retrieval score multipliers per maturity tier. Spec §5.2 / §7. */
+    MATURITY_BOOST: Object.freeze({
+        draft: 0.85,
+        validated: 1.0,
+        core: 1.2,
+    }),
+    /** Promotion thresholds (hysteresis). Spec §7. */
+    PROMOTION: Object.freeze({
+        draftToValidated: 65,
+        validatedToCore: 85,
+    }),
+    /** Demotion thresholds (hysteresis gaps). Spec §7. */
+    DEMOTION: Object.freeze({
+        validatedToDraft: 35,
+        coreToValidated: 60,
+    }),
+});
+
+/** Retrieval ladder constants. Spec §5, §5.1, §5.2. */
+export const RETRIEVAL = Object.freeze({
+    /** Tier 1 fuzzy-match Jaccard threshold. Spec §5. */
+    FUZZY_JACCARD_THRESHOLD: 0.6,
+    /** Tier 3 beam-search weights. Spec §5.1. */
+    TIER3_LAMBDA_1: 1.0,
+    TIER3_LAMBDA_2: 0.3,
+    /** Tier 3 max hops. Spec §5.1. */
+    TIER3_MAX_HOPS: 2,
+});
+
+/** Consolidation trigger thresholds. Spec §6.2, §6.3, §6.4. */
+export const CONSOLIDATION = Object.freeze({
+    /** Working buffer size that triggers consolidation. Spec §6.2. */
+    WORKING_BUFFER_THRESHOLD: 10,
+    /** User-idle seconds that trigger consolidation. Spec §6.2. */
+    IDLE_TRIGGER_SECONDS: 60,
+    /** Messages drained from working buffer per consolidation batch. Spec §6.3. */
+    BATCH_SIZE: 5,
+    /** Episodic entries added before suggesting a Persona rebuild. Spec §6.4. */
+    PERSONA_REBUILD_SUGGESTION_THRESHOLD: 100,
+});
+
+/** Trace ring buffer cap. Spec §9.1. */
+export const TRACE_BUFFER_CAP = 100;
