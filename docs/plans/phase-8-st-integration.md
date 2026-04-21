@@ -5284,6 +5284,13 @@ git commit -m "feat(integration): wire root index.js + integration barrel + CSS 
 
 **Owner:** Subagent.
 
+> **Plan bug reconciled in Task 10 (commit 8cc4486):** the verbatim invariants
+> test scans raw CSS for `.foo` / `#foo` tokens, producing false positives on
+> hex color fallbacks (`#e8e8e8`), decision refs in comments (`14.B`), and
+> filename tokens in header comments (`.json`, `.css`). The shipped test
+> strips `/* ... */` comments before the scan and skips pure hex tokens
+> (3/4/6/8 hex digits). Tripwire-verified.
+
 **Decisions applied:**
 - **12.C** — hybrid: `var(--SmartThemeBodyColor, #1a1a1a)` style fallbacks for ST theme vars; hardcoded STARmem accents (consolidation dot hue, active-tab underline).
 - **13.A** — native `<dialog>` sizing — `max-width: min(960px, 95vw)`, `max-height: 85vh`, override browser defaults.
