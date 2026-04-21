@@ -73,8 +73,8 @@ describe('viewer mount', () => {
         await new Promise(r => setTimeout(r, 10));
         const body = /** @type {HTMLElement} */ (parent.querySelector(`.${CSS_PREFIX}-viewer-body`));
         expect(body).not.toBeNull();
-        // The graph stub renders a data-tab="graph" element.
-        expect(body.querySelector('[data-tab="graph"]')).not.toBeNull();
+        // The real graph tab renders a header element (empty or populated).
+        expect(body.querySelector(`.${CSS_PREFIX}-viewer-graph-header`)).not.toBeNull();
     });
 
     test('falls back to document.body when no parent and no Popup', async () => {
