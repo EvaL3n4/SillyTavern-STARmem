@@ -146,4 +146,37 @@ describe('sweep driver', () => {
             expect(parsed).toHaveProperty('latencyMs');
         }
     });
+
+    test('baseOverrides merged with each grid point before harness call', async () => {
+        const fakeHarness = makeFakeHarness();
+        await sweep({
+            name: 'test',
+            knobs: [
+                { name: 'Y', values: [1, 2] },
+            ],
+            baseOverrides: { X: 42 },
+            corpus: [],
+            primaryMetric: 'recallAt5',
+            _runHarness: fakeHarness.run,
+        });
+        expect(fakeHarness.calls.length).toBe(2);
+        expect(fakeHarness.calls[0].args[0].overrides).toEqual(expect.objectContaining({ X: 42, Y: 1 }));
+        expect(fakeHarness.calls[1].args[0].overrides).toEqual(expect.objectContaining({ X: 42, Y: 2 }));
+    });
+
+    test('point recorded overrides contains merged baseOverrides, not just swept knob', async () => {
+        const fakeHarness = makeFakeHarness();
+        const result = await sweep({
+            name: 'test',
+            knobs: [
+                { name: 'Y', values: [1] },
+            ],
+            baseOverrides: { X: 42 },
+            corpus: [],
+            primaryMetric: 'recallAt5',
+            _runHarness: fakeHarness.run,
+        });
+        expect(result.points.length).toBe(1);
+        expect(result.points[0].overrides).toEqual(expect.objectContaining({ X: 42, Y: 1 }));
+    });
 });

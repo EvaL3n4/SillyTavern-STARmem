@@ -212,6 +212,7 @@ function _elbowOnSlice(sorted, primaryName, accessor) {
  * @param {Array<{name: string, values: number[]}>} opts.knobs
  * @param {CorpusConversation[]} opts.corpus
  * @param {string} opts.primaryMetric
+ * @param {Record<string, number>} [opts.baseOverrides]  // merged with each grid point before harness call
  * @param {(result: SweepResult) => void} [opts.onComplete]
  * @param {Function} [opts._runHarness]
  * @returns {Promise<SweepResult>}
@@ -221,31 +222,35 @@ export async function sweep({
     knobs,
     corpus,
     primaryMetric,
+    baseOverrides = {},
     onComplete,
     _runHarness,
 }) {
     const harness = _runHarness ?? runHarness;
     const grid = cartesianProduct(knobs);
 
+    const mergedOverridesFor = (point) => ({ ...baseOverrides, ...point });
+
     /** @type {SweepPoint[]} */
     const points = [];
     /** @type {string[]} */
     const jsonlLines = [];
 
-    for (const overrides of grid) {
-        const harnessResult = await harness({ corpus, overrides });
+    for (const point of grid) {
+        const effectiveOverrides = mergedOverridesFor(point);
+        const harnessResult = await harness({ corpus, overrides: effectiveOverrides });
 
         const latencies = harnessResult.runs.map(r => r.latencyMs);
         const latencyMs = computeLatencyPercentiles(latencies);
 
-        const point = {
-            overrides,
+        const sweepPoint = {
+            overrides: effectiveOverrides,
             metrics: harnessResult.metrics,
             latencyMs,
         };
 
-        points.push(point);
-        jsonlLines.push(JSON.stringify({ overrides, metrics: harnessResult.metrics, latencyMs }));
+        points.push(sweepPoint);
+        jsonlLines.push(JSON.stringify({ overrides: effectiveOverrides, metrics: harnessResult.metrics, latencyMs }));
     }
 
     const elbow = detectElbow(points, knobs, primaryMetric);
