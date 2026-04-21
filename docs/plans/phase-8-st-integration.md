@@ -4696,7 +4696,7 @@ git commit -m "feat(integration): traces tab — summary, raw expand, JSONL expo
 - Create: `tests/helpers/stContextMock.js`
 - Create: `tests/helpers/stContextMock.test.js`
 
-**Decision 11 recap:** minimal surface — only what Phase 8 code actually touches — plus an `eventSource` spy because bootstrap.js subscribes to `APP_READY`, `MESSAGE_RECEIVED`, `MESSAGE_DELETED`, `CHAT_CHANGED`, and `GENERATION_STARTED`. Factory-per-test, no shared singleton — mirrors Phase 6's `_setLLMClientForTests` discipline.
+**Decision 11 recap:** minimal surface — only what Phase 8 code actually touches — plus an `eventSource` spy. The events Phase 8 subscribes to are `APP_READY` (root `index.js`, on-ready bootstrap trigger — Task 9), and `CHAT_CHANGED`, `MESSAGE_SENT`, `MESSAGE_RECEIVED`, `MESSAGE_DELETED` (bootstrap.js event wiring). Factory-per-test, no shared singleton — mirrors Phase 6's `_setLLMClientForTests` discipline.
 
 **Step 1: Create `tests/helpers/stContextMock.js`**
 
@@ -4731,10 +4731,10 @@ import { jest } from '@jest/globals';
  */
 export const ET = Object.freeze({
     APP_READY: 'app_ready',
+    CHAT_CHANGED: 'chat_changed',
+    MESSAGE_SENT: 'message_sent',
     MESSAGE_RECEIVED: 'message_received',
     MESSAGE_DELETED: 'message_deleted',
-    CHAT_CHANGED: 'chat_changed',
-    GENERATION_STARTED: 'generation_started',
 });
 
 /**
@@ -4944,9 +4944,9 @@ describe('stContextMock', () => {
         expect(Object.keys(ET).sort()).toEqual([
             'APP_READY',
             'CHAT_CHANGED',
-            'GENERATION_STARTED',
             'MESSAGE_DELETED',
             'MESSAGE_RECEIVED',
+            'MESSAGE_SENT',
         ]);
         // Values must be lowercase snake_case matching ST's script.js.
         for (const [k, v] of Object.entries(ET)) {
