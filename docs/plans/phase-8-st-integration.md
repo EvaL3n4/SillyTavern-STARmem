@@ -115,7 +115,7 @@ All imports resolved against existing barrels. No cross-phase refactors.
 - `setBackend({ read, write })` — bootstrap provides the real ST backend (reads from/writes to `chatMetadata` via `getContext().saveMetadataDebounced`)
 
 **From `src/memory/index.js`:**
-- `buildAdjacency(edges)` / `neighborsOf(adj, id)` — graph tab only
+- `buildAdjacency(state)` / `neighborsOf(adj, id)` — graph tab only
 
 **From `src/core/logger.js`:**
 - `createLogger({ debug }).scope('integration')` — debug mode wires through
@@ -3987,9 +3987,9 @@ git commit -m "feat(integration): persona tab — grouped entries + Rebuild with
 
 ```
 Same constraints as prior viewer tasks.
-- Import buildAdjacency, neighborsOf from memory barrel.
+- Import buildAdjacency, neighborsOf from memory barrel. Call buildAdjacency(state); state shape is `{ entries, graph: { edges }, ... }` per core/schema.js.
 - subjectFilter applies to entry.subject.
-- Sort entries by in-degree descending (most-connected first).
+- Sort entries by degree descending (most-connected first). Note: neighborsOf returns outgoing edges keyed on `from`, so this ranks by out-degree in practice — fine for diagnostics.
 - Limit to 200 entries in listing (graph tab is diagnostic, not browseable).
 - For each entry, list up to 10 neighbors; "+N more" if exceeded.
 ```
@@ -3998,7 +3998,7 @@ Same constraints as prior viewer tasks.
 
 ```js
 /**
- * Graph tab — textual adjacency listing ranked by in-degree.
+ * Graph tab — textual adjacency listing ranked by degree.
  *
  * @module integration/viewer/tabs/graph
  */
@@ -4015,10 +4015,10 @@ const MAX_NEIGHBORS_PER_ENTRY = 10;
  */
 export async function renderTab(parent, ctx) {
     const entries = ctx?.state?.entries || {};
-    const edges = Array.isArray(ctx?.state?.edges) ? ctx.state.edges : [];
+    const edges = Array.isArray(ctx?.state?.graph?.edges) ? ctx.state.graph.edges : [];
     const filtered = filterEntries(entries, ctx.subjectFilter || '');
-    const adj = buildAdjacency(edges);
-    const ranked = rankByInDegree(filtered, adj);
+    const adj = buildAdjacency(ctx.state);
+    const ranked = rankByDegree(filtered, adj);
 
     parent.innerHTML = '';
     const root = document.createElement('div');
@@ -4065,7 +4065,7 @@ function filterEntries(entries, filter) {
     return out;
 }
 
-function rankByInDegree(entries, adj) {
+function rankByDegree(entries, adj) {
     const list = Object.values(entries);
     list.sort((a, b) => {
         const da = neighborsOf(adj, a.id).length;
@@ -4159,7 +4159,7 @@ describe('viewer/tabs/graph', () => {
             subjectFilter: '',
             state: {
                 entries: { [e1.id]: e1, [e2.id]: e2 },
-                edges: [{ from: e1.id, to: e2.id, type: 'mentions', weight: 1.0 }],
+                graph: { edges: [{ from: e1.id, to: e2.id, type: 'mentions', weight: 1.0 }] },
             },
         });
         const h = parent.querySelector(`.${CSS_PREFIX}-viewer-graph-header`);
@@ -4170,12 +4170,12 @@ describe('viewer/tabs/graph', () => {
     test('empty state when no nodes', async () => {
         await renderTab(parent, {
             subjectFilter: '',
-            state: { entries: {}, edges: [] },
+            state: { entries: {}, graph: { edges: [] } },
         });
         expect(parent.querySelector(`.${CSS_PREFIX}-viewer-empty`)).not.toBeNull();
     });
 
-    test('ranks nodes by in-degree descending', async () => {
+    test('ranks nodes by degree descending', async () => {
         const hub = entryFor('hub', 'central');
         const leaf1 = entryFor('leaf1', 'out1');
         const leaf2 = entryFor('leaf2', 'out2');
@@ -4183,10 +4183,10 @@ describe('viewer/tabs/graph', () => {
             subjectFilter: '',
             state: {
                 entries: { [hub.id]: hub, [leaf1.id]: leaf1, [leaf2.id]: leaf2 },
-                edges: [
+                graph: { edges: [
                     { from: hub.id, to: leaf1.id, type: 'mentions', weight: 1.0 },
                     { from: hub.id, to: leaf2.id, type: 'mentions', weight: 1.0 },
-                ],
+                ] },
             },
         });
         const items = parent.querySelectorAll(`.${CSS_PREFIX}-viewer-graph-item`);
@@ -4198,7 +4198,7 @@ describe('viewer/tabs/graph', () => {
         const b = entryFor('bob', 'b');
         await renderTab(parent, {
             subjectFilter: 'alice',
-            state: { entries: { [a.id]: a, [b.id]: b }, edges: [] },
+            state: { entries: { [a.id]: a, [b.id]: b }, graph: { edges: [] } },
         });
         const items = parent.querySelectorAll(`.${CSS_PREFIX}-viewer-graph-item`);
         expect(items.length).toBe(1);
@@ -4213,7 +4213,7 @@ describe('viewer/tabs/graph', () => {
             entries[leaf.id] = leaf;
             edges.push({ from: hub.id, to: leaf.id, type: 'mentions', weight: 1.0 });
         }
-        await renderTab(parent, { subjectFilter: '', state: { entries, edges } });
+        await renderTab(parent, { subjectFilter: '', state: { entries, graph: { edges } } });
         const hubItem = parent.querySelector(`[data-id="${hub.id}"]`);
         const neighbors = hubItem?.querySelectorAll(`.${CSS_PREFIX}-viewer-graph-neighbor`);
         expect(neighbors?.length).toBe(10);
@@ -4225,7 +4225,7 @@ describe('viewer/tabs/graph', () => {
         const e = entryFor('alice', '<script>alert(1)</script>');
         await renderTab(parent, {
             subjectFilter: '',
-            state: { entries: { [e.id]: e }, edges: [] },
+            state: { entries: { [e.id]: e }, graph: { edges: [] } },
         });
         expect(parent.querySelector('script')).toBeNull();
     });
@@ -4236,7 +4236,7 @@ describe('viewer/tabs/graph', () => {
             const e = entryFor(`subj${i}`, `content${i}`);
             entries[e.id] = e;
         }
-        await renderTab(parent, { subjectFilter: '', state: { entries, edges: [] } });
+        await renderTab(parent, { subjectFilter: '', state: { entries, graph: { edges: [] } } });
         const note = parent.querySelector(`.${CSS_PREFIX}-viewer-note`);
         expect(note?.textContent).toContain('50 more nodes hidden');
     });
@@ -4252,12 +4252,12 @@ npm test --silent -- tests/integration/integration/viewer-tabs-graph.test.js
 # expect: 7 tests pass
 npm test --silent 2>&1 | grep -E "Test Suites|Tests:"
 git add src/integration/viewer/tabs/graph.js tests/integration/integration/viewer-tabs-graph.test.js
-git commit -m "feat(integration): graph tab — in-degree-ranked adjacency listing"
+git commit -m "feat(integration): graph tab — degree-ranked adjacency listing"
 ```
 
 **Done when:**
 - 7 graph tab tests green
-- In-degree ranking works
+- Degree-based ranking works (hub appears before leaves)
 - Neighbor cap + "+more" message shown
 - MAX_ENTRIES cap honored
 
