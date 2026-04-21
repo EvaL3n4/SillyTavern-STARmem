@@ -90,13 +90,20 @@ describe('seedConversation', () => {
         }
     });
 
-    test('different conv.id produces different chatId and independent states', async () => {
+    test('different conv.id produces different chatId (independent runs)', async () => {
         const conv2 = { ...CONV, id: 'test-2' };
         const r1 = await seedConversation(CONV, { now: FIXED_NOW });
         const r2 = await seedConversation(conv2, { now: FIXED_NOW });
         expect(r1.chatId).toBe('bench-test-1');
         expect(r2.chatId).toBe('bench-test-2');
-        expect(r1.stateHash).not.toBe(r2.stateHash);
+        // Post-9.4.5: entry ids are derived from content, not chatId. Two
+        // runs over identical conversation content now produce identical
+        // stateHashes even under different chatIds — that's the desired
+        // replayability invariant. The useful distinctness check is on
+        // chatId (which scopes storage) and on factCount being non-zero
+        // for each run independently.
+        expect(r1.factCount).toBeGreaterThan(0);
+        expect(r2.factCount).toBeGreaterThan(0);
     });
 
     test('keepBackend=true leaves backend installed', async () => {

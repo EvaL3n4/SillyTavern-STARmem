@@ -6,6 +6,7 @@
  * @see docs/specs/2026-04-20-starmem-v2-design.md §3.1
  */
 
+import { createHash } from 'node:crypto';
 import { isScope, isMaturity, isEdgeType } from '../core/schema.js';
 
 /** Scope → id prefix. */
@@ -16,27 +17,40 @@ const SCOPE_PREFIX = Object.freeze({
 });
 
 /**
- * Generate a random 3-char lowercase-hex suffix. Not cryptographic—
- * just enough to disambiguate same-second IDs within a single chat.
+ * Derive a 12-hex-char suffix from a content seed. Deterministic: same seed
+ * always produces the same suffix, so replayed extractions on identical
+ * inputs yield identical entry ids. 12 hex chars = 48 bits, ~281T values —
+ * collision-safe for any realistic corpus size.
+ *
+ * @param {string} seed
+ * @returns {string}
  */
-function randomSuffix() {
-    return Math.floor(Math.random() * 0x1000).toString(16).padStart(3, '0');
+function contentSuffix(seed) {
+    return createHash('sha256').update(seed).digest('hex').slice(0, 12);
 }
 
 /**
  * Generate an entry id of the form `<prefix>_<iso>_<suffix>`, e.g.
- * `ep_2026-04-20T14:12:33_a3f`. ISO timestamp is trimmed to second precision.
+ * `ep_2026-04-20T14:12:33_a3f124cde091`. ISO timestamp is trimmed to
+ * second precision; suffix is sha256(seed).slice(0,12).
  *
  * @param {import('../core/schema.js').Scope} scope
- * @param {Date} [now]
+ * @param {Date} now
+ * @param {string} seed - Content-derived stable string, see contentSuffix.
  * @returns {string}
  */
-export function generateEntryId(scope, now = new Date()) {
+export function generateEntryId(scope, now, seed) {
     if (!isScope(scope)) {
         throw new Error(`generateEntryId: invalid scope ${String(scope)}`);
     }
-    const iso = now.toISOString().replace(/\.\d+Z$/, '');  // strip milliseconds + Z
-    return `${SCOPE_PREFIX[scope]}_${iso}_${randomSuffix()}`;
+    if (!(now instanceof Date) || Number.isNaN(now.getTime())) {
+        throw new Error('generateEntryId: now must be a valid Date');
+    }
+    if (typeof seed !== 'string' || seed.length === 0) {
+        throw new Error('generateEntryId: seed required (non-empty string)');
+    }
+    const iso = now.toISOString().replace(/\.\d+Z$/, '');
+    return `${SCOPE_PREFIX[scope]}_${iso}_${contentSuffix(seed)}`;
 }
 
 /**
@@ -82,8 +96,17 @@ export function createEntry(fields) {
     const when = now ?? new Date();
     const iso = when.toISOString();
 
+    const seed = [
+        scope,
+        content,
+        subject ?? '',
+        [...tags].sort().join(','),
+        provenance.sourceMessages.join(','),
+        provenance.extractor,
+    ].join('|');
+
     return {
-        id: generateEntryId(scope, when),
+        id: generateEntryId(scope, when, seed),
         scope,
         content,
         subject,

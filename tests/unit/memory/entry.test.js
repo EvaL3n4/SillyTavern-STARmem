@@ -3,23 +3,23 @@ import { createEntry, isValidEntry, generateEntryId } from '../../../src/memory/
 describe('entry', () => {
     describe('generateEntryId', () => {
         test('prefixes episodic entries with ep_', () => {
-            const id = generateEntryId('episodic', new Date('2026-04-20T14:12:33Z'));
+            const id = generateEntryId('episodic', new Date('2026-04-20T14:12:33Z'), 'seed');
             expect(id.startsWith('ep_2026-04-20T14:12:33')).toBe(true);
         });
 
         test('prefixes working with wk_ and persona with ps_', () => {
             const now = new Date('2026-04-20T14:12:33Z');
-            expect(generateEntryId('working', now).startsWith('wk_')).toBe(true);
-            expect(generateEntryId('persona', now).startsWith('ps_')).toBe(true);
+            expect(generateEntryId('working', now, 'seed').startsWith('wk_')).toBe(true);
+            expect(generateEntryId('persona', now, 'seed').startsWith('ps_')).toBe(true);
         });
 
-        test('appends a short random suffix to disambiguate same-second IDs', () => {
+        test('appends a deterministic 12-hex-char suffix derived from seed', () => {
             const now = new Date('2026-04-20T14:12:33Z');
-            const a = generateEntryId('episodic', now);
-            const b = generateEntryId('episodic', now);
-            expect(a).not.toBe(b);
-            // suffix is last 3 chars after final underscore
-            expect(a.split('_').pop()).toHaveLength(3);
+            const a = generateEntryId('episodic', now, 'seed-A');
+            const b = generateEntryId('episodic', now, 'seed-A');
+            expect(a).toBe(b);
+            expect(a.split('_').pop()).toHaveLength(12);
+            expect(a.split('_').pop()).toMatch(/^[a-f0-9]+$/);
         });
     });
 
