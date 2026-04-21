@@ -12,7 +12,8 @@
         "test:watch": "node --experimental-vm-modules node_modules/.bin/jest --watch",
         "test:coverage": "node --experimental-vm-modules node_modules/.bin/jest --coverage",
         "bench": "node bench/cli.js",
-        "bench:smoke": "node bench/cli.js --conversations 1"
+        "bench:smoke": "node bench/cli.js --conversations 1",
+        "bench:sweep:tau": "node bench/sweeps/tau.js"
     },
     "devDependencies": {
         "@eslint/js": "^9.0.0",
