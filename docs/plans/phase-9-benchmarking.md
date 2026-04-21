@@ -965,15 +965,19 @@ controller review before accepting any lambda change."
 
 ---
 
-## Task 6 — Consolidation sweep (DEDUP_JACCARD, EXTRACT_MAX_TOKENS inspection)
+## Task 6 — Consolidation sweep (DEDUP_JACCARD_THRESHOLD, EXTRACT_MAX_TOKENS inspection)
 
 **Objective:** Sweep `DEDUP_JACCARD_THRESHOLD` and inspect (not tune) `EXTRACT_MAX_TOKENS`.
 
-**Why inspect, not tune, EXTRACT_MAX_TOKENS?** The harness seeder uses a rule-based fact extraction stub (Task 3 Step 3), not a real LLM. Token-cap behavior is only observable with live LLM calls, which are deferred to sub-phase 9.5. But the consolidation trace shape captures the drained batch size, dedup hit rate, and fact-count distribution — enough to reason about whether `EXTRACT_MAX_TOKENS` should be raised for the real-LLM sub-phase.
+**Why inspect, not tune, EXTRACT_MAX_TOKENS?** The harness seeder uses a rule-based fact extraction stub (Task 3 Step 3), not a real LLM. Token-cap behavior is only observable with live LLM calls, which are deferred to sub-phase 9.5. The rule-based extractor emits whole sentences as facts; we can proxy "token-ness" by character length distribution, which gives a floor estimate for real-LLM behavior.
 
 **Files:**
 
 - Create: `bench/sweeps/consolidation.js`
+- Modify: `bench/harness/seeder.js` (accumulate consolidation stats across the turn loop — NEW capability)
+- Modify: `bench/runner.js` (surface stats in per-run records — NEW capability)
+- Modify: `tests/unit/bench/harness/seeder.test.js` (+1 test: consolidationStats accumulates)
+- Modify: `tests/unit/bench/runner.test.js` (+1 test: runs expose consolidationStats)
 - Modify: `package.json`
 
 **Knobs:**
@@ -982,17 +986,51 @@ controller review before accepting any lambda change."
 
 5 points. Re-uses the Task 4 driver.
 
+**Preflight gap — how we capture dedup stats:**
+
+Plan's original phrasing — "Record `added:updated` ratio per-point from consolidation traces" — has no backing mechanism. The retrieval-side `state.runtime.traces` ring buffer (from Phase 8) is for retrieval, not consolidation. `consolidate()` returns `{ added, updated, drained }` but the seeder currently discards these returns in its for-loop. No consolidation-trace API exists.
+
+**Fix (as part of Task 6):** extend `seedConversation` to accumulate `consolidate()` returns across the turn loop. This is a small additive change, not a new subsystem.
+
+New seeder return shape:
+
+```js
+{
+  chatId,
+  stateHash,
+  factCount,
+  turnsProcessed,
+  consolidationStats: {
+    added: number,      // sum of added counts across all maybeConsolidate calls
+    updated: number,    // sum of updated counts (dedup hits that updated existing)
+    drained: number,    // sum of drained working-buffer entries
+    batches: number,    // count of non-skipped consolidate invocations
+    factLengths: number[],  // character length of each fact content (inspection proxy for tokens)
+  },
+}
+```
+
+Runner propagates `consolidationStats` into each per-run record (copy the seeder's output onto the run; one entry per conversation). Sweep driver's per-point record aggregates across all runs (sum of added, sum of updated, etc.).
+
+Computed derived metrics in the report:
+- `updateRate = updated / (added + updated)` — this is the 20-40% target band from the Phase 6 retro rule.
+- `dedupHitRate = updated / drained` — how often a drained working entry matched an existing episodic.
+- For `factLengths`: report `min / p50 / p95 / max` per point (should be invariant across dedup threshold since extraction happens before dedup; use for EXTRACT_MAX_TOKENS inspection section).
+
 **Steps:**
 
-1. Run the sweep. Record `added:updated` ratio per-point from consolidation traces.
-2. Apply the Phase 6 retro rule: `<10% updates = too strict`, `>50% updates = too lax`.
-3. Report:
-   - Per-threshold `added/updated/dedupRate` table.
-   - Recommended threshold at the point where updates are in the 20-40% band.
-   - If the full sweep shows updates flat at <10% regardless of threshold (possible if the rule-based seeder rarely produces near-duplicates), write a sub-phase-9.5 note: "rule-based seeder can't exercise realistic dedup pressure; revisit with live LLM consolidation in sub-phase."
-4. Write `docs/bench/sweeps/YYYY-MM-DD-consolidation.md` with a dedicated EXTRACT_MAX_TOKENS-inspection section (read-only: dumps per-extraction token counts, recommends cap).
+1. Extend `bench/harness/seeder.js` — accumulate consolidate returns into `consolidationStats`. Track `factLengths` by mapping over entries post-seed: `Object.values(state.entries).filter(e => e.scope === 'episodic').map(e => e.content.length)`.
+2. Extend `bench/runner.js` — surface `consolidationStats` on each run record (copy from seedResult onto the run; it's conversation-level, not QA-level).
+3. Add 1 unit test to `seeder.test.js` (seed a 6-turn conv, assert `consolidationStats.added > 0` and `batches >= 1`) and 1 to `runner.test.js` (run with empty corpus → every run record would be empty, so instead use 1 synthetic convo and assert `runs[0].consolidationStats.added` is a number).
+4. Create `bench/sweeps/consolidation.js` — thin driver using Task 4's `sweep()` (cartesian over 1 knob). Pass `DEDUP_JACCARD_THRESHOLD` values via overrides. In the report writer, aggregate each point's `consolidationStats` across all runs.
+5. Apply the Phase 6 retro rule: `<10% updateRate = too strict`, `>50% = too lax`, recommend the threshold with `updateRate ∈ [0.2, 0.4]`.
+6. Write `docs/bench/sweeps/YYYY-MM-DD-consolidation.md` with:
+   - Per-threshold aggregate table: `added / updated / drained / updateRate / dedupHitRate / recallAt5 / mrr / p50 / p95`.
+   - Elbow/recommendation band narrative.
+   - EXTRACT_MAX_TOKENS-inspection section: `factLengths` distribution (min/p50/p95/max) and a sentence like "Rule-based mock produces facts averaging N chars; at ~4 chars/token this implies median ~M tokens. Real-LLM extraction (sub-phase 9.5) may differ. Current EXTRACT_MAX_TOKENS=<spec value>; if p95 < 0.5×cap, room to reduce; if p95 ≈ cap, consider raising."
+   - Fallback narrative if updates are flat <10% regardless of threshold: "rule-based seeder can't exercise realistic dedup pressure; revisit with live LLM consolidation in sub-phase 9.5."
 
-**Commit:** mirror Tasks 4-5 pattern.
+**Commit:** mirror Tasks 4-5 pattern. Commit list is longer than tau/graph because we're extending two real code files (seeder + runner), not just adding new bench/sweeps/ files.
 
 ---
 
