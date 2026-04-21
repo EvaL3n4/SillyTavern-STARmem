@@ -810,10 +810,21 @@ The driver:
 
 **Task-specific knobs (τ sweep):**
 
-- `TAU_CONFIDENCE`: [0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 4.0, 5.0]
-- `TAU_GAP`: [0.1, 0.25, 0.5, 0.75, 1.0, 1.5]
+- `TIER2_TAU_CONFIDENCE`: [0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 4.0, 5.0]
+- `TIER2_TAU_GAP`: [0.1, 0.25, 0.5, 0.75, 1.0, 1.5]
+
+**Note on key names:** The override keys MUST use the full swept-key names from `_SWEPT_RETRIEVAL_KEYS` (i.e. `TIER2_TAU_CONFIDENCE`, not the short `TAU_CONFIDENCE`). `setConstantOverrides` throws on unknown keys — verified against `src/core/constants.js` (3a).
+
+**Note on primary metric lookup:** `MetricsResult` exposes `precisionAtK: Record<number, number>`, `recallAtK: Record<number, number>`, `mrr: number`. The driver's `primaryMetric` values map as follows:
+- `'recallAt5'` → `metrics.recallAtK[5]`
+- `'precisionAt3'` → `metrics.precisionAtK[3]`
+- `'mrr'` → `metrics.mrr`
+
+Put a `METRIC_ACCESSORS` lookup table at the top of `_driver.js` to keep this in one place.
 
 48-point grid. LoCoMo 10-conversation full run ≈ 300 QA items. ~15,000 retrievals total. Per-retrieval budget ≤100ms → 25 minutes worst case. Acceptable.
+
+**Note on "coordinate descent":** The plan uses the term loosely. Implementation is a full cartesian grid evaluation (all 48 points). Elbow detection runs along the primary-knob axis (τ_confidence by default for this sweep) with the other knob's values either marginalized (mean) or held at the best-performing value — driver picks one and documents the choice.
 
 **Step 1 — Write failing driver test**
 
@@ -847,14 +858,18 @@ Driver in `bench/sweeps/_driver.js`:
 "bench:sweep:tau": "node bench/sweeps/tau.js"
 ```
 
-**Step 6 — Run the sweep**
+**Step 6 — Run the sweep (SMOKE ONLY at task-commit time)**
 
 ```bash
 npm run bench:sweep:tau -- --conversations 2   # smoke
-npm run bench:sweep:tau                         # full
+# Full 10-conversation run deferred to the controller — subagent stops here.
 ```
 
-Expected: `docs/bench/sweeps/<date>-tau.md` lands with measured values. The subagent **does not commit the recommendations** — that's the controller's call (me) after review.
+The smoke run fetches LoCoMo once (first call populates `docs/bench/cache/locomo.json`; the runner's cache-or-network logic lives in `bench/loaders/locomo.js` and needs no change). Expected output: `docs/bench/sweeps/<date>-tau.md` lands locally but is **NOT committed**. The subagent verifies the file exists, the table has 48 rows, and the elbow block is populated, then stops.
+
+**If the network fetch fails** (runtime is offline or CI-like), the subagent may synthesize a 2-conversation × 6-turn × 2-QA corpus inline (matching the integration test fixture) and pass it via a `--synthetic` flag instead of `--conversations 2`. Add the flag support in `bench/sweeps/tau.js`. The goal is end-to-end exercise of the driver, not real LoCoMo numbers.
+
+The controller runs the full 10-conversation sweep separately, reviews the report, and decides whether to commit any spec amendment.
 
 **Step 7 — Commit**
 
