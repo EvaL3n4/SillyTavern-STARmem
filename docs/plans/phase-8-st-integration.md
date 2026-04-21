@@ -3761,7 +3761,16 @@ function disableOtherRebuildButtons(disabled) {
  * @jest-environment jsdom
  */
 import { describe, test, expect, beforeEach, afterEach, jest } from '@jest/globals';
-import { renderTab } from '../../../src/integration/viewer/tabs/persona.js';
+
+// Mock rebuildPersona at the module level — MUST come before dynamic import of the SUT.
+// Static `import { renderTab }` would hoist above the mock and defeat it (ESM semantics).
+jest.unstable_mockModule('../../../src/consolidation/index.js', () => ({
+    rebuildPersona: jest.fn(),
+}));
+
+const { renderTab } = await import('../../../src/integration/viewer/tabs/persona.js');
+const { rebuildPersona } = await import('../../../src/consolidation/index.js');
+
 import { CSS_PREFIX, SETTINGS_KEY, SETTINGS_DEFAULTS } from '../../../src/integration/constants.js';
 import { createEntry } from '../../../src/memory/entry.js';
 import {
@@ -3770,12 +3779,6 @@ import {
 } from '../../../src/integration/settings.js';
 import { setBackend, _resetBackendForTests } from '../../../src/core/state.js';
 import { _resetLocksForTests } from '../../../src/core/lock.js';
-import { createEmptyState } from '../../../src/core/schema.js';
-
-// Mock rebuildPersona at the module level.
-jest.unstable_mockModule('../../../src/consolidation/index.js', () => ({
-    rebuildPersona: jest.fn(),
-}));
 
 let parent;
 let ctx;
@@ -3855,8 +3858,7 @@ describe('viewer/tabs/persona', () => {
     });
 
     test('Rebuild click invokes rebuildPersona with subject and AbortSignal', async () => {
-        const { rebuildPersona } = await import('../../../src/consolidation/index.js');
-        /** @type {jest.Mock} */ (rebuildPersona).mockResolvedValue({
+        /** @type {any} */ (rebuildPersona).mockResolvedValue({
             episodicCount: 10, layers: 2, replacedCount: 0, newCount: 2, duration: 500,
         });
         const a = personaEntry({ subject: 'alice', content: 'a' });
