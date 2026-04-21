@@ -322,11 +322,19 @@ STARmem/
 │   ├── memory/                 # working, episodic, persona operations, graph ops
 │   ├── lifecycle/              # akl-lite: importance, maturity, recency, decay
 │   ├── consolidation/          # extractFacts, consolidate, persona-rebuild
-│   ├── integration/            # settings UI, memory viewer, indicator
-│   └── eval/                   # trace logger, pluggable scorer, harness stub
+│   └── integration/            # settings UI, memory viewer, indicator, event wiring
+│       ├── viewer/             # viewer modal + per-tab renderers (Phase 8)
+│       └── index.js            # integration barrel (Phase 8)
+├── bench/                      # benchmarking harness — development-only, non-runtime
+│   ├── loaders/                # corpus loaders (LoCoMo, synthetic)
+│   ├── metrics/                # retrieval metrics (precision@k, recall@k, MRR)
+│   ├── sweeps/                 # per-knob coordinate-descent drivers
+│   ├── baselines/              # naive BM25, recency, random
+│   └── runner.js               # orchestrator
 ├── docs/
 │   ├── specs/
 │   │   └── 2026-04-20-starmem-v2-design.md   # this file
+│   ├── bench/                  # measured values + per-sweep writeups (Phase 9)
 │   └── wiki/
 │       ├── byterover.md        # primary substrate inspiration
 │       ├── adamem.md           # origin of the Working/Episodic/Persona vocabulary
@@ -338,6 +346,11 @@ STARmem/
     ├── unit/
     └── integration/            # ST mock + trace assertions
 ```
+
+**Layout deviations from the original draft:**
+
+- Phase 8 added `src/integration/viewer/` (viewer modal + per-tab renderers) and `src/integration/index.js` (integration barrel). Originally this section listed a flat `src/integration/`. The sub-directory is load-bearing: the viewer has five tabs, each ~100-200 LOC, and grouping them keeps the directory listing legible.
+- Phase 9 moved the `src/eval/` placeholder out to a top-level `bench/` directory. Rationale: the harness is development-only (no SillyTavern runtime code references `bench/`), and grouping it with `docs/bench/` keeps both evaluation artifacts visually adjacent in a file tree.
 
 ### 10.1 README Sources Block (mandatory)
 
