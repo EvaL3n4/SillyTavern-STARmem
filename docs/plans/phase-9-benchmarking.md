@@ -1078,56 +1078,117 @@ Expect flat or near-flat metrics across the 16 points on synthetic data AND on r
 
 **Files:**
 
-- Create: `bench/baselines/bm25only.js`  (bypass ladder, call Tier-2 directly)
-- Create: `bench/baselines/recency.js`   (return top-K most recent entries, no scoring)
-- Create: `bench/baselines/random.js`    (return K random entries, seeded for reproducibility)
+- Create: `bench/baselines/bm25only.js`  (raw BM25 — no scorer chain)
+- Create: `bench/baselines/recency.js`   (sort by `lifecycle.updatedAt` desc)
+- Create: `bench/baselines/random.js`    (seeded Mulberry32 PRNG)
 - Create: `bench/baselines/index.js`     (barrel + `BASELINES` array)
-- Create: `tests/unit/bench/baselines/*.test.js` (one per baseline)
-- Modify: `bench/runner.js` — accept a `baseline` option that swaps the retrieval function
+- Create: `tests/unit/bench/baselines/bm25only.test.js`
+- Create: `tests/unit/bench/baselines/recency.test.js`
+- Create: `tests/unit/bench/baselines/random.test.js`
+- Create: `bench/baselines.js` (CLI entry: runs all baselines + default ladder, emits comparison report)
+- Modify: `bench/runner.js` (accept optional `retriever` function — if set, swap out the ladder `retrieve()`)
 - Modify: `package.json` (add `bench:baselines`)
 
-**Baseline contracts:**
+**Baseline signature (match `retrieve()` exactly):**
 
-All baselines implement `(chatId, query, { k }) => Array<{ id, content, score, tier: 'baseline' }>`. The runner treats `tier: 'baseline'` as a sentinel for metrics aggregation; traces get a `baselineId` field instead of a `scorerId`.
+```js
+/**
+ * @param {State} state
+ * @param {string} queryStr
+ * @param {{ now?: Date, k?: number }} [opts]
+ * @returns {RetrieveResult}  — same shape as src/retrieval/ladder.js retrieve()
+ */
+function baselineRetriever(state, queryStr, opts) { ... }
+```
 
-- `bm25only`: Build a transient BM25 index over every scope's entries (working + episodic + persona), return top-K. No classifier, no tier routing, no graph.
-- `recency`: Sort all entries by `lifecycle.updatedAt` desc, return top-K. Pure recency.
-- `random`: Seeded Mulberry32 PRNG (seed = `hash(chatId + query)` for reproducibility), return K random entries.
+Return shape matches `RetrieveResult`: `{ entries, tierResolved, trace, state }`. This lets `bench/runner.js` swap the retriever via a new optional param — no other runner changes, no translation logic.
+
+Use the baseline id as `tierResolved` (`'bm25only'` / `'recency'` / `'random'`) so per-baseline stats fall out naturally when aggregating runs. This widens the `tierResolved` type from `0|1|2|3|'floor'` to `0|1|2|3|'floor'|'bm25only'|'recency'|'random'`. Update the typedef in ladder.js accordingly (one-line additive change).
+
+Each baseline builds a minimal `Trace` via `buildTrace()` from `src/retrieval/trace.js` — `tierResolved = <baseline id>`, `perTier = { [baselineId]: entries.map(e => ({ id: e.id })) }`, `finalRanking = entries.map(e => e.id).slice(0, k)`, `scorerId = <baseline id>`. The trace still appends to `state.runtime.traces` via `logTrace` so the existing Phase 8 trace UI continues to work.
+
+**Baseline implementations:**
+
+- `bm25only`: **raw** BM25 only. Import `buildIndex` + `query` from `src/retrieval/bm25.js`; build an index over all entries in `state.entries` (regardless of scope — working, episodic, persona); call `query(index, queryStr, k)`; return the resulting entries **without** applying the scorer chain (no importance × recency × maturity multiplier). This is the point of the baseline — measure lift from the scorer. The `TAG_BOOST` / `SUBJECT_BOOST` integer repetition already happens inside `buildIndex` token construction, which is fine to keep; we're isolating the scorer chain, not the tokenizer.
+- `recency`: sort all entries by `lifecycle.updatedAt` desc (ISO 8601 string compare works for RFC 3339), return top-K. No BM25 at all.
+- `random`: seeded Mulberry32 PRNG, seed = `hash(chatId + queryStr)` via `crypto.createHash('sha256').update(...).digest()` first 4 bytes → uint32. Deterministic across runs.
+
+**Runner swap mechanism:**
+
+Add optional `retriever` param to `runHarness`:
+
+```js
+runHarness({
+    corpus,
+    scorerId,
+    overrides,
+    chatIdPrefix,
+    onProgress,
+    retriever,   // NEW — optional; default = retrieve() from ladder.js
+})
+```
+
+When `retriever` is set, the runner calls it instead of `retrieve`. Signature matches, so the call site is a one-line change: `const result = (retriever ?? retrieve)(seededState, qa.question, { k: 10 });`.
+
+When `retriever` is passed, `overrides` should still be applied (the baseline's BM25 uses TAG_BOOST / SUBJECT_BOOST from constants, so overrides are live) but `scorerId` is ignored (baselines don't go through the scorer registry).
+
+Runner extension: record the active retriever id (from `retriever.name` or a name property) on each run record so the aggregator can group. One test case: `runHarness({ corpus, retriever: bm25only })` produces runs with `tierResolved === 'bm25only'`.
+
+**Structural caveat (learned from Tasks 4-7):**
+
+On the rule-based synthetic fixture, all four retrievers (ladder, bm25only, recency, random) may produce similar metrics because the corpus is too small and the extractor doesn't differentiate. This is NOT a reason to skip the task — the baseline comparison has signal even on small data:
+
+- If ladder ≈ random on ANY corpus (synthetic or real), that's a structural bug — STOP and flag (same invariant as the graph sweep).
+- If ladder > random but ladder ≈ bm25only, the scorer chain isn't earning its keep on this corpus — note for sub-phase 9.5.
+- If ladder > bm25only > recency > random, the ladder is adding value; proceed to retro.
+
+Report both the synthetic smoke AND any real LoCoMo data the controller runs, clearly labeled.
 
 **Steps:**
 
-1. Write tests for each baseline — determinism (same input → same output), k-respect, empty-state handling.
-2. Implement baselines.
-3. Modify `runner.js` to accept `baseline?: string` — if set, swap the retrieval function.
-4. Run each baseline against full LoCoMo. Emit `docs/bench/baselines/YYYY-MM-DD-comparison.md` with:
-   - Ladder vs bm25only vs recency vs random — precision@k, recall@k, MRR.
-   - Latency comparison.
-   - Per-category breakdown (factual vs relational vs temporal — LoCoMo QA items have a `category` field).
-
-**Expected shape of result:**
-
-- Random should be near-floor (p@1 ≈ 1/|entries|).
-- Recency should perform poorly on factual queries, okay on "what did we talk about recently."
-- bm25only should be competitive on factual queries but lose on relational (where Tier 3 earns its keep) and on popular queries (where Tier 0 cache + recency boost help).
-- Ladder should dominate on MRR and recall@10.
-
-If ladder is ≤bm25only on factual+relational QA combined, **that's a structural bug**, same STOP rule as the graph sweep.
+1. Widen `tierResolved` typedef in `src/retrieval/ladder.js` to include baseline sentinels (one-line additive change; no behavioral effect).
+2. Write tests for each baseline (determinism, k-respect, empty-state, trace shape). ~3 test files, ~4-5 tests each.
+3. Implement the three baselines + barrel.
+4. Patch `bench/runner.js` to accept `retriever` param (one-line swap at the `retrieve(...)` call site, plus record the retriever id on each run). Update runner's unit test with one new case.
+5. Write `bench/baselines.js` — CLI that runs the harness four times (ladder + 3 baselines) and emits the comparison report.
+6. Report format at `docs/bench/baselines/YYYY-MM-DD-comparison.md`:
+   - Overall metrics table: one row per retriever, columns = recallAt{1,3,5,10}, precisionAt{1,3,5,10}, mrr, p50 latency, p95 latency.
+   - Per-category breakdown: group QA items by `qa.category` (whatever LoCoMo's actual categories are — do NOT assume 'factual/relational/temporal'; discover at runtime and enumerate), then metrics per (retriever × category) cell.
+   - Interpretation: apply the "ladder ≈ random" / "ladder ≈ bm25only" / "ladder dominates" branches above.
+   - Rule-based-extractor structural note if corpus is synthetic or small-LoCoMo.
+7. `package.json` gains `"bench:baselines": "node bench/baselines.js"`.
+8. Smoke run via `npm run bench:baselines -- --synthetic`. Subagent verifies the comparison report lands; does NOT commit it. Controller runs any fuller LoCoMo comparison.
+9. Commit bench/baselines/, tests/unit/bench/baselines/, bench/baselines.js, bench/runner.js, src/retrieval/ladder.js (typedef), package.json — with explicit paths, no `git add -A`.
 
 **Commit:**
 
 ```bash
-git add bench/baselines/ tests/unit/bench/baselines/ bench/runner.js \
-        docs/bench/baselines/ package.json
-git commit -m "feat(bench): three baselines — bm25only, recency, random
+git add bench/baselines/ tests/unit/bench/baselines/ \
+        bench/baselines.js bench/runner.js src/retrieval/ladder.js \
+        tests/unit/bench/runner.test.js \
+        package.json
+git commit -m "feat(bench): three baselines — bm25only, recency, random (Task 8)
 
-Baselines expose the same (chatId, query, { k }) signature as the
-ladder; runner swaps via --baseline. Metrics aggregation groups by
-baselineId when present, else scorerId.
+Three deterministic baseline retrievers matching the ladder's retrieve()
+signature: (state, queryStr, opts) → RetrieveResult. tierResolved is set
+to the baseline id ('bm25only' / 'recency' / 'random') so per-baseline
+stats fall out of existing aggregation without special-case branching.
 
-Comparison report lands in docs/bench/baselines/. Ladder is expected
-to dominate MRR and recall@10; underperformance vs bm25only on the
-combined factual+relational QA slice triggers a structural-bug STOP
-per the Phase 5 retro note on AdaMem ablation."
+- bm25only: raw BM25 via buildIndex + query, no scorer chain.
+- recency:  sort by lifecycle.updatedAt desc, no BM25.
+- random:   Mulberry32 seeded by hash(chatId + query) for reproducibility.
+
+Each baseline builds a minimal Trace via buildTrace() and appends via
+logTrace so Phase 8's trace UI continues to work unchanged.
+
+Runner gains an optional `retriever` param (default = retrieve from
+ladder.js); when passed, runHarness swaps the retrieval call but keeps
+all other mechanics (seeding, overrides, metrics). Comparison report
+lands in docs/bench/baselines/<date>-comparison.md with per-category
+breakdown grouping on LoCoMo's actual qa.category values.
+
+Structural invariant: if ladder ≈ random on any corpus, that's a STOP
+flag per Phase 5 retro note on AdaMem ablation."
 ```
 
 ---
