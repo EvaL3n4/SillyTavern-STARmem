@@ -10,7 +10,9 @@
         "lint:fix": "eslint 'src/**/*.js' 'tests/**/*.js' --fix",
         "test": "node --experimental-vm-modules node_modules/.bin/jest",
         "test:watch": "node --experimental-vm-modules node_modules/.bin/jest --watch",
-        "test:coverage": "node --experimental-vm-modules node_modules/.bin/jest --coverage"
+        "test:coverage": "node --experimental-vm-modules node_modules/.bin/jest --coverage",
+        "bench": "node bench/cli.js",
+        "bench:smoke": "node bench/cli.js --conversations 1"
     },
     "devDependencies": {
         "@eslint/js": "^9.0.0",
