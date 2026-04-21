@@ -655,24 +655,37 @@ Top-level orchestrator:
    - `scorerId`: `getScorerId()` from `src/retrieval/scorer.js`.
 5. Return the composite result.
 
-**Step 5 — Knob override mechanism**
+**Step 5 — Knob override mechanism (REVISED 2026-04-21 after Task 2 preflight audit)**
 
-Two choices for how sweeps swap knobs:
+**Plan-bug caught preflight:** Original plan assumed `export const TAU_CONFIDENCE = 2.0` (flat), but `src/core/constants.js` actually groups swept values inside `export const RETRIEVAL = Object.freeze({...})` / `CONSOLIDATION = Object.freeze({...})`, and **five modules destructure at module-load time** (`bm25.js`, `tier1-fuzzy.js`, `tier2-bm25.js`, `dedup.js`, `triggers.js`). Even if the group were mutable, the destructures snapshot values once at import — immune to later overrides.
 
-- **Option A (preferred):** Constants module exports are `let`s, not `const`s. Add a `setConstantOverrides(obj)` helper in `src/core/constants.js` that swaps specific values and returns a restore function. All existing `const` imports at callsites continue working because they read the module-level binding.
-- Option B: Pass overrides as options through every retrieval function. Intrusive; requires touching every signature.
+**Corrected strategy:**
 
-**Pick A.** But: several constants are destructured as pure values (e.g. `import { TAU_CONFIDENCE } from '../core/constants.js'`). ES modules let `const` re-export as `let` at the import site? No. **Mitigation:** change `src/core/constants.js` to export via `export let TAU_CONFIDENCE = 2.0;` for the swept knobs only. Unchanged constants stay `const`. The runner resets via `setConstantOverrides({})` in a try/finally around each run.
+1. **Unfreeze the two groups that hold swept knobs** — `RETRIEVAL` and `CONSOLIDATION`. Leave other groups (`LIFECYCLE`, `PERSONA_REBUILD`, `EDGE_TYPE_WEIGHTS`, etc.) frozen; nothing in Phase 9 sweeps their values.
+2. **Remove module-top destructures** for the swept keys. Rewrite consumers to read via the group at each call site: `RETRIEVAL.TIER2_TAU_CONFIDENCE` instead of the destructured local. Values unchanged by sweeps (e.g. `BM25_K1`, `WORKING_BUFFER_THRESHOLD`) can stay destructured at module top — they're still `const`-shaped in practice. The grep invariant in the guard test enumerates only the swept keys as "must-not-destructure-at-top."
+3. **Add `setConstantOverrides(obj)` / `resetConstantOverrides()`** helpers in `constants.js`. Mutate the group objects in place. Return a restore function for try/finally use.
+4. **Guard test** asserts (a) `RETRIEVAL` and `CONSOLIDATION` are NOT `Object.isFrozen(...) === true`, (b) no source file contains a module-top destructure of any of the 11 swept keys from `RETRIEVAL` or `CONSOLIDATION` (grep invariant, comment-stripped), (c) `setConstantOverrides({ TIER2_TAU_CONFIDENCE: 5 })` round-trips and `resetConstantOverrides()` restores 2.0. Tripwire-verify by reinstating one destructure and watching the guard fail.
 
-**The list of knobs that need `let`:**
-- `TAU_CONFIDENCE`, `TAU_GAP` (Task 5)
-- `LAMBDA_1`, `LAMBDA_2`, `BEAM_WIDTH`, `BEAM_HOPS`, `EDGE_CAP`, `COOCCURRENCE_WEIGHT`, `EXPLICIT_WEIGHT` (Task 6)
-- `DEDUP_JACCARD_THRESHOLD` (Task 7)
-- `TAG_BOOST`, `SUBJECT_BOOST` (Task 8)
+**The list of swept keys (enumerated by grep invariant):**
+- In `RETRIEVAL`: `TIER2_TAU_CONFIDENCE`, `TIER2_TAU_GAP`, `TIER3_LAMBDA_1`, `TIER3_LAMBDA_2`, `TIER3_BEAM_WIDTH`, `TIER3_MAX_HOPS`, `EDGE_CAP_PER_ENTRY`, `COOCCURRENCE_WEIGHT`, `EXPLICIT_RELATION_WEIGHT`, `SUBJECT_BOOST`, `TAG_BOOST`.
+- In `CONSOLIDATION`: `DEDUP_JACCARD_THRESHOLD`.
 
-That's 12 conversions. Flag any constant already read at module-load time (not per-call) — those need a re-init hook. Tier 2's exit condition is evaluated per-call, so those two are safe.
+12 keys total (same as original plan). Dedup threshold is the only `CONSOLIDATION` swept value.
 
-**Verify no const-reader breaks:** add a grep-invariant unit test `tests/unit/core/swept-constants-let.test.js` that reads `src/core/constants.js` and asserts each listed knob is declared with `let` (tripwire: revert one to `const`, see the test fail).
+**Call sites needing rewrite to read-through-group:**
+- `src/retrieval/bm25.js:13` — `SUBJECT_BOOST`, `TAG_BOOST`
+- `src/retrieval/tier2-bm25.js:14` — `TIER2_TAU_CONFIDENCE`, `TIER2_TAU_GAP`
+- `src/retrieval/tier3-graph.js` — `TIER3_LAMBDA_1`, `TIER3_LAMBDA_2`, `TIER3_BEAM_WIDTH`, `TIER3_MAX_HOPS`
+- `src/memory/edgeBuilder.js` — `EDGE_CAP_PER_ENTRY`, `COOCCURRENCE_WEIGHT`, `EXPLICIT_RELATION_WEIGHT`
+- `src/consolidation/dedup.js:19` — `DEDUP_JACCARD_THRESHOLD`
+
+`src/retrieval/tier1-fuzzy.js` (FUZZY_JACCARD_THRESHOLD) and `src/consolidation/triggers.js` (WORKING_BUFFER_THRESHOLD, IDLE_TRIGGER_SECONDS) destructure non-swept keys — leave them alone.
+
+**Task 3 is now split into 3a / 3b / 3c** to shrink per-delegation payload (Azure flake mitigation):
+
+- **Task 3a — Constants override infrastructure.** Unfreeze `RETRIEVAL` + `CONSOLIDATION`; rewrite 5 callsites to read through the group; add `setConstantOverrides` + `resetConstantOverrides`; write the guard test. ~1-1.5 KB of edits total. Fully controller-friendly or subagent depending on load.
+- **Task 3b — Harness seeder** (`bench/harness/seeder.js` + `bench/harness/st-mock.js`). 200-300 LOC, self-contained, pure function from corpus to seeded state.
+- **Task 3c — Runner + CLI** (`bench/runner.js`, `bench/cli.js`, integration test, `package.json` bench scripts). Depends on 3a's override mechanism and 3b's seeder.
 
 **Step 6 — Implement `bench/cli.js`**
 
