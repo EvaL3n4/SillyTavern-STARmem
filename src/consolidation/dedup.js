@@ -16,8 +16,6 @@
 import { CONSOLIDATION } from '../core/constants.js';
 import { tokenize } from '../retrieval/bm25.js';
 
-const { DEDUP_JACCARD_THRESHOLD } = CONSOLIDATION;
-
 /**
  * Jaccard similarity over two token arrays. Empty-over-empty returns 0 (not 1)
  * — zero-content entries should never dedup against each other.
@@ -54,7 +52,7 @@ export function findDuplicate(candidate, allEntries) {
         if (e.scope !== 'episodic') continue;
         if (e.subject !== candidate.subject) continue;
         const sim = jaccard(candTokens, tokenize(e.content));
-        if (sim >= DEDUP_JACCARD_THRESHOLD) return e;
+        if (sim >= CONSOLIDATION.DEDUP_JACCARD_THRESHOLD) return e;
     }
     return null;
 }

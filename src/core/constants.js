@@ -49,8 +49,14 @@ export const LIFECYCLE = Object.freeze({
     }),
 });
 
-/** Retrieval ladder constants. Spec §5, §5.1, §5.2. */
-export const RETRIEVAL = Object.freeze({
+/**
+ * Retrieval ladder constants. Spec §5, §5.1, §5.2.
+ *
+ * NOT frozen — Phase 9's benchmarking harness mutates swept keys in place via
+ * {@link setConstantOverrides}. Non-swept keys should still be treated as
+ * read-only; mutation outside the benchmarking harness is a bug.
+ */
+export const RETRIEVAL = {
     /** Tier 1 fuzzy-match Jaccard threshold. Spec §5. */
     FUZZY_JACCARD_THRESHOLD: 0.6,
     /** Tier 3 beam-search weights. Spec §5.1. */
@@ -82,7 +88,7 @@ export const RETRIEVAL = Object.freeze({
     EXPLICIT_RELATION_WEIGHT: 1.0,
     /** Weight for edges from entity co-occurrence (capitalized noun match). Spec §4 / §6.3. */
     COOCCURRENCE_WEIGHT: 0.5,
-});
+};
 
 /**
  * Tier 3 edge-type match weights per query intent. Spec §5.1 table.
@@ -97,8 +103,13 @@ export const EDGE_TYPE_WEIGHTS = Object.freeze({
     contradicts:   Object.freeze({ factual: 0.2, relational: 0.3, temporal: 0.2 }),
 });
 
-/** Consolidation trigger thresholds. Spec §6.2, §6.3, §6.4. */
-export const CONSOLIDATION = Object.freeze({
+/**
+ * Consolidation trigger thresholds. Spec §6.2, §6.3, §6.4.
+ *
+ * NOT frozen — Phase 9's benchmarking harness mutates DEDUP_JACCARD_THRESHOLD
+ * via {@link setConstantOverrides}. Other keys are de-facto read-only.
+ */
+export const CONSOLIDATION = {
     /** Working buffer size that triggers consolidation. Spec §6.2. */
     WORKING_BUFFER_THRESHOLD: 10,
     /** User-idle seconds that trigger consolidation. Spec §6.2. */
@@ -109,7 +120,7 @@ export const CONSOLIDATION = Object.freeze({
     PERSONA_REBUILD_SUGGESTION_THRESHOLD: 100,
     /** Dedup Jaccard threshold for same-subject merge. Spec §6.3; opening value, Phase 9 tunes. */
     DEDUP_JACCARD_THRESHOLD: 0.7,
-});
+};
 
 /** Persona rebuild (Enhanced RAPTOR) parameters. Spec §6.4 / wiki/raptor.md. */
 export const PERSONA_REBUILD = Object.freeze({
@@ -146,3 +157,87 @@ export const TRACE_BUFFER_CAP = 128;
  * @see src/integration/interceptor.js
  */
 export const INJECTION_DEPTH = 4;
+
+
+/**
+ * Phase 9 benchmarking: per-sweep override mechanism.
+ *
+ * The sweeps under `bench/sweeps/` need to probe retrieval/consolidation
+ * behaviour at non-default values of the twelve swept knobs (τ_confidence,
+ * τ_gap, λ₁, λ₂, beam width, max hops, edge cap, co-occurrence weight,
+ * explicit relation weight, subject boost, tag boost, dedup Jaccard).
+ *
+ * `setConstantOverrides({ TIER2_TAU_CONFIDENCE: 5 })` mutates RETRIEVAL or
+ * CONSOLIDATION in place. Callers that read `RETRIEVAL.TIER2_TAU_CONFIDENCE`
+ * at call time (not destructured at module top) observe the override on
+ * the next call. Destructuring swept keys at module top would bypass the
+ * override — the `tests/unit/core/swept-constants-overridable.test.js`
+ * guard fails if anyone reintroduces that pattern.
+ *
+ * This is a controller-owned mechanism: production code must never call
+ * setConstantOverrides or resetConstantOverrides. It exists only for
+ * `bench/runner.js` and its tests.
+ */
+
+const _INITIAL_RETRIEVAL = { ...RETRIEVAL };
+const _INITIAL_CONSOLIDATION = { ...CONSOLIDATION };
+
+/** @type {ReadonlyArray<string>} Swept keys in RETRIEVAL. Used by the guard test. */
+export const _SWEPT_RETRIEVAL_KEYS = Object.freeze([
+    'TIER2_TAU_CONFIDENCE',
+    'TIER2_TAU_GAP',
+    'TIER3_LAMBDA_1',
+    'TIER3_LAMBDA_2',
+    'TIER3_MAX_HOPS',
+    'TIER3_BEAM_WIDTH',
+    'EDGE_CAP_PER_ENTRY',
+    'COOCCURRENCE_WEIGHT',
+    'EXPLICIT_RELATION_WEIGHT',
+    'SUBJECT_BOOST',
+    'TAG_BOOST',
+]);
+
+/** @type {ReadonlyArray<string>} Swept keys in CONSOLIDATION. */
+export const _SWEPT_CONSOLIDATION_KEYS = Object.freeze([
+    'DEDUP_JACCARD_THRESHOLD',
+]);
+
+/**
+ * Apply a partial override to RETRIEVAL / CONSOLIDATION.
+ *
+ * @param {Object<string, number>} overrides
+ *        Map of swept-key → new value. Keys not in `_SWEPT_*_KEYS` throw.
+ * @returns {() => void} Restore function; call to undo just this override set.
+ * @throws {Error} if any key is unknown or not swept.
+ */
+export function setConstantOverrides(overrides) {
+    if (!overrides || typeof overrides !== 'object') {
+        throw new Error('setConstantOverrides: overrides must be an object');
+    }
+    const restorers = [];
+    for (const [key, value] of Object.entries(overrides)) {
+        if (_SWEPT_RETRIEVAL_KEYS.includes(key)) {
+            const prev = RETRIEVAL[key];
+            RETRIEVAL[key] = value;
+            restorers.push(() => { RETRIEVAL[key] = prev; });
+        } else if (_SWEPT_CONSOLIDATION_KEYS.includes(key)) {
+            const prev = CONSOLIDATION[key];
+            CONSOLIDATION[key] = value;
+            restorers.push(() => { CONSOLIDATION[key] = prev; });
+        } else {
+            // Undo partial application to avoid half-applied state
+            for (const r of restorers) r();
+            throw new Error(`setConstantOverrides: unknown or non-swept key '${key}'`);
+        }
+    }
+    return () => { for (const r of restorers) r(); };
+}
+
+/**
+ * Reset RETRIEVAL and CONSOLIDATION to their module-load values. Used by
+ * tests and the sweep driver's try/finally to guarantee a clean slate.
+ */
+export function resetConstantOverrides() {
+    for (const k of _SWEPT_RETRIEVAL_KEYS) RETRIEVAL[k] = _INITIAL_RETRIEVAL[k];
+    for (const k of _SWEPT_CONSOLIDATION_KEYS) CONSOLIDATION[k] = _INITIAL_CONSOLIDATION[k];
+}

@@ -16,12 +16,6 @@
 
 import { RETRIEVAL } from '../core/constants.js';
 
-const {
-    EDGE_CAP_PER_ENTRY,
-    EXPLICIT_RELATION_WEIGHT,
-    COOCCURRENCE_WEIGHT,
-} = RETRIEVAL;
-
 const ENTITY_RE = /\b[A-Z][a-z]{2,}\b/g;
 
 const STOP_WORDS = new Set(['A', 'I', 'The', 'It', 'Is', 'In', 'Of', 'Or', 'On', 'At', 'To', 'An', 'As', 'Be', 'By', 'Do', 'Go', 'He', 'Me', 'My', 'No', 'So', 'Up', 'Us', 'We']);
@@ -67,7 +61,7 @@ export function buildEdges(entry, allEntries, state) {
             from: entry.id,
             to: rel.target,
             type: rel.type,
-            weight: EXPLICIT_RELATION_WEIGHT,
+            weight: RETRIEVAL.EXPLICIT_RELATION_WEIGHT,
         });
     }
 
@@ -87,7 +81,7 @@ export function buildEdges(entry, allEntries, state) {
                     from: entry.id,
                     to: other.id,
                     type: 'mentions',
-                    weight: COOCCURRENCE_WEIGHT,
+                    weight: RETRIEVAL.COOCCURRENCE_WEIGHT,
                 });
             }
         }
@@ -121,7 +115,7 @@ export function buildEdges(entry, allEntries, state) {
         if (b.edge.weight !== a.edge.weight) return b.edge.weight - a.edge.weight;
         return (a.isExisting ? 1 : 0) - (b.isExisting ? 1 : 0);
     });
-    const keep = tagged.slice(0, EDGE_CAP_PER_ENTRY);
+    const keep = tagged.slice(0, RETRIEVAL.EDGE_CAP_PER_ENTRY);
 
     const keptKeys = new Set(
         keep.map(t => `${t.edge.from}\u0000${t.edge.to}\u0000${t.edge.type}`),

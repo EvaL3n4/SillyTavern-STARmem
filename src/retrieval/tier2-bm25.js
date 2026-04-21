@@ -11,8 +11,6 @@ import { RETRIEVAL } from '../core/constants.js';
 import { buildIndex, query as bm25Query } from './bm25.js';
 import { getScorer } from './scorer.js';
 
-const { TIER2_TAU_CONFIDENCE, TIER2_TAU_GAP } = RETRIEVAL;
-
 /**
  * @typedef {{
  *   entry: import('../core/schema.js').Entry,
@@ -66,7 +64,7 @@ export function tier2(state, queryStr, ctx) {
     const top = scored[0].score;
     const second = scored[1]?.score ?? 0;
     const gap = top - second;
-    const hit = top >= TIER2_TAU_CONFIDENCE && gap >= TIER2_TAU_GAP;
+    const hit = top >= RETRIEVAL.TIER2_TAU_CONFIDENCE && gap >= RETRIEVAL.TIER2_TAU_GAP;
 
     return { hit, scored };
 }

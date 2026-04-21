@@ -10,7 +10,7 @@
 
 import { RETRIEVAL } from '../core/constants.js';
 
-const { BM25_K1, BM25_B, BM25_DELTA, SUBJECT_BOOST, TAG_BOOST } = RETRIEVAL;
+const { BM25_K1, BM25_B, BM25_DELTA } = RETRIEVAL;
 
 /**
  * Tokenize text into lowercase alphanumeric tokens ≥2 chars. Reused by
@@ -59,8 +59,8 @@ export function buildIndex(entries) {
 
         const docTerms = [
             ...content,
-            ...repeat(subjectTokens, SUBJECT_BOOST),
-            ...repeat(tagTokens, TAG_BOOST),
+            ...repeat(subjectTokens, RETRIEVAL.SUBJECT_BOOST),
+            ...repeat(tagTokens, RETRIEVAL.TAG_BOOST),
         ];
 
         /** @type {Map<string, number>} */
