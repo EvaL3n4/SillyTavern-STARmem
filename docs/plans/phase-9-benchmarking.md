@@ -897,24 +897,48 @@ controller review. Spec amendment deferred to the end-of-phase commit."
 **Files:**
 
 - Create: `bench/sweeps/graph.js`
+- Modify: `bench/sweeps/_driver.js` (add `baseOverrides` support — backward-compatible)
+- Modify: `tests/unit/bench/sweeps/driver.test.js` (add 1-2 tests for `baseOverrides` merge behavior)
 - Modify: `package.json` (add `bench:sweep:graph`)
 
-**Knobs:**
+**Knobs (using full swept-key names from `_SWEPT_RETRIEVAL_KEYS`):**
 
-- `LAMBDA_1`: [0.5, 0.75, 1.0, 1.25, 1.5]
-- `LAMBDA_2`: [0.1, 0.2, 0.3, 0.4, 0.5]
-- `BEAM_WIDTH`: [3, 5, 8, 10]
-- `EDGE_CAP`: [10, 15, 20, 30, 50]
-- `COOCCURRENCE_WEIGHT`: [0.25, 0.5, 0.75, 1.0]  (explicit-relation weight stays at 1.0 as anchor)
+- `TIER3_LAMBDA_1`: [0.5, 0.75, 1.0, 1.25, 1.5]
+- `TIER3_LAMBDA_2`: [0.1, 0.2, 0.3, 0.4, 0.5]
+- `TIER3_BEAM_WIDTH`: [3, 5, 8, 10]
+- `EDGE_CAP_PER_ENTRY`: [10, 15, 20, 30, 50]
+- `COOCCURRENCE_WEIGHT`: [0.25, 0.5, 0.75, 1.0]  (`EXPLICIT_RELATION_WEIGHT` stays at spec default 1.0 as anchor)
+
+**Note on key names:** Same as Task 4 — use the full swept-key names or `setConstantOverrides` throws. Short names like `LAMBDA_1` / `BEAM_WIDTH` / `EDGE_CAP` are not in `_SWEPT_RETRIEVAL_KEYS`.
 
 Full cartesian = 2000 points — too expensive. **Coordinate descent, not grid:**
 
 1. Freeze 4 knobs at their spec defaults, sweep the 5th.
 2. Commit the elbow value of that 5th knob.
-3. Move to the next knob (now sweeping around the just-committed value).
-4. Order: `LAMBDA_1` → `LAMBDA_2` → `BEAM_WIDTH` → `EDGE_CAP` → `COOCCURRENCE_WEIGHT`. Rationale: scoring knobs first (they're most sensitive), then structural knobs (caps), then weight ratios.
+3. Move to the next knob (now sweeping around the just-committed value, with previously-committed knobs held at their elbow).
+4. Order: `TIER3_LAMBDA_1` → `TIER3_LAMBDA_2` → `TIER3_BEAM_WIDTH` → `EDGE_CAP_PER_ENTRY` → `COOCCURRENCE_WEIGHT`. Rationale: scoring knobs first (they're most sensitive), then structural knobs (caps), then weight ratios.
 
-5 × ~6 points = 30 runs total. 30 × 300 QA × 100ms = ~15 min.
+5 × ~6 points = ~23-24 runs total (5 knobs × avg 4.6 values). Each run seeds all N conversations once per sweep point — from Task 4 we know seeding dominates retrieval cost, so budget ~300 seedings for a 10-conv run. Smoke uses synthetic fixture; controller runs full LoCoMo separately.
+
+**Driver extension required (pre-requisite for graph.js):**
+
+The Task 4 driver accepts `{ knobs, corpus, primaryMetric }` and builds cartesian. For coordinate descent, graph.js needs the driver to accept a `baseOverrides` object that gets merged with each grid point before `runHarness` is called. Add this as an OPTIONAL field (default `{}`) to `sweep()` — Task 4's tau.js continues to work unchanged. graph.js then calls `sweep()` five times in sequence, feeding forward the elbow of each round as the next round's `baseOverrides`.
+
+Signature after the extension:
+
+```js
+sweep({
+  name,
+  knobs,               // for graph.js each round is a 1-element array
+  corpus,
+  primaryMetric,
+  baseOverrides,       // NEW — merged with each point, default {}
+  onComplete,
+  _runHarness,
+})
+```
+
+Inside `sweep()`, build the per-point override as `{ ...baseOverrides, ...point }`. Record the effective override (merged) in each point's result entry.
 
 **Steps:** mirror Task 4 — prose spec, call the shared driver, one sweep script per knob-sequence, write `docs/bench/sweeps/YYYY-MM-DD-graph.md` at the end.
 
@@ -922,7 +946,9 @@ Full cartesian = 2000 points — too expensive. **Coordinate descent, not grid:*
 
 > AdaMem ablation claims graph expansion is worth 2.02 F1. If Phase 9 numbers on a matched benchmark show <0.5 F1 lift vs Tier-2-only, something structural is wrong — do NOT tune λ values to paper over a structural bug.
 
-The sweep report must include a **"Tier-2-only baseline"** row (λ₂=0, beam disabled) and a **"graph contribution" column** showing `metric(with-graph) − metric(Tier-2-only)`. Anything under 0.05 MRR lift triggers a STOP in the sweep and a note to the controller before moving on.
+The sweep report must include a **"Tier-2-only baseline"** row and a **"graph contribution" column** showing `metric(with-graph) − metric(Tier-2-only)`. Anything under 0.05 MRR lift triggers a STOP in the sweep and a note to the controller before moving on.
+
+**Baseline row mechanism:** Force Tier 2 to exit successfully by overriding `TIER2_TAU_CONFIDENCE: 0.01`. This makes Tier 2 always meet its exit condition and prevents fallthrough to Tier 3, giving a clean "no graph expansion" comparison point. Document this choice in the report. (Avoid `TIER3_LAMBDA_2=0 + TIER3_BEAM_WIDTH=0` — those produce empty Tier 3 expansions with tied scores, not a clean Tier-2-only result.)
 
 **Commit:**
 
