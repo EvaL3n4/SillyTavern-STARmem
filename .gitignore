@@ -33,3 +33,5 @@ npm-debug.log*
 # Scratch
 *.tmp
 scratch/
+bench/.cache/
+.env.bench
