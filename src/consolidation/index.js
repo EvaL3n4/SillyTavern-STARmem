@@ -11,5 +11,5 @@ export { findDuplicate, jaccard } from './dedup.js';
 export { callLLM } from './llmClient.js';
 export { rebuildPersona } from './personaRebuild.js';
 export {
-    maybeConsolidate, resetIdleTimer, cancelIdleTimer,
+    maybeConsolidate, resetIdleTimer, cancelIdleTimer, clearTraces,
 } from './triggers.js';

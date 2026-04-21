@@ -15,7 +15,8 @@
  * @see docs/specs/2026-04-20-starmem-v2-design.md §6.2
  */
 
-import { loadState } from '../core/state.js';
+import { loadState, persistState } from '../core/state.js';
+import { withWriteLock } from '../core/lock.js';
 import { CONSOLIDATION } from '../core/constants.js';
 import { consolidate } from './consolidate.js';
 import { createLogger } from '../core/logger.js';
@@ -103,4 +104,21 @@ export function cancelIdleTimer(chatId) {
 export function _resetTimersForTests() {
     for (const t of idleTimers.values()) clearTimeout(t);
     idleTimers.clear();
+}
+
+/**
+ * Clear the retrieval trace ring buffer for a chat.
+ * Mutation site — runs under write lock to respect the single-mutator principle.
+ *
+ * @param {string} chatId
+ * @returns {Promise<void>}
+ */
+export async function clearTraces(chatId) {
+    await withWriteLock(chatId, async () => {
+        const state = await loadState(chatId);
+        await persistState(chatId, {
+            ...state,
+            runtime: { ...state.runtime, traces: [] },
+        });
+    });
 }

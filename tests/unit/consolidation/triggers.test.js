@@ -1,8 +1,8 @@
 import { describe, test, expect, beforeEach, afterEach, jest } from '@jest/globals';
 import {
-    maybeConsolidate, resetIdleTimer, cancelIdleTimer, _resetTimersForTests,
+    maybeConsolidate, resetIdleTimer, cancelIdleTimer, clearTraces, _resetTimersForTests,
 } from '../../../src/consolidation/triggers.js';
-import { setBackend, _resetBackendForTests } from '../../../src/core/state.js';
+import { setBackend, _resetBackendForTests, loadState } from '../../../src/core/state.js';
 import { _resetLocksForTests } from '../../../src/core/lock.js';
 import { createEmptyState } from '../../../src/core/schema.js';
 import { createEntry } from '../../../src/memory/entry.js';
@@ -190,5 +190,20 @@ describe('idle timer', () => {
         jest.advanceTimersByTime(120_000);
         await jest.runAllTimersAsync();
         expect(llmCalls).toBe(0);
+    });
+});
+
+describe('clearTraces', () => {
+    test('empties state.runtime.traces under write lock', async () => {
+        store.set(CHAT, {
+            ...createEmptyState(),
+            runtime: {
+                ...createEmptyState().runtime,
+                traces: [{ timestamp: '', query: 'q', tierResolved: 2 }],
+            },
+        });
+        await clearTraces(CHAT);
+        const after = await loadState(CHAT);
+        expect(after.runtime.traces).toEqual([]);
     });
 });
