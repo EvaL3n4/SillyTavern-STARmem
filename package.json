@@ -16,7 +16,8 @@
         "bench:sweep:tau": "node bench/sweeps/tau.js",
         "bench:sweep:graph": "node bench/sweeps/graph.js",
         "bench:sweep:consolidation": "node bench/sweeps/consolidation.js",
-        "bench:sweep:bm25": "node bench/sweeps/bm25.js"
+        "bench:sweep:bm25": "node bench/sweeps/bm25.js",
+        "bench:baselines": "node bench/baselines.js"
     },
     "devDependencies": {
         "@eslint/js": "^9.0.0",

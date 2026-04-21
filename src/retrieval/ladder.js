@@ -29,7 +29,7 @@ import { prependWorking } from './workingBuffer.js';
 /**
  * @typedef {{
  *   entries: Entry[],
- *   tierResolved: 0 | 1 | 2 | 3 | 'floor',
+ *   tierResolved: 0 | 1 | 2 | 3 | 'floor' | 'bm25only' | 'recency' | 'random',
  *   trace: Trace,
  *   state: State,
  * }} RetrieveResult

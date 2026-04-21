@@ -99,4 +99,72 @@ describe('runHarness', () => {
         expect(typeof result.runs[0].consolidationStats.batches).toBe('number');
         expect(Array.isArray(result.runs[0].consolidationStats.factLengths)).toBe(true);
     });
+
+    test('retriever swap works — custom retriever is called and result flows through', async () => {
+        const corpus = [
+            {
+                id: 'synth-swap',
+                turns: [
+                    { speaker: 'Alice', text: 'Alice likes coffee.', sessionId: 1, turnIndex: 0 },
+                ],
+                qa: [
+                    {
+                        question: 'What does Alice like?',
+                        answer: 'Coffee',
+                        evidenceTurns: [0],
+                        category: 'factual',
+                    },
+                ],
+            },
+        ];
+
+        const fakeEntry = {
+            id: 'fake_001',
+            scope: 'episodic',
+            content: 'Fake result',
+            subject: null,
+            tags: [],
+            relations: [],
+            lifecycle: {
+                importance: 50,
+                maturity: 'draft',
+                createdAt: '2026-04-01T00:00:00Z',
+                updatedAt: '2026-04-01T00:00:00Z',
+                accessCount: 0,
+                updateCount: 0,
+            },
+            provenance: { sourceMessages: [0], extractor: 'fake' },
+        };
+
+        const fakeTrace = {
+            timestamp: '2026-04-01T00:00:00Z',
+            query: 'What does Alice like?',
+            classifier: 'factual',
+            tierResolved: 'bm25only',
+            perTier: { bm25only: [{ id: 'fake_001' }] },
+            finalRanking: ['fake_001'],
+            scorerId: 'bm25only',
+        };
+
+        /** @type {any[]} */
+        const calls = [];
+        const fakeRetriever = (state, queryStr, opts) => {
+            calls.push({ state, queryStr, opts });
+            return {
+                entries: [fakeEntry],
+                tierResolved: 'bm25only',
+                trace: fakeTrace,
+                state,
+            };
+        };
+
+        const result = await runHarness({ corpus, retriever: fakeRetriever });
+        expect(calls.length).toBe(1);
+        expect(calls[0].queryStr).toBe('What does Alice like?');
+        expect(calls[0].opts.k).toBe(10);
+        expect(result.runs.length).toBe(1);
+        expect(result.runs[0].retrieved[0].id).toBe('fake_001');
+        expect(result.runs[0].retrieved[0].tier).toBe('bm25only');
+        expect(result.runs[0].retrieverId).toBe('fakeRetriever');
+    });
 });

@@ -39,6 +39,7 @@ import { computeMetrics } from './metrics/retrieval.js';
  * @property {Trace[]} traces
  * @property {number} latencyMs
  * @property {{added: number, updated: number, drained: number, batches: number, factLengths: number[]}} consolidationStats
+ * @property {string} retrieverId
  */
 
 /**
@@ -57,6 +58,7 @@ import { computeMetrics } from './metrics/retrieval.js';
  * @param {Record<string, number>} [opts.overrides]
  * @param {string} [opts.chatIdPrefix]
  * @param {(pct: number) => void} [opts.onProgress]
+ * @param {Function} [opts.retriever]
  * @returns {Promise<HarnessResult>}
  */
 export async function runHarness({
@@ -65,6 +67,7 @@ export async function runHarness({
     overrides,
     chatIdPrefix,
     onProgress,
+    retriever,
 }) {
     const restore = overrides ? setConstantOverrides(overrides) : () => {};
 
@@ -81,7 +84,7 @@ export async function runHarness({
 
             for (const qa of conv.qa) {
                 const t0 = performance.now();
-                const result = retrieve(seededState, qa.question, { k: 10 });
+                const result = (retriever ?? retrieve)(seededState, qa.question, { k: 10 });
                 const latencyMs = performance.now() - t0;
 
                 const goldTurns = qa.evidenceTurns.map(ti => ({
@@ -112,6 +115,7 @@ export async function runHarness({
                     traces: [result.trace],
                     latencyMs,
                     consolidationStats,
+                    retrieverId: retriever?.name ?? 'ladder',
                 });
             }
 

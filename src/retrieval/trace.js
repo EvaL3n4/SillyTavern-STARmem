@@ -14,7 +14,7 @@ import { TRACE_BUFFER_CAP } from '../core/constants.js';
  *   timestamp: string,
  *   query: string,
  *   classifier: 'factual' | 'relational' | 'temporal',
- *   tierResolved: 0 | 1 | 2 | 3 | 'floor',
+ *   tierResolved: 0 | 1 | 2 | 3 | 'floor' | 'bm25only' | 'recency' | 'random',
  *   perTier: Record<string, unknown>,
  *   finalRanking: string[],
  *   scorerId: string,
