@@ -447,6 +447,53 @@ These are v2.1+ considerations. Do not implement them in any phase.
 
 _Appended after each phase ships. Format: `## Phase N—<date>`, with notes on surprises, scope changes, and lessons for subsequent phases._
 
+## Phase 8—2026-04-21
+
+**What shipped:** SillyTavern integration surface — `src/integration/constants.js` (UI-scoped settings + injection constants, `CSS_PREFIX=starmem`, `INJECTION_DEPTH=4`), `src/integration/settings.js` (`extension_settings['STARmem']` persistence with defaults, clamps, schemaVersion drift handling, injectable context for tests), `src/integration/interceptor.js` (the real `starmemInterceptor` body — chatId resolution, last-user-message query extraction, retrieve → splice at `INJECTION_DEPTH=4` with short-chat prepend fallback, all errors caught and swallowed), `src/integration/bootstrap.js` (APP_READY handler — settings load, state backend install, indicator mount, viewer pre-mount, idle timer install, `CHAT_CHANGED`/`MESSAGE_SENT`/`MESSAGE_RECEIVED`/`MESSAGE_DELETED` subscriptions, idempotent double-bootstrap), `src/integration/indicator.js` (consolidation dot mounted in `#send_but_container` with floating-fallback — idempotent mount, 1 s polling, animated amber pulse), `src/integration/settingsPanel.js` + inlined HTML (`renderSettingsPanel` — profile/embed profile / scorer dropdowns, three sliders, Reset button — all persisting through `setSettings`), `src/integration/viewer/mount.js` (native `<dialog>` shell via `openViewer` — tab strip + mobile `<select>` collapse at 639 px, close/teardown, tab routing, subject filter, popup fallback when `<dialog>` unavailable), `src/integration/viewer/tabs/{working,episodic,persona,graph,traces}.js` (five tabs, each self-contained, each JSDOM-tested), `tests/helpers/stContextMock.js` (minimal `getContext()` factory + real-pub/sub `eventSource` spy + `installGlobalSillyTavern` teardown — 11 self-tests), `src/integration/index.js` barrel, root `index.js` rewrite (TLA subscription to APP_READY + interceptor shim with try/catch shield), `src/consolidation/` got `clearTraces(chatId)` for the Traces tab, `style.css` (hybrid ST-var + hardcoded-accent theme, native `<dialog>` sizing, single 639 px breakpoint, four CSS invariants enforced in tests: prefix / `!important` budget / fallback requirement / single-breakpoint), grep invariant `no-leaky-css.test.js` (walks `src/integration/` for non-prefixed class/id tokens — tripwire-verified), `scripts/smoke.md` (18-step manual checklist in three sections). Plan finalized in-place as `docs/plans/phase-8-st-integration.md` — no rename needed, never had the old name.
+
+**Test totals:** 57 suites / 618 tests — all green. Baseline at Phase 7 close was 44 suites / 488 tests; Phase 8 added 13 suites and 130 tests.
+
+**Commits this phase:** 24, plus this retro = 25. Baseline commit `5812b79` (plan draft); Phase 8 HEAD before retro is `2928298`.
+
+**Execution mode:** Mixed — controller for load-bearing / small tasks (0, 2, 3, 8, 9, 11 and all inline plan-bug patches), subagents for DOM-heavy or mechanical tasks (1, 4, 5, 6, 7.1–7.5, 10). Reviews skipped per subagent-driven-development skill criteria (verbatim code + static checks: tsc, eslint, jest). Controller audits: two grep invariants (CSS prefix, ET map) tripwire-verified; `git log -1` hash checks after every subagent delegation per sandbox-path-hygiene.
+
+**Decisions locked in the planning conversation (all held through execution):**
+
+1. E2E harness: JSDOM + manual smoke checklist. Playwright deferred to Phase 9.
+2. DOM rendering: vanilla `createElement`/`textContent` for data, `innerHTML` only for static templates.
+3. Settings persistence: `extension_settings['STARmem']` for globals, no new per-chat settings.
+4. Injection format: spliced at `INJECTION_DEPTH=4` with `role: system`, short-chat prepend fallback.
+5. Access events: pre-generate — called on entries returned by `retrieve()`, not every candidate.
+6. Chat switch hygiene: `CHAT_CHANGED` cancels idle timer, clears per-chat caches, triggers `maybeConsolidate` on new chat if over threshold.
+7. Traces: 128-entry ring buffer, JSONL export via blob URL, per-trace expand.
+8. Delegation split: controller owns load-bearing/integration, subagents own DOM components.
+9. CSS scoping: `starmem-*` prefix on every class/id, enforced by grep invariant.
+10. Module layout deviates from spec §10 — documented in §5 of the phase plan; spec amendment deferred to Phase 9 preamble.
+11. `stContextMock` surface: minimal + `eventSource` spy, factory-per-test (not shared singleton).
+12. CSS theming: hybrid — `var(--SmartTheme…, #fallback)` for surfaces, hardcoded accents (`#7aa2f7` blue, `#e0af68` amber) for STARmem-specific elements.
+13. Viewer modal: native `<dialog>` with `showModal()`.
+14. Indicator mount: `#send_but_container` anchor (stable ST structure), NOT `document.body` — revised from chunk 3 draft.
+15. Smoke checklist: thorough (18 steps, pure prose, single `smoke.md` file).
+
+**Surprises:**
+
+1. **Plan bug pattern held steady: three verbatim-code bugs caught in the last three tasks, each by a different signal.** Task 8's `ET` map dropped `GENERATION_STARTED` (not a Phase-8 event) and had to add `MESSAGE_SENT`; patched into the plan as commit `4ac4e3f` before execution. Task 9's barrel referenced four symbol names that didn't match what Tasks 2/3/5/6 actually shipped (`runInterceptor`→`starmemInterceptor`, `bootstrap/teardown`→`bootstrap`, `mountSettingsPanel/unmountSettingsPanel`→`renderSettingsPanel`, `mountViewer/unmountViewer/isViewerOpen`→`openViewer`); caught by `tsc --noEmit` on first run, fixed in the shipped code, plan annotated with a reconciliation block. Task 10's invariants test regex scanned raw CSS without stripping `/* ... */` comments, producing false positives on hex fallbacks (`#e8e8e8`), decision refs (`14.B`), and filename tokens (`.json`, `.css`); caught by the Task 10 subagent correctly stopping on ambiguity rather than modifying the CSS to pass. Pattern: for ~5 500-line plans with verbatim code, expect 2–4 drift bugs per phase. `tsc` + `eslint` + `jest --silent` are load-bearing — they catch 100% of the ones my eyes miss.
+
+2. **`subagent-driven-development` skill's "trust stops on ambiguity" protocol paid off cleanly on Task 10.** The delegated subagent wrote both files from the plan, hit the invariants-test failure, correctly identified the four token classes causing false positives, presented four options (fix test / fix CSS / commit broken / update plan), and stopped. Fix at the controller level took ~3 minutes (strip comments + skip hex tokens + tripwire-verify). If the subagent had pushed through with judgment, we'd have shipped either an incorrect test that silently loses coverage or a reformatted CSS that still fails the invariant.
+
+3. **Plan file rename was already done.** Decision 15 called for a `phase-8-integration.md` → `phase-8-st-integration.md` rename, but the finalized plan never had the old name — `663a924` committed it directly as `phase-8-st-integration.md`. No-op.
+
+**Notes for Phase 9 (Benchmarking):**
+
+- **Playwright gate for real DOM regressions.** JSDOM smoke coverage is structural only — it can't catch CSS layout bugs, z-index stacking issues, or `<dialog>` backdrop rendering differences across browsers. Phase 9 is the right time to add a minimal Playwright harness: install the extension into a fresh SillyTavern, run through the 18-step `smoke.md` checklist as automated steps, snapshot the viewer dialog at desktop and < 640 px widths.
+- **Trace ring buffer is the telemetry surface.** The 128-entry ring in `chatMetadata['STARmem'].runtime.traces` plus JSONL export is exactly the shape a bench harness needs. Phase 9 can consume these directly — no additional logging needed. Bench pipeline: seed chat → replay user turns via interceptor-eligible messages → dump JSONL → compute precision@k / recall@k / MRR offline.
+- **Azure delegation payload-bloat caveat.** This phase ran during a week of flaky Azure Claude 4.7 completions caused by large tool-call arguments; subagents for tasks writing >25 KB of verbatim code failed intermittently. Task 10's CSS was 11 KB (safe) but flirted with the threshold. Phase 9 tasks that subagents touch: keep individual `write_file` calls under 25 KB. Chunk larger files across multiple calls.
+- **Spec §10 module layout amendment.** Phase 8 deviated from spec §10 in two places (viewer sub-directory, integration barrel). Update the spec before Phase 9 begins — Phase 9 needs clean anchors to reference.
+- **`starmem-*` CSS prefix invariant is load-bearing and cheap.** Keep it running in Phase 9. Extend if Phase 9 adds DOM (unlikely — benchmarking is non-UI — but if a benchmark-viewer ships, apply the same test).
+- **`stContextMock` factory covers everything Phase 8 needed; extend minimally.** When Phase 9 tests need additional ST surface (e.g., `getEventSourceStream`), add the field to `stContextMock` rather than inline per-test.
+
+---
+
 ## Phase 7—2026-04-20
 
 **What shipped:** Persona rebuild pipeline — `src/consolidation/personaRebuild.js` (orchestrator: snapshot → chunk → loop(knn → leiden → summarize) → atomic swap; AbortSignal threaded through every stage with 8 `throwIfAborted` call sites; 8-stage `onProgress` callback), six RAPTOR internals under `src/consolidation/raptor/`:
