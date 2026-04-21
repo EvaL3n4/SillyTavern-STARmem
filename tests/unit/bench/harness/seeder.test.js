@@ -176,4 +176,13 @@ describe('seedConversation', () => {
         await expect(callLLM('bench', [{ role: 'user', content: 'x' }], 100))
             .rejects.toThrow(/SillyTavern|unavailable/i);
     });
+
+    test('accumulates consolidationStats across turns', async () => {
+        const r = await seedConversation(CONV, { now: FIXED_NOW });
+        expect(r.consolidationStats).toBeDefined();
+        expect(typeof r.consolidationStats.added).toBe('number');
+        expect(r.consolidationStats.added).toBeGreaterThanOrEqual(0);
+        expect(r.consolidationStats.batches).toBeGreaterThanOrEqual(1);
+        expect(Array.isArray(r.consolidationStats.factLengths)).toBe(true);
+    });
 });

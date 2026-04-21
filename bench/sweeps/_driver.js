@@ -35,6 +35,7 @@ const ELBOW_RATIO = 0.1;
  * @property {Record<string, number>} overrides
  * @property {MetricsResult} metrics
  * @property {{p50: number, p95: number}} latencyMs
+ * @property {import('../runner.js').HarnessRun[]} runs
  */
 
 /**
@@ -247,6 +248,7 @@ export async function sweep({
             overrides: effectiveOverrides,
             metrics: harnessResult.metrics,
             latencyMs,
+            runs: harnessResult.runs,
         };
 
         points.push(sweepPoint);

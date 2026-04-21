@@ -179,4 +179,22 @@ describe('sweep driver', () => {
         expect(result.points.length).toBe(1);
         expect(result.points[0].overrides).toEqual(expect.objectContaining({ X: 42, Y: 1 }));
     });
+
+    test('each point stores the raw runs array for downstream aggregation', async () => {
+        const fakeHarness = makeFakeHarness();
+        const result = await sweep({
+            name: 'test',
+            knobs: [
+                { name: 'A', values: [1, 2] },
+            ],
+            corpus: [],
+            primaryMetric: 'recallAt5',
+            _runHarness: fakeHarness.run,
+        });
+        expect(result.points.length).toBe(2);
+        for (const point of result.points) {
+            expect(point.runs).toBeDefined();
+            expect(Array.isArray(point.runs)).toBe(true);
+        }
+    });
 });

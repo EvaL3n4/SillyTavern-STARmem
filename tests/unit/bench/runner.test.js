@@ -68,4 +68,35 @@ describe('runHarness', () => {
         // After runHarness returns, overrides are restored in finally
         expect(RETRIEVAL.TIER2_TAU_CONFIDENCE).toBe(before);
     });
+
+    test('surfaces consolidationStats on each run record', async () => {
+        const corpus = [
+            {
+                id: 'synth-a',
+                turns: [
+                    { speaker: 'Alice', text: 'Alice likes coffee. She drinks it every morning.', sessionId: 1, turnIndex: 0 },
+                    { speaker: 'Bob',   text: 'Bob works at Acme. He is an engineer there.', sessionId: 1, turnIndex: 1 },
+                    { speaker: 'Alice', text: 'Charlie moved to Seattle. The rain is constant.', sessionId: 1, turnIndex: 2 },
+                    { speaker: 'Bob',   text: 'Diana loves hiking. She climbs mountains every weekend.', sessionId: 1, turnIndex: 3 },
+                    { speaker: 'Alice', text: 'Emma adopted a dog. The dog is very playful.', sessionId: 1, turnIndex: 4 },
+                    { speaker: 'Bob',   text: 'Frank plays guitar. He practices in the garage.', sessionId: 1, turnIndex: 5 },
+                ],
+                qa: [
+                    {
+                        question: 'What does Alice like to drink?',
+                        answer: 'Coffee',
+                        evidenceTurns: [0],
+                        category: 'factual',
+                    },
+                ],
+            },
+        ];
+        const result = await runHarness({ corpus });
+        expect(result.runs.length).toBeGreaterThan(0);
+        expect(typeof result.runs[0].consolidationStats.added).toBe('number');
+        expect(typeof result.runs[0].consolidationStats.updated).toBe('number');
+        expect(typeof result.runs[0].consolidationStats.drained).toBe('number');
+        expect(typeof result.runs[0].consolidationStats.batches).toBe('number');
+        expect(Array.isArray(result.runs[0].consolidationStats.factLengths)).toBe(true);
+    });
 });

@@ -14,7 +14,8 @@
         "bench": "node bench/cli.js",
         "bench:smoke": "node bench/cli.js --conversations 1",
         "bench:sweep:tau": "node bench/sweeps/tau.js",
-        "bench:sweep:graph": "node bench/sweeps/graph.js"
+        "bench:sweep:graph": "node bench/sweeps/graph.js",
+        "bench:sweep:consolidation": "node bench/sweeps/consolidation.js"
     },
     "devDependencies": {
         "@eslint/js": "^9.0.0",

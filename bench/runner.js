@@ -38,6 +38,7 @@ import { computeMetrics } from './metrics/retrieval.js';
  * @property {Array<{turnIndex: number, text: string}>} goldTurns
  * @property {Trace[]} traces
  * @property {number} latencyMs
+ * @property {{added: number, updated: number, drained: number, batches: number, factLengths: number[]}} consolidationStats
  */
 
 /**
@@ -76,6 +77,7 @@ export async function runHarness({
 
             const seedResult = await seedConversation(conv, { chatIdPrefix: chatIdPrefix ?? 'bench', keepBackend: true });
             const seededState = await loadState(seedResult.chatId);
+            const consolidationStats = seedResult.consolidationStats;
 
             for (const qa of conv.qa) {
                 const t0 = performance.now();
@@ -109,6 +111,7 @@ export async function runHarness({
                     goldTurns,
                     traces: [result.trace],
                     latencyMs,
+                    consolidationStats,
                 });
             }
 

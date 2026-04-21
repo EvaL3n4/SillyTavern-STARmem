@@ -148,7 +148,7 @@ async function pushWorking(chatId, content, msgIdx, now) {
  * @param {string} [opts.chatIdPrefix='bench']
  * @param {Date} [opts.now=new Date('2026-04-20T10:00:00Z')]
  * @param {boolean} [opts.keepBackend=false]
- * @returns {Promise<{ chatId: string, stateHash: string, factCount: number, turnsProcessed: number }>}
+ * @returns {Promise<{ chatId: string, stateHash: string, factCount: number, turnsProcessed: number, consolidationStats: { added: number, updated: number, drained: number, batches: number, factLengths: number[] } }>}
  */
 export async function seedConversation(conv, opts = {}) {
     const {
@@ -174,6 +174,8 @@ export async function seedConversation(conv, opts = {}) {
     // Seed initial empty state
     store.set(chatId, createEmptyState());
 
+    const consolidationStats = { added: 0, updated: 0, drained: 0, batches: 0, factLengths: [] };
+
     try {
         for (let i = 0; i < conv.turns.length; i++) {
             const turn = conv.turns[i];
@@ -182,12 +184,18 @@ export async function seedConversation(conv, opts = {}) {
             }
             await pushWorking(chatId, turn.text, i, now);
 
-            await maybeConsolidate(chatId, 'buffer', {
+            const consResult = await maybeConsolidate(chatId, 'buffer', {
                 profileId: 'bench',
                 extractorLabel: 'bench-ruleBased@v1',
                 messageOf: (e) => ({ role: 'user', content: e.content }),
                 now,
             });
+            if (consResult && typeof consResult === 'object' && !('skipped' in consResult)) {
+                consolidationStats.added   += consResult.added   ?? 0;
+                consolidationStats.updated += consResult.updated ?? 0;
+                consolidationStats.drained += consResult.drained ?? 0;
+                consolidationStats.batches += 1;
+            }
         }
 
         const state = await loadState(chatId);
@@ -200,11 +208,15 @@ export async function seedConversation(conv, opts = {}) {
             e => e.scope === 'episodic',
         ).length;
 
+        const episodicEntries = Object.values(state.entries).filter(e => e.scope === 'episodic');
+        consolidationStats.factLengths = episodicEntries.map(e => e.content.length);
+
         return {
             chatId,
             stateHash,
             factCount,
             turnsProcessed: conv.turns.length,
+            consolidationStats,
         };
     } finally {
         if (!keepBackend) {
