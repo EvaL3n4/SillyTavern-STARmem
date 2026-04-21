@@ -1043,21 +1043,32 @@ Computed derived metrics in the report:
 - Create: `bench/sweeps/bm25.js`
 - Modify: `package.json`
 
-**Knobs:**
+**Knobs (verified against `_SWEPT_RETRIEVAL_KEYS`):**
 
 - `TAG_BOOST`: [1, 2, 3, 4]  (integer only — fractional needs tokenizer refactor)
 - `SUBJECT_BOOST`: [1, 2, 3, 4]
 
-16 points. Full grid is fine at this size.
+16 points. Full grid is fine at this size. Reuses the Task 4 driver directly — no driver extensions needed.
+
+**Structural caveat (learned from Tasks 4-6 synthetic smokes and the tau 3-conv real run):**
+
+The rule-based fact extractor in `bench/harness/seeder.js` emits whole sentences as `content` with a simple capitalized-subject heuristic, and it doesn't populate `tags` systematically. This means:
+- Subject-boost effect is muted (all facts have subjects, so boost scales uniformly across candidates).
+- Tag-boost effect may be near-zero (few/no tags in seeded entries).
+
+Expect flat or near-flat metrics across the 16 points on synthetic data AND on rule-based LoCoMo. This is a known limitation, not a bug — document in the report and flag real-LLM extraction (sub-phase 9.5) as the path to meaningful numbers. If the smoke actually DOES produce signal, great, but don't chase a non-existent elbow.
 
 **Steps:**
 
-1. Run the sweep.
-2. Report per-(subject, tag) pair metrics.
-3. If the elbow lies at `subject > tag` (subject matches dominate), flag as-expected. If `tag > subject`, flag as "investigate — suggests entries have bogus tags or subject-extraction is weak."
-4. If Phase 3's hunch holds and fractional boosts would help, add a "v2.1 tokenizer refactor note" recommending a change to `src/retrieval/bm25.js` (replication → per-token weight multiplier).
+1. Create `bench/sweeps/bm25.js` mirroring `bench/sweeps/tau.js` shape (thin CLI wrapper + synthetic fallback + report writer). Two-knob cartesian, primary metric default `mrr` (most sensitive to ranking order).
+2. Report per-(TAG_BOOST, SUBJECT_BOOST) pair metrics plus a 4×4 heatmap of the primary metric. Include a `tags-populated-rate` diagnostic at the top: what fraction of seeded episodic entries have non-empty tags arrays? If <5%, the sweep's tag axis is meaningless and the report should say so explicitly.
+3. Elbow interpretation:
+   - If elbow at `SUBJECT_BOOST > TAG_BOOST` → flag "as-expected: subject dominates in well-formed retrievals."
+   - If elbow at `TAG_BOOST > SUBJECT_BOOST` → flag "investigate — suggests entries have bogus tags or subject-extraction is weak."
+   - If heatmap is flat (all cells within ±0.01 of each other) → flag "rule-based extractor can't exercise tag/subject asymmetry; defer to sub-phase 9.5."
+4. If Phase 3's hunch holds and fractional boosts would help, add a "v2.1 tokenizer refactor note" in the report recommending a change to `src/retrieval/bm25.js:62-63` — replace `repeat(tokens, INT_COUNT)` with a per-token weight multiplier. This is a note for the retro, not code changes in Task 7.
 
-**Commit:** mirror pattern.
+**Commit:** mirror Tasks 4-5 pattern (thin file list: `bench/sweeps/bm25.js` + `package.json`). Subagent runs synthetic smoke only; controller runs any longer LoCoMo sweep.
 
 ---
 
