@@ -1,0 +1,32 @@
+{
+  "asOf": "2026-04-21",
+  "gitSha": "4afaea02",
+  "corpus": "synthetic+locomo10-3conv",
+  "nodeVersion": "v25.9.0",
+  "scorerId": "default",
+  "status": "deferred",
+  "statusReason": "Rule-based fact extractor flattens metrics across all knob values; real measured elbows require sub-phase 9.5 with live-LLM extraction.",
+  "tuned": {
+    "TIER2_TAU_CONFIDENCE":     { "specDefault": 2.0,  "measured": null, "source": "sweeps/2026-04-21-tau.md",           "note": "flat across all 48 points on 3-conv LoCoMo and synthetic" },
+    "TIER2_TAU_GAP":            { "specDefault": 0.5,  "measured": null, "source": "sweeps/2026-04-21-tau.md",           "note": "same as TIER2_TAU_CONFIDENCE" },
+    "TIER3_LAMBDA_1":           { "specDefault": 1.0,  "measured": null, "source": "sweeps/2026-04-21-graph.md",         "note": "structural-bug flag fired on all 5 rounds (< 0.05 MRR lift); synthetic only" },
+    "TIER3_LAMBDA_2":           { "specDefault": 0.3,  "measured": null, "source": "sweeps/2026-04-21-graph.md",         "note": "same" },
+    "TIER3_BEAM_WIDTH":         { "specDefault": 5,    "measured": null, "source": "sweeps/2026-04-21-graph.md",         "note": "same" },
+    "EDGE_CAP_PER_ENTRY":       { "specDefault": 20,   "measured": null, "source": "sweeps/2026-04-21-graph.md",         "note": "same" },
+    "COOCCURRENCE_WEIGHT":      { "specDefault": 0.5,  "measured": null, "source": "sweeps/2026-04-21-graph.md",         "note": "same" },
+    "DEDUP_JACCARD_THRESHOLD":  { "specDefault": 0.7,  "measured": null, "source": "sweeps/2026-04-21-consolidation.md", "note": "updateRate=0 on all 5 points; no dedup pressure on synthetic" },
+    "TAG_BOOST":                { "specDefault": 2,    "measured": null, "source": "sweeps/2026-04-21-bm25.md",          "note": "flat heatmap (max-min=0); tags-populated-rate=0% on synthetic" },
+    "SUBJECT_BOOST":            { "specDefault": 2,    "measured": null, "source": "sweeps/2026-04-21-bm25.md",          "note": "same" }
+  },
+  "headlineMetrics": {
+    "corpus": "synthetic (2 convs, 4 QA items)",
+    "ladder":   { "recallAt1": 0.5000, "recallAt5": 1.0000, "mrr": 0.6875, "p95LatencyMs": null },
+    "bm25only": { "recallAt1": 1.0000, "recallAt5": 1.0000, "mrr": 1.0000, "p95LatencyMs": null },
+    "recency":  { "recallAt1": 0.5000, "recallAt5": 1.0000, "mrr": 0.6875, "p95LatencyMs": null },
+    "random":   { "recallAt1": 0.2500, "recallAt5": 0.7500, "mrr": 0.4792, "p95LatencyMs": null }
+  },
+  "structuralInvariants": {
+    "ladderVsRandom":  { "threshold": 0.02, "measuredMrrDelta": 0.2083, "status": "pass", "note": "ladder > random on synthetic; invariant held" },
+    "ladderVsBm25Only": { "threshold": 0.02, "measuredMrrDelta": -0.3125, "status": "flag", "note": "bm25only > ladder on 4-QA synthetic; scorer chain isn't earning its keep on this size — defer to sub-phase 9.5" }
+  }
+}
