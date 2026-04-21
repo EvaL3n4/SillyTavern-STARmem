@@ -632,28 +632,32 @@ Turn-by-turn seeder that takes a `CorpusConversation` and walks it through STARm
 3. **Returns** the chatId + fully seeded state hash for reproducibility.
 
 Implementation notes for the subagent:
-- Use `stContextMock` from `tests/helpers/` — needs extension for the seeder (add `generateLLMResponse` hook that returns canned fact-extraction JSON). Put the extension in `bench/harness/st-mock.js` so Phase 8's test helper stays clean.
 - Fact extraction in the seeder uses a deterministic rule-based fallback (regex over pronouns + proper nouns), not a real LLM call — benchmarks must be reproducible without network. The real `extractFacts.js` is exercised in a separate live-LLM sub-bench (also deferred to 9.5).
 - The seeder is the heaviest component of the runner (~200-300 LOC). Budget two `write_file` calls, chunked, if needed.
+
+**SHIPPED IN 3b (2026-04-21, commit `8b037bb`):** `bench/harness/seeder.js` exports `seedConversation(conv, opts)` which installs the mock extractor inline via `_setLLMClientForTests` — no separate `st-mock.js` needed. With `opts.keepBackend = true` the runner reuses the seeded state + in-memory backend. Return shape is `{ chatId, stateHash, factCount, turnsProcessed }`.
 
 **Step 4 — Implement `bench/runner.js`**
 
 Top-level orchestrator:
 
 1. Accept the call contract above.
-2. For each conversation in corpus:
+2. Apply `overrides` via `setConstantOverrides(overrides)` from `src/core/constants.js` at setup; capture restore function for try/finally teardown.
+3. For each conversation in corpus:
    - Generate a unique chatId (`${chatIdPrefix ?? 'bench'}-${conv.id}`).
-   - Seed via `bench/harness/seeder.js`.
-   - For each QA item, query via the public `retrieve(chatId, question, { k: 10 })` from `src/retrieval/ladder.js`, capture `performance.now()` delta for latency, snapshot `state.runtime.traces`.
-   - Resolve `goldTurns` from the QA `evidenceTurns` against the seeded `conv.turns`.
-   - Push run record.
-3. Feed all runs into `computeMetrics` from Task 2.
-4. Build `envSnapshot`:
-   - `constants`: read from `src/core/constants.js` + any `overrides`.
+   - Seed via `seedConversation(conv, { chatId, keepBackend: true })` from `bench/harness/seeder.js`.
+   - Call `loadState(chatId)` to get the seeded `State` object (seeder left the backend warm).
+   - For each QA item: capture `performance.now()`, call `retrieve(state, qa.question, { k: 10 })` from `src/retrieval/ladder.js`, record latency, capture the returned `trace` directly (the public signature returns `{ entries, tierResolved, trace, state }` — no need to snapshot `state.runtime.traces`).
+   - Resolve `goldTurns` by mapping `qa.evidenceTurns` (flat turnIndex numbers — see `bench/loaders/locomo.js` §parseEvidence) against `conv.turns` to produce `{ turnIndex, text }` entries.
+   - Push run record including the retrieved `entries` (mapped to `{ id, content, score, tier }`) and `traces` (the single returned trace, wrapped in an array for harness-contract symmetry with older signatures).
+4. Feed all runs into `computeMetrics` from Task 2.
+5. Build `envSnapshot`:
+   - `constants`: read from `src/core/constants.js` after overrides applied (spread `RETRIEVAL` + `CONSOLIDATION`).
    - `gitSha`: `execSync('git rev-parse HEAD').trim()`.
    - `nodeVersion`: `process.version`.
    - `scorerId`: `getScorerId()` from `src/retrieval/scorer.js`.
-5. Return the composite result.
+6. In `finally`, call the restore function from step 2 and `_resetBackendForTests()` / `_resetLocksForTests()` (seeder skipped these because `keepBackend=true`).
+7. Return the composite result.
 
 **Step 5 — Knob override mechanism (REVISED 2026-04-21 after Task 2 preflight audit)**
 
@@ -737,29 +741,28 @@ Expected output:
 **Step 10 — Commit**
 
 ```bash
-git add bench/ tests/unit/bench/ tests/integration/bench/ \
-        src/core/constants.js tests/unit/core/swept-constants-let.test.js \
+git add bench/runner.js bench/cli.js \
+        tests/unit/bench/runner.test.js \
+        tests/integration/bench/runner.integration.test.js \
         package.json
-git commit -m "feat(bench): harness runner + CLI
+git commit -m "feat(bench): harness runner + CLI (Task 3c)
 
 Core orchestration for Phase 9 benchmarking. runHarness seeds STARmem
-from a corpus, replays QA queries through the public retrieval ladder,
-captures traces and latencies, and emits aggregated metrics.
+from a corpus via bench/harness/seeder.js (Task 3b), applies any knob
+overrides via setConstantOverrides (Task 3a), replays QA queries
+through the public retrieve() ladder, captures traces and latencies,
+and emits aggregated metrics.
 
-bench/cli.js is a thin wrapper — arg parsing + JSONL/metrics file I/O.
-The 'npm run bench:smoke' target runs one conversation end-to-end.
-
-Constants gain a setConstantOverrides helper. The 12 knobs Phase 9
-sweeps (tau_*, lambda_*, beam_*, edge_cap, cooccurrence/explicit
-weights, dedup threshold, tag/subject boost) are now 'export let' to
-support per-run overrides. Each unchanged constant stays 'export const'.
-A swept-constants-let.test.js guard tripwires reverts to 'const'.
+bench/cli.js is a thin wrapper — stdlib argv parsing + JSONL/metrics
+file I/O. 'npm run bench:smoke' runs one conversation end-to-end.
 
 envSnapshot records git SHA, node version, active scorer id, and the
-effective constants for reproducibility.
+effective constants (post-override) for reproducibility.
 
 9 new tests (5 runner unit + 4 integration); all existing suites green."
 ```
+
+Note: constants-override infra and the guard test shipped in Task 3a (`3c28d2e`); seeder shipped in 3b (`8b037bb`) — this commit adds only the runner + CLI on top.
 
 ---
 
