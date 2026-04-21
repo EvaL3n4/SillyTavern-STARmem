@@ -1195,95 +1195,200 @@ flag per Phase 5 retro note on AdaMem ablation."
 
 ## Task 9 — Wire-invariant test + Phase 9 retro + ROADMAP append
 
-**Objective:** Close the phase. Per Phase 8's lesson (entry-point wiring invariants), add a grep test asserting `bench/cli.js` wires up the three core symbols. Write the retro. Append to `ROADMAP.md` with measured values and Phase 10 handoff notes.
+**Objective:** Close the phase. Per Phase 8's lesson (entry-point wiring invariants), add a grep test asserting every bench entry-point wires up its core symbols. Write the retro HONESTLY given the structural findings from Tasks 4-8. Append to `ROADMAP.md` with actual numbers (not plan estimates) and Phase 10 handoff notes.
 
 **Files:**
 
-- Create: `tests/integration/bench/cli-mounts-wired.test.js` (grep invariant: `bench/cli.js` imports + calls `loadLocomo`, `runHarness`, `computeMetrics`; each sweep script imports + calls `sweep` + `runHarness`)
-- Create: `docs/bench/baseline.json` (measured values from Tasks 4-7, machine-readable)
-- Create: `docs/plans/phase-9-retro.md` (decisions held/revised, surprises, lessons)
+- Create: `tests/integration/bench/cli-mounts-wired.test.js` (grep invariant — see Step 1 for the full symbol-wiring table)
+- Create: `docs/bench/baseline.json` (schema below — records FLAT/DEFERRED values honestly; no measured elbow values on rule-based data)
+- Create: `tests/integration/bench/baseline-json.test.js` (validates docs/bench/baseline.json is valid JSON with the expected top-level keys)
+- Create: `docs/plans/phase-9-retro.md` (decisions held/revised, surprises, lessons — SEE Step 3 for the actual Phase 9 narrative)
 - Modify: `docs/plans/ROADMAP.md` (append Phase 9 retro section, update status)
-- Modify: `docs/specs/2026-04-20-starmem-v2-design.md` (update §7, §5.2, §12.2 with measured values per the sweep recommendations — standalone `docs(spec)` commit, separate from the retro)
+
+**DELETED from Task 9 scope:** The spec amendment commit (original Step 5). No measured value from Tasks 4-7 differs meaningfully from spec defaults on the data we gathered — all four sweeps produced flat metrics on rule-based extraction. Any spec amendment is deferred to sub-phase 9.5 when live-LLM sweeps produce real elbow values.
 
 **Step 1 — Write the wire-invariant test**
 
-Template from `tests/integration/integration/index-mounts-wired.test.js`. For each sweep/cli file, list the symbols it must import AND call. Tripwire-verify by deleting an import or a call site, confirm the test fails with a clear message, revert.
+Template from `tests/integration/integration/index-mounts-wired.test.js`. Five entry points, each with its required symbol+call pairs:
 
-**Step 2 — Collect measured values into `docs/bench/baseline.json`**
+```js
+const REQUIRED_WIRINGS = [
+    {
+        file: 'bench/cli.js',
+        mounts: [
+            { symbol: 'loadLocomo',    from: './loaders/index.js' },
+            { symbol: 'runHarness',    from: './runner.js' },
+            { symbol: 'computeMetrics', from: './metrics/retrieval.js' },
+        ],
+    },
+    {
+        file: 'bench/sweeps/tau.js',
+        mounts: [
+            { symbol: 'sweep',      from: './_driver.js' },
+            { symbol: 'loadLocomo', from: '../loaders/index.js' },
+        ],
+    },
+    {
+        file: 'bench/sweeps/graph.js',
+        mounts: [
+            { symbol: 'sweep',      from: './_driver.js' },
+            { symbol: 'loadLocomo', from: '../loaders/index.js' },
+        ],
+    },
+    {
+        file: 'bench/sweeps/consolidation.js',
+        mounts: [
+            { symbol: 'sweep',      from: './_driver.js' },
+            { symbol: 'loadLocomo', from: '../loaders/index.js' },
+        ],
+    },
+    {
+        file: 'bench/sweeps/bm25.js',
+        mounts: [
+            { symbol: 'sweep',      from: './_driver.js' },
+            { symbol: 'loadLocomo', from: '../loaders/index.js' },
+        ],
+    },
+    {
+        file: 'bench/baselines.js',   // Task 8 added this — not in the original plan spec
+        mounts: [
+            { symbol: 'runHarness',     from: './runner.js' },
+            { symbol: 'loadLocomo',     from: './loaders/index.js' },
+            { symbol: 'computeMetrics', from: './metrics/retrieval.js' },
+            { symbol: 'bm25only',       from: './baselines/index.js' },
+            { symbol: 'recency',        from: './baselines/index.js' },
+            { symbol: 'random',         from: './baselines/index.js' },
+        ],
+    },
+];
+```
 
-Shape:
+Sweep drivers don't import `runHarness` directly — they call it via `sweep()` from `_driver.js`. So the rule for sweeps is: import `sweep` + call it, import `loadLocomo` + call it. (The driver itself imports runHarness, which the controller verifies by running a sweep end-to-end.)
+
+Tripwire-verify by deleting one import or one call, watch the test fail with a clear message, revert.
+
+**Step 2 — baseline.json (HONEST schema)**
+
+Use full swept-key names to match the constants module. Values are DEFERRED or FLAT, not tuned, because rule-based extraction didn't differentiate them. Schema:
 
 ```json
 {
-  "asOf": "2026-04-XX",
-  "gitSha": "...",
-  "corpus": "locomo10",
+  "asOf": "2026-04-21",
+  "gitSha": "<git rev-parse HEAD>",
+  "corpus": "synthetic+locomo10-3conv",
+  "nodeVersion": "<process.version>",
+  "scorerId": "default",
+  "status": "deferred",
+  "statusReason": "Rule-based fact extractor flattens metrics across all knob values; real measured elbows require sub-phase 9.5 with live-LLM extraction.",
   "tuned": {
-    "TAU_CONFIDENCE": { "value": 2.5, "was": 2.0, "source": "sweeps/<date>-tau.md" },
-    "TAU_GAP":         { "value": 0.75, "was": 0.5, "source": "sweeps/<date>-tau.md" },
-    "LAMBDA_1":        { ... },
-    ...
+    "TIER2_TAU_CONFIDENCE":     { "specDefault": 2.0,  "measured": null, "source": "sweeps/2026-04-21-tau.md",           "note": "flat across all 48 points on 3-conv LoCoMo and synthetic" },
+    "TIER2_TAU_GAP":            { "specDefault": 0.5,  "measured": null, "source": "sweeps/2026-04-21-tau.md",           "note": "same as TIER2_TAU_CONFIDENCE" },
+    "TIER3_LAMBDA_1":           { "specDefault": 1.0,  "measured": null, "source": "sweeps/2026-04-21-graph.md",         "note": "structural-bug flag fired on all 5 rounds (< 0.05 MRR lift); synthetic only" },
+    "TIER3_LAMBDA_2":           { "specDefault": 0.3,  "measured": null, "source": "sweeps/2026-04-21-graph.md",         "note": "same" },
+    "TIER3_BEAM_WIDTH":         { "specDefault": 5,    "measured": null, "source": "sweeps/2026-04-21-graph.md",         "note": "same" },
+    "EDGE_CAP_PER_ENTRY":       { "specDefault": 20,   "measured": null, "source": "sweeps/2026-04-21-graph.md",         "note": "same" },
+    "COOCCURRENCE_WEIGHT":      { "specDefault": 0.5,  "measured": null, "source": "sweeps/2026-04-21-graph.md",         "note": "same" },
+    "DEDUP_JACCARD_THRESHOLD":  { "specDefault": 0.7,  "measured": null, "source": "sweeps/2026-04-21-consolidation.md", "note": "updateRate=0 on all 5 points; no dedup pressure on synthetic" },
+    "TAG_BOOST":                { "specDefault": 2,    "measured": null, "source": "sweeps/2026-04-21-bm25.md",          "note": "flat heatmap (max-min=0); tags-populated-rate=0% on synthetic" },
+    "SUBJECT_BOOST":            { "specDefault": 2,    "measured": null, "source": "sweeps/2026-04-21-bm25.md",          "note": "same" }
   },
   "headlineMetrics": {
-    "ladder":   { "precisionAt5": 0.XX, "recallAt5": 0.XX, "mrr": 0.XX, "p95LatencyMs": XX },
-    "bm25only": { ... },
-    "recency":  { ... },
-    "random":   { ... }
+    "corpus": "synthetic (2 convs, 4 QA items)",
+    "ladder":   { "recallAt1": 0.5000, "recallAt5": 1.0000, "mrr": 0.6875, "p95LatencyMs": null },
+    "bm25only": { "recallAt1": 1.0000, "recallAt5": 1.0000, "mrr": 1.0000, "p95LatencyMs": null },
+    "recency":  { "recallAt1": 0.5000, "recallAt5": 1.0000, "mrr": 0.6875, "p95LatencyMs": null },
+    "random":   { "recallAt1": 0.2500, "recallAt5": 0.7500, "mrr": 0.4792, "p95LatencyMs": null }
+  },
+  "structuralInvariants": {
+    "ladderVsRandom":  { "threshold": 0.02, "measuredMrrDelta": 0.2083, "status": "pass", "note": "ladder > random on synthetic; invariant held" },
+    "ladderVsBm25Only": { "threshold": 0.02, "measuredMrrDelta": -0.3125, "status": "flag", "note": "bm25only > ladder on 4-QA synthetic; scorer chain isn't earning its keep on this size — defer to sub-phase 9.5" }
   }
 }
 ```
 
-**Step 3 — Write `phase-9-retro.md`**
+Pull the real numbers from `docs/bench/baselines/2026-04-21-comparison.md` (controller has it; subagent reads the file). `p95LatencyMs` stays null until the full-LoCoMo baseline run lands.
 
-Sections (mirror the Phase 6/7/8 retro structure from ROADMAP):
+The baseline-json validator test asserts: file exists, valid JSON, has the 6 top-level keys (`asOf`, `gitSha`, `corpus`, `status`, `tuned`, `headlineMetrics`, `structuralInvariants`), every key in `tuned` appears in `_SWEPT_RETRIEVAL_KEYS` or `_SWEPT_CONSOLIDATION_KEYS`.
 
-1. **What shipped** — terse list of D1-D10 from the plan header with actual counts.
-2. **Decisions held/revised** — walk through Decisions 1-10; each gets "held" or "revised because <reason>." Anything revised gets a full paragraph.
-3. **Execution mode** — subagent-driven or direct?; per-task audit notes.
-4. **Surprises** — plan-drift bugs caught, sweep results that contradicted spec defaults, any STOP-triggered investigations.
-5. **Notes for Phase 10** — what the Playwright harness should pick up; any uncovered benchmark territory (sub-phase 9.5 scope).
+**Step 3 — Write `phase-9-retro.md` (HONEST narrative)**
+
+Five sections, mirroring the Phase 6/7/8 retro structure. Actual content for each, not placeholders:
+
+1. **What shipped** — terse list of D1-D10 from plan header with actual counts: 65→68 test suites, 46→732 tests (+9 runner, +5 driver, +1 runner-swap, +2 seeder/runner stats for Task 6, +1 driver-runs for Task 6, +3 bm25 none, +16 baselines). bench/ tree structure. 5 smoke writeups produced (4 sweeps + 1 baseline comparison, all untracked for controller review).
+
+2. **Decisions held/revised** — walk through Decisions 1-10 from the plan header. Most held (corpus, metrics, CLI shape, black-box eval, coordinate descent, synthetic embeddings, advisory gate, out-of-scope list, Task 0 first). Revise Decision 4 (Jaccard gold-match): add a note that it worked mechanically but the rule-based seeder produces facts that don't differentiate across knob values, muting the signal. Revise Decision 5 (baselines): add that bm25only > ladder on synthetic 4-QA is a non-structural flag, not a bug — re-validate on real LoCoMo in 9.5.
+
+3. **Execution mode** — subagent-driven for Tasks 1-8 via Fireworks/Kimi-K2.6 routing (avoided Azure flakiness). Controller executed Task 9 directly (retro narrative quality > subagent speed). Preflight pattern: 6 Task dispatches, each preceded by a plan-patch commit. Counts: 4 tasks had key-name-drift bugs caught preflight (4, 5, 6, 7 — wait, 7 was clean). Actual count: 3 tasks with drift, 4 tasks with signature-mismatch bugs, 2 tasks with mechanism-gap bugs (graph baseline mechanism, consolidation-traces-don't-exist), 6 tasks in Task 8 alone. Total plan bugs caught preflight across Tasks 4-8: ~18. Zero downstream-discovered bugs — preflight ROI is real.
+
+4. **Surprises** — this is the big section. Write it out:
+
+   - **The rule-based extractor is the structural bottleneck for all four knob sweeps.** Tasks 4 (τ), 5 (graph λ/beam/cap/cooccur), 6 (dedup), 7 (bm25 boosts) all produced flat or near-flat metric surfaces on synthetic. Task 4's 3-conv real LoCoMo run *also* came back flat (recallAt5=1.0 across all 48 points). This wasn't a plan bug — it's a structural finding that sub-phase 9.5 has to address before any retuning makes sense.
+   - **bm25only > ladder on synthetic 4-QA.** Task 8's baseline comparison: bm25only MRR=1.0, ladder MRR=0.6875. The ladder-vs-random invariant held (ladder=0.6875 >> random=0.4792), so this is NOT a structural bug — but the scorer chain's multiplicative factors (importance × recency × maturity) introduced small perturbations that dropped the ladder below raw BM25 on a corpus too small to reward them. Will re-validate on real LoCoMo in 9.5.
+   - **Plan-bug pattern: short-form key-name drift.** Tasks 4 (TAU_CONFIDENCE → TIER2_TAU_CONFIDENCE), 5 (LAMBDA_1 → TIER3_LAMBDA_1, four more), 6 (DEDUP_JACCARD → DEDUP_JACCARD_THRESHOLD) all had the same bug class. Task 7 was the first where the plan's short names happened to match `_SWEPT_RETRIEVAL_KEYS` exactly. Root cause: plan was written with colloquial short names; `setConstantOverrides` strictly validates against the full key list. Recommend updating the plan-preflight-audit skill with a "sweep tasks: always grep `_SWEPT_*_KEYS` first" rule.
+   - **Plan-bug pattern: signature drift against Task 3c.** Task 8's baseline signature plan (`(chatId, query, {k}) → Array`) was drafted before Task 3c landed; real `retrieve()` is `(state, queryStr, opts) → RetrieveResult`. Caught preflight; would have cascaded through runner, baselines.js, and tests.
+   - **Empty-completion turns from Azure Opus under tool-call bloat.** Controller's Task 8 dispatch tripped the documented >25KB payload threshold twice in a row on the controller side, producing two empty turns before the subagent was successfully invoked. Didn't affect the subagent's work (Fireworks/Kimi handles it cleanly) — controller mitigation is smaller delegate_task contexts pointing at plan sections rather than inlining.
+   - **Subagent seeder-API confabulation during Task 3c.** Subagent reported the seeder signature as taking `chatIdPrefix` (correct) but the plan said `chatId` — caught in-flight, fixed in the runner code, no rework needed. Documented in memory for downstream tasks; no tasks after 3c called the seeder directly in a way that would have hit it.
+
+5. **Notes for sub-phase 9.5 (live-LLM extraction) and Phase 10 (Playwright harness)** —
+
+   **9.5 scope:**
+   - Swap rule-based extractor in `bench/harness/seeder.js` for a real LLM client (Gemma 4 31B or whatever model the user chooses via ST connection profiles). Env-gated so CI can stay deterministic.
+   - Re-run all 4 knob sweeps on full LoCoMo. Update `docs/bench/baseline.json` with real measured values.
+   - Re-run Task 8 comparison on full LoCoMo. Validate that ladder ≥ bm25only on realistic data (the structural expectation).
+   - Possibly add `TIER3_MAX_HOPS` and `EXPLICIT_RELATION_WEIGHT` sweeps — both are in `_SWEPT_RETRIEVAL_KEYS` but Phase 9 didn't cover them.
+   - EXTRACT_MAX_TOKENS tuning with real token counts (Phase 9 used char-length proxy).
+
+   **Phase 10 scope (Playwright harness):**
+   - Wire `bench/` runners into a Playwright smoke that exercises the live ST integration end-to-end.
+   - UX polish deferred from Phase 8.
+   - External memory-system baselines (Zep, Mem0) per Decision 5 footnote.
 
 **Step 4 — Append to ROADMAP.md**
 
-One new section `## Phase 9—YYYY-MM-DD` with subsections mirroring prior phases. Include a `Notes for Phase 10` subsection (not "Phase 9" anymore — we're past it).
+One new section `## Phase 9—2026-04-21` with subsections: What shipped, Surprises (copy from retro Step 3 §4, condensed), Notes for sub-phase 9.5, Notes for Phase 10. Use em-dash between date and "YYYY" same as prior phases.
 
-**Step 5 — Spec amendment**
-
-Standalone `docs(spec):` commit. For each measured knob whose value moved from the spec default:
-
-- Update the relevant section of the spec to the measured value.
-- Add a `**Measured 2026-04-XX against LoCoMo10**` note citing the sweep file.
-
-Do NOT delete the original rationale — add the measurement alongside it. Future reviewers need to see both the design-time default and the measured value.
-
-**Step 6 — Final verification**
+**Step 5 — Final verification**
 
 ```bash
 npm run lint && npm run typecheck && npm test
 ```
 
-All 58+ suites green. Test count should be ~680-700 (Phase 9 adds ~50-70 tests across loader, metrics, runner, sweeps, baselines, wire-invariant).
+All suites green. Test count should be ~734+ (732 baseline + wire-invariant test = ~15 assertions across 6 files × 2-3 tests each, plus ~2 for the baseline-json validator).
 
-**Step 7 — Commit sequence (three commits)**
+**Step 6 — Commit sequence (three commits, in this order)**
 
 ```bash
-# 1. Wire invariant test + retro
+# 1. Wire invariant test + baseline.json validator test
 git add tests/integration/bench/cli-mounts-wired.test.js \
-        docs/plans/phase-9-retro.md
-git commit -m "test(bench) + docs(plans): phase 9 wire invariant + retro"
+        tests/integration/bench/baseline-json.test.js
+git commit -m "test(bench): phase 9 wire invariant + baseline-json validator (Task 9)
 
-# 2. Measured values
-git add docs/bench/baseline.json
-git commit -m "docs(bench): phase 9 measured baseline values"
+Grep invariant asserts each bench entry-point (cli.js + 4 sweep scripts
++ baselines.js) imports AND calls its declared core symbols. Catches
+the Phase 8 class of bug where symbols ship with full test coverage
+but no production caller. baseline-json validator asserts the measured-
+values artifact is valid JSON with the expected schema."
+
+# 2. baseline.json + retro
+git add docs/bench/baseline.json docs/plans/phase-9-retro.md
+git commit -m "docs(bench): phase 9 measured baseline + retro (Task 9)
+
+baseline.json records FLAT/DEFERRED values — all four knob sweeps and
+the baseline comparison produced no meaningful measured elbows on
+rule-based fact extraction. Status='deferred' with per-knob notes
+explaining why. Structural invariants captured: ladder vs random
+(pass), ladder vs bm25only (flag — re-validate in sub-phase 9.5).
+
+Retro walks Decisions 1-10, documents five surprises (rule-based
+bottleneck, bm25only>ladder on 4-QA, two plan-bug patterns, Azure
+empty-turn behavior), and scopes sub-phase 9.5 and Phase 10."
 
 # 3. ROADMAP
 git add docs/plans/ROADMAP.md
-git commit -m "docs(plans): phase 9 retro — measured, ladder vs baselines, notes for phase 10"
-
-# 4. Spec (separate)
-git add docs/specs/2026-04-20-starmem-v2-design.md
-git commit -m "docs(spec): phase 9 measured knob values — per-section amendments"
+git commit -m "docs(plans): phase 9 retro — measured flat, notes for sub-phase 9.5 and phase 10"
 ```
+
+No spec amendment commit (original Step 5 removed — no measured value differs meaningfully from spec defaults).
 
 ---
 
@@ -1294,12 +1399,12 @@ git commit -m "docs(spec): phase 9 measured knob values — per-section amendmen
 | V1  | `bench/cli.js` → `loadLocomo`            | `tests/integration/bench/cli-mounts-wired.test.js` |
 | V2  | `bench/cli.js` → `computeMetrics`        | same                                             |
 | V3  | `bench/cli.js` → `runHarness`            | same                                             |
-| V4  | `bench/sweeps/tau.js` → `sweep`, `runHarness` | same                                        |
-| V5  | `bench/sweeps/graph.js` → `sweep`, `runHarness` | same                                      |
-| V6  | `bench/sweeps/consolidation.js` → `sweep`, `runHarness` | same                              |
-| V7  | `bench/sweeps/bm25.js` → `sweep`, `runHarness`  | same                                      |
-| V8  | Every baseline exercised by `bench/runner.js` | `tests/unit/bench/runner.test.js`             |
-| V9  | `docs/bench/baseline.json` exists + valid JSON | `tests/integration/bench/baseline-json.test.js` (Task 9 Step 2) |
+| V4  | `bench/sweeps/tau.js` → `sweep`, `loadLocomo` | same                                        |
+| V5  | `bench/sweeps/graph.js` → `sweep`, `loadLocomo` | same                                      |
+| V6  | `bench/sweeps/consolidation.js` → `sweep`, `loadLocomo` | same                              |
+| V7  | `bench/sweeps/bm25.js` → `sweep`, `loadLocomo`  | same                                      |
+| V8  | `bench/baselines.js` → `runHarness`, `bm25only`, `recency`, `random` | same                |
+| V9  | `docs/bench/baseline.json` exists + valid JSON | `tests/integration/bench/baseline-json.test.js` |
 | V10 | `docs/plans/phase-9-retro.md` walks Decisions 1-10 | reviewed manually in Task 9 Step 3      |
 
 ---
