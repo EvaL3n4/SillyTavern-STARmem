@@ -20,6 +20,46 @@ import { createEntry } from '../../src/memory/entry.js';
 import {
     _setLLMClientForTests, _resetLLMClientForTests,
 } from '../../src/consolidation/llmClient.js';
+import { makeLLMExtractor } from './llmExtractor.js';
+import { wrapWithCache } from './extractionCache.js';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const DEFAULT_CACHE_DIR = path.resolve(
+    fileURLToPath(new URL('.', import.meta.url)),
+    '..', '.cache', 'extractions',
+);
+
+/**
+ * @typedef {import('../../src/consolidation/llmClient.js').LLMClient} LLMClient
+ */
+
+/**
+ * Resolve which extractor to install based on process.env. Exported for tests.
+ *
+ * @returns {{ source: 'rule-based' | 'live', fn: LLMClient, cached: boolean }}
+ */
+export function _resolveExtractor() {
+    const live = process.env.STARMEM_BENCH_LIVE_EXTRACTOR === '1';
+    if (!live) {
+        return { source: 'rule-based', fn: ruleBasedExtractor, cached: false };
+    }
+
+    const url = process.env.STARMEM_BENCH_LLM_URL;
+    const apiKey = process.env.STARMEM_BENCH_LLM_API_KEY;
+    const model = process.env.STARMEM_BENCH_LLM_MODEL;
+    if (!url) throw new Error('seeder: STARMEM_BENCH_LIVE_EXTRACTOR=1 requires STARMEM_BENCH_LLM_URL');
+    if (!apiKey) throw new Error('seeder: STARMEM_BENCH_LIVE_EXTRACTOR=1 requires STARMEM_BENCH_LLM_API_KEY');
+    if (!model) throw new Error('seeder: STARMEM_BENCH_LIVE_EXTRACTOR=1 requires STARMEM_BENCH_LLM_MODEL');
+
+    const inner = makeLLMExtractor({ url, apiKey, model });
+    const noCache = process.env.STARMEM_BENCH_NO_CACHE === '1';
+    const fn = noCache
+        ? inner
+        : wrapWithCache(inner, { dir: DEFAULT_CACHE_DIR, model });
+
+    return { source: 'live', fn, cached: !noCache };
+}
 
 /**
  * @typedef {import('../../bench/loaders/locomo.js').CorpusConversation} CorpusConversation
@@ -168,8 +208,9 @@ export async function seedConversation(conv, opts = {}) {
     });
     _resetLocksForTests();
 
-    // Install rule-based mock LLM
-    _setLLMClientForTests(ruleBasedExtractor);
+    // Install extractor (rule-based by default, live when env-gated)
+    const { fn: extractorFn } = _resolveExtractor();
+    _setLLMClientForTests(extractorFn);
 
     // Seed initial empty state
     store.set(chatId, createEmptyState());
@@ -186,7 +227,9 @@ export async function seedConversation(conv, opts = {}) {
 
             const consResult = await maybeConsolidate(chatId, 'buffer', {
                 profileId: 'bench',
-                extractorLabel: 'bench-ruleBased@v1',
+                extractorLabel: process.env.STARMEM_BENCH_LIVE_EXTRACTOR === '1'
+                    ? `bench-live:${process.env.STARMEM_BENCH_LLM_MODEL}@v1`
+                    : 'bench-ruleBased@v1',
                 messageOf: (e) => ({ role: 'user', content: e.content }),
                 now,
             });
