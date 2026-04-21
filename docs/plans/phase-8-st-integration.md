@@ -25,7 +25,7 @@
 
 ## 2. Design decisions (locked in planning conversation)
 
-All ten held through planning. Controller audit verifies each against the final code before retro.
+All fifteen held through planning. Controller audit verifies each against the final code before retro. Decisions 11–15 were locked during Phase 8 chunk-6/7 finalization (see top-of-chunk-6 preamble).
 
 | # | Decision | Locked value |
 |---|---|---|
@@ -39,6 +39,11 @@ All ten held through planning. Controller audit verifies each against the final 
 | 8 | Delegation split | Controller: interceptor, bootstrap, settings persistence, final wiring, audits. Subagent: each DOM component (indicator, panel, viewer mount, five tabs) + CSS + JSDOM harness. |
 | 9 | CSS scoping | `.starmem-*` prefix on every class. Lint enforcement via a `no-other-mutators`-style grep invariant (see Task 9). |
 | 10 | ConnectionManager discovery | Via `SillyTavern.getContext().ConnectionManagerRequestService` (confirmed at `public/scripts/extensions/shared.js:380`). Profiles via `context.extensionSettings.connectionManager.profiles` (confirmed in Task 5 plan). |
+| 11 | stContextMock surface | Minimal — only the `getContext()` subset Phase 8 reads — plus an `eventSource` spy with real pub/sub semantics. Factory per test via `makeStContext(overrides)`, not a shared singleton. Lives under `tests/helpers/`, not `tests/fixtures/` (code, not data). |
+| 12 | CSS theming | Hybrid: ST CSS custom properties (`var(--SmartThemeBodyColor, …)`) for surfaces/text/borders so user themes (Catppuccin, Midnight, etc.) inherit automatically, plus hardcoded hex for STARmem-specific accents (indicator amber, active-tab blue). Every `var(--SmartTheme…)` carries a fallback so we degrade gracefully if ST renames a variable. |
+| 13 | Viewer modal | Native `<dialog>` with `showModal()` — browser provides backdrop, Escape-to-close, and focus trap for free. Jest-jsdom (v16+) supports `HTMLDialogElement` so we don't need to polyfill in tests. |
+| 14 | Indicator mount | `#send_but_container` anchor (with `position: relative` set by STARmem's stylesheet). Revises the earlier draft that mounted on `document.body` with fixed positioning — ST's send-bar structure has been stable for years and anchoring there is more visually integrated. Fallback to `document.body` + fixed position if `#send_but_container` isn't available at mount time (defensive). |
+| 15 | Smoke checklist | Thorough — 18 steps across three sections (happy path, chat-switch hygiene, defensive paths). Pure prose markdown; no bash helper scripts (Phase 9 owns automation). Must pass fully on a fresh ST install before shipping. Mobile `<select>` collapse tested on narrow viewport as part of happy path. |
 
 ## Layout (divergence from spec §10 acknowledged)
 
@@ -61,8 +66,8 @@ src/integration/
       traces.js         # + JSONL export
   index.js              # barrel
 tests/
-  fixtures/
-    stContextMock.js    # SillyTavern.getContext() mock for JSDOM tests
+  helpers/
+    stContextMock.js    # minimal SillyTavern.getContext() mock + eventSource spy
   integration/integration/
     interceptor.test.js           # non-JSDOM
     settings.test.js              # non-JSDOM
@@ -146,7 +151,7 @@ All imports resolved against existing barrels. No cross-phase refactors.
 | 7.3 | `viewer/tabs/persona.js` | 160 | Subagent | JSDOM |
 | 7.4 | `viewer/tabs/graph.js` | 110 | Subagent | JSDOM |
 | 7.5 | `viewer/tabs/traces.js` + JSONL export | 170 | Subagent | JSDOM |
-| 8 | `tests/fixtures/stContextMock.js` + harness wiring | 140 | Subagent | - |
+| 8 | `tests/helpers/stContextMock.js` + harness wiring | 140 | Controller | Self-test (10 assertions) |
 | 9 | `src/integration/index.js` barrel + `index.js` wire-up | 60 | Controller | grep invariant for `.starmem-*` prefix |
 | 10 | `style.css` | 180 | Subagent | - |
 | 11 | `scripts/smoke.md` + ROADMAP retro | - | Controller | Final verification block |
@@ -1704,7 +1709,9 @@ git commit -m "feat(integration): APP_READY bootstrap — event wiring, backend,
 ---
 ## Task 4 — `src/integration/indicator.js` (consolidation dot)
 
-**Objective:** A subtle DOM indicator that reflects `state.runtime.consolidating`. Mount once on APP_READY; poll on an interval (or observe via state event if available — v2 doesn't emit change events, so poll). Render a tiny colored dot into an existing ST container (`#movingDivs` or equivalent). Invisible when idle, visible (animated pulse) when consolidating.
+**Objective:** A subtle DOM indicator that reflects `state.runtime.consolidating`. Mount once on APP_READY; poll on an interval (v2 doesn't emit state-change events, so polling). Render a tiny colored dot **inside `#send_but_container`** (ST's send-button wrapper — stable structure, always visible in chat view). Invisible when idle, visible (animated amber pulse) when consolidating. Falls back to `document.body` + fixed positioning only if `#send_but_container` isn't in the DOM at mount time.
+
+**Decision 14 note:** This task was drafted against `document.body` + fixed positioning. Decision 14.B during chunk-6/7 finalization revised it to anchor inside ST's send-button container for tighter visual integration. The code below reflects the revised target; `style.css` (Task 10) sets `position: relative` on `#send_but_container` so the indicator's absolute positioning anchors correctly.
 
 **Owner:** Subagent. Small scope, JSDOM-testable.
 
@@ -1720,7 +1727,7 @@ Constraints:
 - Vanilla DOM only — no jQuery, no frameworks.
 - All class names start with `starmem-`.
 - Polling interval = 1s. NOT configurable yet; Phase 9 benchmark mode can add if needed.
-- Indicator mounts into document.body (ST's extension containers are inconsistent; body + fixed positioning is reliable).
+- Indicator mounts inside `#send_but_container` (ST's stable send-button wrapper). If that element is missing at mount time, fall back to `document.body` with fixed positioning — log a debug line when the fallback path fires so tests and manual smoke can distinguish.
 - Every mount MUST be idempotent: un-mount prior indicator DOM if present (by id).
 - Expose `mountIndicator()`, `unmountIndicator()`, `_tickForTests()` as named exports.
 - Test with jest-environment-jsdom — add to jest.config.js if not already present.
@@ -1792,7 +1799,19 @@ export function mountIndicator(getChatId) {
     dot.title = 'STARmem: idle';
     // Initially hidden (CSS class toggles visibility).
     dot.classList.add(`${CSS_PREFIX}-indicator-idle`);
-    document.body.appendChild(dot);
+
+    // Decision 14.B: prefer ST's send-button container as mount anchor.
+    // style.css sets `#send_but_container { position: relative }` so our
+    // absolute-positioned dot anchors there. Fall back to document.body
+    // with fixed positioning if the container isn't mounted yet (defensive).
+    const anchor = document.getElementById('send_but_container');
+    if (anchor) {
+        anchor.appendChild(dot);
+    } else {
+        log.debug('#send_but_container not found; falling back to document.body');
+        dot.classList.add(`${CSS_PREFIX}-indicator-floating`);   // CSS opts into fixed positioning
+        document.body.appendChild(dot);
+    }
     el = dot;
 
     intervalId = /** @type {number} */ (setInterval(tick, POLL_INTERVAL_MS));
@@ -1887,11 +1906,25 @@ afterEach(() => {
 });
 
 describe('indicator — mount / unmount', () => {
-    test('mountIndicator creates a dot in document.body', () => {
+    test('mountIndicator creates a dot inside #send_but_container when present', () => {
+        const anchor = document.createElement('div');
+        anchor.id = 'send_but_container';
+        document.body.appendChild(anchor);
         mountIndicator(() => 'chat-A');
         const dot = document.getElementById(`${CSS_PREFIX}-indicator`);
         expect(dot).not.toBeNull();
+        expect(dot?.parentElement?.id).toBe('send_but_container');
         expect(dot?.classList.contains(`${CSS_PREFIX}-indicator`)).toBe(true);
+        expect(dot?.classList.contains(`${CSS_PREFIX}-indicator-floating`)).toBe(false);
+    });
+
+    test('mountIndicator falls back to document.body with floating class when anchor absent', () => {
+        // No #send_but_container in the DOM.
+        mountIndicator(() => 'chat-A');
+        const dot = document.getElementById(`${CSS_PREFIX}-indicator`);
+        expect(dot).not.toBeNull();
+        expect(dot?.parentElement).toBe(document.body);
+        expect(dot?.classList.contains(`${CSS_PREFIX}-indicator-floating`)).toBe(true);
     });
 
     test('indicator starts in idle class', () => {
@@ -4644,5 +4677,1262 @@ git commit -m "feat(integration): traces tab — summary, raw expand, JSONL expo
 - Clear button calls clearTraces (under write lock) + re-renders
 - Summary line shows T/classifier/top score
 - Confirm dialog respected on Clear
+
+---
+## Task 8 — `tests/helpers/stContextMock.js` (minimal `getContext()` fake + `eventSource` spy)
+
+**Objective:** Factory for a SillyTavern `getContext()`-shaped fake used by every JSDOM integration test in Phase 8. Deviation from the chunk 1 task table: we're putting it under `tests/helpers/` not `tests/fixtures/` per convention — fixtures are data, helpers are code, this is a factory.
+
+**Owner:** Controller (small mechanical file, tighter typing than a subagent would give us).
+
+**Files:**
+- Create: `tests/helpers/stContextMock.js`
+- Create: `tests/helpers/stContextMock.test.js`
+
+**Decision 11 recap:** minimal surface — only what Phase 8 code actually touches — plus an `eventSource` spy because bootstrap.js subscribes to `APP_READY`, `MESSAGE_RECEIVED`, `MESSAGE_DELETED`, `CHAT_CHANGED`, and `GENERATION_STARTED`. Factory-per-test, no shared singleton — mirrors Phase 6's `_setLLMClientForTests` discipline.
+
+**Step 1: Create `tests/helpers/stContextMock.js`**
+
+```js
+/**
+ * Minimal SillyTavern context mock for Phase 8 JSDOM/integration tests.
+ *
+ * Surface deliberately narrow — only the fields STARmem Phase 8 code reads:
+ *
+ *   - extensionSettings       (settings.js, settingsPanel.js)
+ *   - saveSettingsDebounced   (settings.js, settingsPanel.js)
+ *   - chatMetadata            (state.js already has its own backend hook;
+ *                              included here for tests that exercise
+ *                              SillyTavern.getContext() directly)
+ *   - saveMetadataDebounced   (tests that want to assert persistence calls)
+ *   - chatId                  (interceptor.js, bootstrap.js)
+ *   - eventSource             (bootstrap.js — see spy below)
+ *   - event_types             (constant map used by bootstrap.js)
+ *
+ * Anything else (characters, chat, groups, callPopup, slash commands) is
+ * intentionally absent. If a later phase needs one, add it here rather
+ * than inline in a test.
+ *
+ * @module tests/helpers/stContextMock
+ */
+
+import { jest } from '@jest/globals';
+
+/**
+ * The subset of ST event_types Phase 8 wires. Names match ST's script.js.
+ * Kept as a frozen object so tests can reference `ET.APP_READY` safely.
+ */
+export const ET = Object.freeze({
+    APP_READY: 'app_ready',
+    MESSAGE_RECEIVED: 'message_received',
+    MESSAGE_DELETED: 'message_deleted',
+    CHAT_CHANGED: 'chat_changed',
+    GENERATION_STARTED: 'generation_started',
+});
+
+/**
+ * @typedef {object} EventSourceSpy
+ * @property {jest.Mock} on
+ * @property {jest.Mock} off
+ * @property {jest.Mock} emit
+ * @property {Map<string, Set<Function>>} _handlers
+ */
+
+/**
+ * Build a minimal eventSource spy with real pub/sub semantics.
+ * `emit(name, ...args)` synchronously invokes every handler registered
+ * via `on(name, fn)`; handlers registered then unregistered via `off`
+ * are not invoked. Exposes `_handlers` so tests can inspect subscription
+ * state directly (e.g. "bootstrap subscribed to APP_READY exactly once").
+ *
+ * @returns {EventSourceSpy}
+ */
+export function makeEventSource() {
+    /** @type {Map<string, Set<Function>>} */
+    const handlers = new Map();
+
+    const on = jest.fn(/** @param {string} name @param {Function} fn */ (name, fn) => {
+        if (!handlers.has(name)) handlers.set(name, new Set());
+        handlers.get(name).add(fn);
+    });
+
+    const off = jest.fn(/** @param {string} name @param {Function} fn */ (name, fn) => {
+        handlers.get(name)?.delete(fn);
+    });
+
+    const emit = jest.fn(async (name, ...args) => {
+        const set = handlers.get(name);
+        if (!set) return;
+        // Clone so a handler that calls off() mid-emit doesn't mutate iteration.
+        for (const fn of [...set]) {
+            await fn(...args);
+        }
+    });
+
+    return { on, off, emit, _handlers: handlers };
+}
+
+/**
+ * @typedef {object} StContextMockOptions
+ * @property {Record<string, any>} [extensionSettings]
+ * @property {Record<string, any>} [chatMetadata]
+ * @property {string|null} [chatId]
+ * @property {EventSourceSpy} [eventSource]
+ */
+
+/**
+ * @typedef {object} StContextMock
+ * @property {Record<string, any>} extensionSettings
+ * @property {() => void} saveSettingsDebounced
+ * @property {Record<string, any>} chatMetadata
+ * @property {() => void} saveMetadataDebounced
+ * @property {string|null} chatId
+ * @property {EventSourceSpy} eventSource
+ * @property {typeof ET} event_types
+ */
+
+/**
+ * Build a fresh `SillyTavern.getContext()`-shaped object. Every field is a
+ * jest.Mock or a Plain Old Object owned by the test — no shared state
+ * across invocations.
+ *
+ * @param {StContextMockOptions} [overrides]
+ * @returns {StContextMock}
+ */
+export function makeStContext(overrides = {}) {
+    return {
+        extensionSettings: overrides.extensionSettings ?? {},
+        saveSettingsDebounced: jest.fn(),
+        chatMetadata: overrides.chatMetadata ?? {},
+        saveMetadataDebounced: jest.fn(),
+        chatId: overrides.chatId === undefined ? 'test-chat' : overrides.chatId,
+        eventSource: overrides.eventSource ?? makeEventSource(),
+        event_types: ET,
+    };
+}
+
+/**
+ * Install the mock as `globalThis.SillyTavern = { getContext: () => ctx }`
+ * and return a teardown callable that restores whatever was there before.
+ *
+ * Use this when the code under test reads `SillyTavern.getContext()`
+ * directly (e.g. interceptor.js). Tests that use an injected `_setContextForTests`
+ * helper (settings.js) don't need this — inject directly.
+ *
+ * @param {StContextMock} ctx
+ * @returns {() => void} teardown
+ */
+export function installGlobalSillyTavern(ctx) {
+    const g = /** @type {any} */ (globalThis);
+    const prior = g.SillyTavern;
+    g.SillyTavern = { getContext: () => ctx };
+    return () => {
+        if (prior === undefined) delete g.SillyTavern;
+        else g.SillyTavern = prior;
+    };
+}
+```
+
+**Step 2: Create `tests/helpers/stContextMock.test.js`**
+
+```js
+/**
+ * Self-test for the mock factory — ensures it actually behaves like
+ * a minimal getContext() and the event spy has real pub/sub semantics.
+ */
+import { describe, test, expect, jest } from '@jest/globals';
+import {
+    makeStContext, makeEventSource, installGlobalSillyTavern, ET,
+} from './stContextMock.js';
+
+describe('stContextMock', () => {
+    test('makeStContext returns fresh empty settings + chatMetadata', () => {
+        const c = makeStContext();
+        expect(c.extensionSettings).toEqual({});
+        expect(c.chatMetadata).toEqual({});
+        expect(c.chatId).toBe('test-chat');
+        expect(typeof c.saveSettingsDebounced).toBe('function');
+        expect(typeof c.saveMetadataDebounced).toBe('function');
+        expect(c.event_types).toBe(ET);
+    });
+
+    test('overrides take precedence without mutating defaults', () => {
+        const a = makeStContext({ chatId: 'A' });
+        const b = makeStContext();
+        a.extensionSettings.foo = 1;
+        expect(a.chatId).toBe('A');
+        expect(b.chatId).toBe('test-chat');
+        expect(b.extensionSettings.foo).toBeUndefined();
+    });
+
+    test('chatId: null override is respected (logged-out-of-chat state)', () => {
+        const c = makeStContext({ chatId: null });
+        expect(c.chatId).toBeNull();
+    });
+
+    test('eventSource.on + emit fires handlers in order', async () => {
+        const es = makeEventSource();
+        const order = [];
+        es.on('x', () => order.push(1));
+        es.on('x', () => order.push(2));
+        await es.emit('x');
+        expect(order).toEqual([1, 2]);
+    });
+
+    test('eventSource.off unsubscribes the exact handler', async () => {
+        const es = makeEventSource();
+        const h1 = jest.fn();
+        const h2 = jest.fn();
+        es.on('x', h1);
+        es.on('x', h2);
+        es.off('x', h1);
+        await es.emit('x');
+        expect(h1).not.toHaveBeenCalled();
+        expect(h2).toHaveBeenCalledTimes(1);
+    });
+
+    test('eventSource.emit on unknown event is a no-op', async () => {
+        const es = makeEventSource();
+        await expect(es.emit('never-subscribed')).resolves.toBeUndefined();
+    });
+
+    test('eventSource handler that calls off() mid-emit does not skip siblings', async () => {
+        const es = makeEventSource();
+        const seen = [];
+        const h1 = () => { seen.push(1); es.off('x', h1); };
+        const h2 = () => { seen.push(2); };
+        es.on('x', h1);
+        es.on('x', h2);
+        await es.emit('x');
+        expect(seen).toEqual([1, 2]); // both run despite h1 self-unsubbing
+    });
+
+    test('eventSource await-propagates handler rejections', async () => {
+        const es = makeEventSource();
+        es.on('boom', async () => { throw new Error('nope'); });
+        await expect(es.emit('boom')).rejects.toThrow(/nope/);
+    });
+
+    test('installGlobalSillyTavern sets + teardown restores', () => {
+        const g = /** @type {any} */ (globalThis);
+        const prior = g.SillyTavern;
+        const ctx = makeStContext();
+        const teardown = installGlobalSillyTavern(ctx);
+        expect(g.SillyTavern.getContext()).toBe(ctx);
+        teardown();
+        expect(g.SillyTavern).toBe(prior);
+    });
+
+    test('installGlobalSillyTavern preserves a pre-existing global', () => {
+        const g = /** @type {any} */ (globalThis);
+        g.SillyTavern = { sentinel: true };
+        const teardown = installGlobalSillyTavern(makeStContext());
+        expect(g.SillyTavern.sentinel).toBeUndefined();
+        teardown();
+        expect(g.SillyTavern.sentinel).toBe(true);
+        delete g.SillyTavern;
+    });
+
+    test('ET has the exact set of names Phase 8 subscribes to', () => {
+        expect(Object.keys(ET).sort()).toEqual([
+            'APP_READY',
+            'CHAT_CHANGED',
+            'GENERATION_STARTED',
+            'MESSAGE_DELETED',
+            'MESSAGE_RECEIVED',
+        ]);
+        // Values must be lowercase snake_case matching ST's script.js.
+        for (const [k, v] of Object.entries(ET)) {
+            expect(v).toBe(k.toLowerCase());
+        }
+    });
+});
+```
+
+**Step 3: Run + commit**
+
+```bash
+npm run typecheck
+npm run lint
+npm test --silent -- tests/helpers/stContextMock.test.js
+# expect: 10 tests pass
+npm test --silent 2>&1 | grep -E "Test Suites|Tests:"
+git add tests/helpers/stContextMock.js tests/helpers/stContextMock.test.js
+git commit -m "test(integration): stContextMock helper + eventSource spy (Phase 8 Task 8)"
+```
+
+**Done when:**
+- 10 mock self-tests green
+- Mock surface is exactly the Phase 8 subset (no `characters`, `groups`, `callPopup`)
+- `makeStContext()` returns a fresh object per call (factory, not singleton)
+- `eventSource` has real pub/sub semantics verified by the self-test
+
+---
+
+## Task 9 — `src/integration/index.js` barrel + root `index.js` wire-up
+
+**Objective:** Stitch Phase 8 together at the extension entry point. Root `index.js` currently has TODO stubs for interceptor and APP_READY; Task 9 replaces them with real wiring that calls `bootstrap()` on `APP_READY` and delegates `STARmemInterceptor` to the real body from Task 2.
+
+**Owner:** Controller. Small, load-bearing, and has the CSS-prefix grep invariant.
+
+**Files:**
+- Create: `src/integration/index.js` (barrel)
+- Modify: `index.js` (root — full rewrite, short)
+- Create: `tests/unit/integration/index-barrel.test.js`
+- Create: `tests/integration/integration/no-leaky-css.test.js` (grep invariant)
+
+**Step 1: Create `src/integration/index.js`**
+
+```js
+/**
+ * Phase 8 integration barrel.
+ *
+ * Re-exports the public surface of src/integration/ so the root index.js
+ * and JSDOM integration tests have a single import target.
+ *
+ * Keeps DOM-specific exports (settingsPanel, indicator, viewer) together
+ * so the root index.js can selectively opt into them without reaching
+ * across the folder.
+ *
+ * @module integration
+ * @see docs/specs/2026-04-20-starmem-v2-design.md §8
+ */
+
+export * from './constants.js';
+export {
+    getSettings, setSettings, resetSettings, validateSettings,
+    _setContextForTests, _resetContextForTests,
+} from './settings.js';
+export { runInterceptor } from './interceptor.js';
+export { bootstrap, teardown } from './bootstrap.js';
+export { mountIndicator, unmountIndicator, _tickForTests } from './indicator.js';
+export { mountSettingsPanel, unmountSettingsPanel } from './settingsPanel.js';
+export { mountViewer, unmountViewer, isViewerOpen } from './viewer/mount.js';
+```
+
+**Step 2: Rewrite root `index.js`**
+
+```js
+/**
+ * STARmem v2 — SillyTavern memory extension entry point.
+ *
+ * ST loads this file directly (no build step). Responsibilities:
+ *
+ *   1. Register globalThis.STARmemInterceptor — ST's manifest.json points
+ *      `generate_interceptor` at this global, and calls it on every generation.
+ *   2. Subscribe bootstrap() to APP_READY — settings, indicator, viewer,
+ *      and the idle timer all initialize inside bootstrap() once ST is ready.
+ *
+ * That's it. Every other concern lives under src/integration/.
+ *
+ * @see docs/specs/2026-04-20-starmem-v2-design.md §8
+ * @see src/integration/interceptor.js
+ * @see src/integration/bootstrap.js
+ */
+
+import { log } from './src/core/logger.js';
+import { runInterceptor } from './src/integration/interceptor.js';
+import { bootstrap } from './src/integration/bootstrap.js';
+
+/**
+ * generate_interceptor body — registered via manifest.json.
+ * Thin shim: delegates to runInterceptor and swallows all errors so a
+ * broken memory system cannot break the user's chat. See interceptor.js
+ * for the contract.
+ *
+ * @param {Array<any>} chat
+ * @param {number} contextSize
+ * @param {(immediately: boolean) => void} abort
+ * @param {string} type
+ */
+globalThis.STARmemInterceptor = async function STARmemInterceptor(chat, contextSize, abort, type) {
+    try {
+        await runInterceptor(chat, contextSize, abort, type);
+    } catch (err) {
+        log.error('interceptor threw; swallowing to protect generation', err);
+    }
+};
+
+/**
+ * APP_READY subscription — fires once, after ST has mounted its UI and
+ * getContext() is fully populated. bootstrap() handles idempotency: a
+ * second APP_READY fire (can happen on extension reload) is a no-op.
+ *
+ * Top-level await: ST loads extension JS as `<script type="module">`,
+ * so TLA is supported. We use it over an IIFE to make module-eval
+ * ordering explicit — if SillyTavern isn't ready at eval time we log
+ * and return rather than silently swallowing.
+ */
+try {
+    const st = /** @type {any} */ (globalThis).SillyTavern;
+    if (!st?.getContext) {
+        log.warn('SillyTavern.getContext unavailable at module eval; bootstrap deferred');
+    } else {
+        const { eventSource, event_types } = st.getContext();
+        eventSource.on(event_types.APP_READY, () => {
+            bootstrap().catch(err => log.error('bootstrap failed:', err));
+        });
+    }
+} catch (err) {
+    log.error('failed to subscribe to APP_READY:', err);
+}
+
+log.info('v2 loaded');
+```
+
+**Step 3: Create `tests/unit/integration/index-barrel.test.js`**
+
+```js
+/**
+ * Every public symbol Phase 8 promises is re-exported from the barrel.
+ * If a later refactor drops one of these, this test catches it before
+ * the root index.js starts throwing at extension-load time.
+ */
+import { describe, test, expect } from '@jest/globals';
+import * as barrel from '../../../src/integration/index.js';
+
+describe('integration barrel', () => {
+    test('re-exports every Phase 8 public symbol', () => {
+        const expected = [
+            // constants
+            'SETTINGS_KEY', 'SETTINGS_SCHEMA_VERSION', 'SETTINGS_DEFAULTS',
+            'SETTINGS_BOUNDS', 'INJECTION_KEY', 'INJECTION_ROLE',
+            'VIEWER_TABS', 'CSS_PREFIX',
+            // settings
+            'getSettings', 'setSettings', 'resetSettings', 'validateSettings',
+            '_setContextForTests', '_resetContextForTests',
+            // interceptor / bootstrap
+            'runInterceptor', 'bootstrap', 'teardown',
+            // indicator
+            'mountIndicator', 'unmountIndicator', '_tickForTests',
+            // settings panel
+            'mountSettingsPanel', 'unmountSettingsPanel',
+            // viewer
+            'mountViewer', 'unmountViewer', 'isViewerOpen',
+        ];
+        for (const name of expected) {
+            expect(barrel).toHaveProperty(name);
+        }
+    });
+
+    test('does not leak internal helpers', () => {
+        // resolveContext is an internal in settings.js and must not escape.
+        expect(/** @type {any} */ (barrel).resolveContext).toBeUndefined();
+    });
+});
+```
+
+**Step 4: Create `tests/integration/integration/no-leaky-css.test.js`**
+
+```js
+/**
+ * Grep invariant: every DOM class name and id introduced by Phase 8
+ * must start with the `starmem-` prefix. Enforces Decision 9 from the
+ * plan and prevents Phase 8 from coloring other ST extensions' DOM.
+ *
+ * Methodology:
+ *   Walk every .js and .html file under src/integration/, find every
+ *   string literal that looks like a CSS class or id (leading `.` or `#`,
+ *   or appearing inside className/classList.add/id= attributes), and
+ *   assert the token after the sigil starts with `starmem-` or is
+ *   whitelisted below.
+ *
+ * Tripwire-verified at commit time by injecting a deliberate violation
+ * (see Phase 6's no-other-mutators test for the pattern).
+ */
+import { describe, test, expect } from '@jest/globals';
+import { readdirSync, readFileSync, statSync } from 'node:fs';
+import path from 'node:path';
+
+const ROOT = path.resolve(new URL('.', import.meta.url).pathname,
+    '..', '..', '..', 'src', 'integration');
+
+/** Tokens allowed to break the prefix rule (tokens used unchanged by ST). */
+const WHITELIST = new Set([
+    'extensions_settings',       // ST-provided container id our settings panel mounts into
+    'send_but',                  // ST's send button — we mount the indicator here
+    'send_but_container',        // ST's send button wrapper
+    'send_form',                 // ST's send form wrapper (indicator fallback)
+]);
+
+function walk(dir) {
+    const out = [];
+    for (const entry of readdirSync(dir)) {
+        const full = path.join(dir, entry);
+        const s = statSync(full);
+        if (s.isDirectory()) out.push(...walk(full));
+        else if (/\.(js|html)$/.test(entry)) out.push(full);
+    }
+    return out;
+}
+
+/**
+ * Extract every css-class-shaped or id-shaped token from a source file.
+ * Returns an array of { token, file, line } records for failure reporting.
+ */
+function extractTokens(file) {
+    const src = readFileSync(file, 'utf8');
+    /** @type {{ token: string, file: string, line: number }[]} */
+    const found = [];
+
+    // `.foo-bar` or `#foo-bar` inside string literals — catches querySelector,
+    // classList.add, HTML templates, style sheet refs.
+    const re = /(['"`])([^'"`]*?)\1/g;
+    let m;
+    while ((m = re.exec(src)) !== null) {
+        const literal = m[2];
+        for (const sub of literal.matchAll(/[.#]([a-zA-Z][\w-]*)/g)) {
+            const token = sub[1];
+            // Compute 1-based line number for the match start.
+            const line = src.slice(0, m.index).split('\n').length;
+            found.push({ token, file: path.relative(ROOT, file), line });
+        }
+    }
+    return found;
+}
+
+describe('no-leaky-css', () => {
+    test('every CSS class/id token in src/integration starts with "starmem-"', () => {
+        const files = walk(ROOT);
+        const violations = [];
+        for (const f of files) {
+            for (const t of extractTokens(f)) {
+                if (WHITELIST.has(t.token)) continue;
+                if (t.token.startsWith('starmem-')) continue;
+                // Single-word tokens like "hidden" or "active" may come from
+                // generic CSS; ignore unless they contain a hyphen (suggesting
+                // a component class).
+                if (!t.token.includes('-')) continue;
+                // ST-namespaced tokens (no prefix required) — empirically these
+                // are the few we intentionally reach across for.
+                if (t.token.startsWith('fa-')) continue;       // Font Awesome icons
+                if (t.token.startsWith('menu_')) continue;     // ST button styles
+                violations.push(`${t.file}:${t.line}  ${t.token}`);
+            }
+        }
+        if (violations.length) {
+            throw new Error(
+                `Phase 8 CSS prefix violation — every class/id must start with ` +
+                `"starmem-" (see constants.js#CSS_PREFIX). Offending tokens:\n  ` +
+                violations.join('\n  '),
+            );
+        }
+    });
+});
+```
+
+**Step 5: Tripwire-verify the grep invariant**
+
+```bash
+# Inject a deliberate violation in a file we won't ship a fix for:
+cat >> src/integration/constants.js <<'EOF'
+// TEST-SENTINEL: ".foreign-component"
+EOF
+
+npm test --silent -- tests/integration/integration/no-leaky-css.test.js
+# Expect: FAIL with "foreign-component" called out
+
+# Revert:
+git checkout src/integration/constants.js
+npm test --silent -- tests/integration/integration/no-leaky-css.test.js
+# Expect: PASS
+```
+
+**Step 6: Run + commit**
+
+```bash
+npm run typecheck
+npm run lint
+npm test --silent -- tests/unit/integration/index-barrel.test.js \
+                      tests/integration/integration/no-leaky-css.test.js
+# expect: 3 tests pass (2 barrel + 1 leaky-css)
+npm test --silent 2>&1 | grep -E "Test Suites|Tests:"
+git add src/integration/index.js index.js \
+        tests/unit/integration/index-barrel.test.js \
+        tests/integration/integration/no-leaky-css.test.js
+git commit -m "feat(integration): wire root index.js + integration barrel + CSS prefix invariant"
+```
+
+**Done when:**
+- Barrel re-exports every public Phase 8 symbol (2 tests)
+- Root `index.js` subscribes bootstrap to APP_READY idempotently
+- `globalThis.STARmemInterceptor` delegates to `runInterceptor` with a try/catch shield
+- CSS prefix grep invariant fails loud on tripwire sentinel, passes on real code
+- No `resolveContext` or other internal helper leaks through the barrel
+- Full suite green
+
+---
+## Task 10 — `style.css` (hybrid theme, dialog sizing, mobile collapse)
+
+**Objective:** The single stylesheet ST loads via `manifest.json#css`. Covers: settings panel, consolidation indicator, viewer dialog + tabs, graph canvas, traces JSONL preview, and a `< 640 px` breakpoint that collapses the tab strip into a native `<select>`.
+
+**Owner:** Subagent.
+
+**Decisions applied:**
+- **12.C** — hybrid: `var(--SmartThemeBodyColor, #1a1a1a)` style fallbacks for ST theme vars; hardcoded STARmem accents (consolidation dot hue, active-tab underline).
+- **13.A** — native `<dialog>` sizing — `max-width: min(960px, 95vw)`, `max-height: 85vh`, override browser defaults.
+- **14.B** — indicator positions inside `#send_but_container`; stylesheet reserves a `.starmem-indicator` absolute-positioned slot that anchors to that container.
+- **15c** — mobile: `@media (max-width: 639px)` hides the tab strip, unhides `.starmem-viewer-tab-select`, stacks settings-panel rows vertically.
+
+**Context for the subagent:**
+
+```
+ABSOLUTE REPO PATH: /home/opus/.hermes/profiles/hanami/home/SillyTavern/public/scripts/extensions/third-party/SillyTavern-STARmem
+
+Verify with `git log -1` showing <HEAD hash from Task 9> before work.
+
+Constraints:
+- Every selector starts with `.starmem-` or `#starmem-`. Exceptions are documented inline with a `/* exempt: ... */` comment and are limited to `#send_but_container` (indicator anchor) and `dialog::backdrop` (pseudo-element the dialog element owns).
+- No external fonts, no @import. Everything inline in this file.
+- No `!important` unless a comment explains why ST's own CSS would otherwise win. `!important` is allowed on at most three declarations repo-wide.
+- All color values use `var(--SmartThemeSomething, #fallback)` form — fallback is mandatory so we degrade if ST renames vars.
+- Units: `rem` for typography, `px` for borders/radii/indicator dot, `%` or `vh`/`vw` for dialog sizing.
+- Media query: single breakpoint at 639px (mobile < 640).
+- No CSS-in-JS concerns — this file is loaded by ST via manifest.json#css.
+```
+
+**Files:**
+- Create: `style.css` (~200 lines)
+- Create: `tests/integration/integration/style-css-invariants.test.js` (~50 lines; grep-based CSS hygiene)
+
+**Step 1: Create `style.css`**
+
+```css
+/*
+ * STARmem v2 stylesheet — loaded by SillyTavern via manifest.json#css.
+ *
+ * Theming strategy: hybrid per Phase 8 Decision 12. ST custom properties
+ * with hardcoded fallbacks so we inherit user theme (Catppuccin, Midnight,
+ * etc.) but never go invisible if ST renames a variable.
+ *
+ * Every class/id starts with `starmem-`, enforced by
+ * tests/integration/integration/no-leaky-css.test.js. Exemptions are
+ * documented inline.
+ *
+ * @see docs/specs/2026-04-20-starmem-v2-design.md §8
+ */
+
+/* =========================================================================
+ * Design tokens — locally-namespaced CSS custom properties.
+ * Keeps var(--SmartTheme...) expansions out of every declaration.
+ * ========================================================================= */
+
+:root {
+    --starmem-fg:           var(--SmartThemeBodyColor, #e8e8e8);
+    --starmem-fg-muted:     var(--SmartThemeEmColor, #a0a0a0);
+    --starmem-bg:           var(--SmartThemeBlurTintColor, #1a1a1a);
+    --starmem-bg-elevated:  var(--SmartThemeShadowColor, #242424);
+    --starmem-border:       var(--SmartThemeBorderColor, #3a3a3a);
+    --starmem-accent:       #7aa2f7;                      /* STARmem blue */
+    --starmem-accent-warm:  #e0af68;                      /* Indicator amber */
+    --starmem-danger:       var(--SmartThemeErrorColor, #f7768e);
+    --starmem-radius:       6px;
+    --starmem-gap:          0.75rem;
+    --starmem-indicator-sz: 10px;
+}
+
+/* =========================================================================
+ * Consolidation indicator — anchored to ST's send-button container.
+ * Decision 14.B: mount inside #send_but_container (stable ST structure).
+ * ========================================================================= */
+
+/* exempt: #send_but_container is ST's own element, used as anchor only */
+#send_but_container {
+    position: relative;                                   /* anchor for indicator */
+}
+
+.starmem-indicator {
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    width: var(--starmem-indicator-sz);
+    height: var(--starmem-indicator-sz);
+    border-radius: 50%;
+    background: transparent;
+    pointer-events: none;
+    transition: background 200ms ease-out, box-shadow 200ms ease-out;
+}
+
+/* Fallback path: no #send_but_container at mount time. CSS switches to
+ * fixed positioning at the bottom-right corner of the viewport. */
+.starmem-indicator.starmem-indicator-floating {
+    position: fixed;
+    top: auto;
+    bottom: 12px;
+    right: 12px;
+    z-index: 10000;
+}
+
+.starmem-indicator.starmem-indicator-idle {
+    background: transparent;
+    box-shadow: none;
+}
+
+.starmem-indicator.starmem-indicator-busy {
+    background: var(--starmem-accent-warm);
+    box-shadow: 0 0 6px 1px var(--starmem-accent-warm);
+    animation: starmem-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes starmem-pulse {
+    0%, 100% { opacity: 0.75; }
+    50%      { opacity: 1.0; }
+}
+
+/* =========================================================================
+ * Settings panel — mounts into ST's #extensions_settings container.
+ * ========================================================================= */
+
+.starmem-settings-panel {
+    display: flex;
+    flex-direction: column;
+    gap: var(--starmem-gap);
+    padding: var(--starmem-gap);
+    border: 1px solid var(--starmem-border);
+    border-radius: var(--starmem-radius);
+    color: var(--starmem-fg);
+    background: var(--starmem-bg-elevated);
+}
+
+.starmem-settings-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--starmem-gap);
+}
+
+.starmem-settings-label {
+    flex: 0 0 auto;
+    min-width: 8rem;
+    font-weight: 500;
+}
+
+.starmem-settings-input,
+.starmem-settings-select {
+    flex: 1 1 auto;
+    padding: 0.25rem 0.5rem;
+    background: var(--starmem-bg);
+    color: var(--starmem-fg);
+    border: 1px solid var(--starmem-border);
+    border-radius: var(--starmem-radius);
+    font-family: inherit;
+    font-size: 0.9rem;
+}
+
+.starmem-settings-slider-value {
+    min-width: 3rem;
+    text-align: right;
+    color: var(--starmem-fg-muted);
+    font-variant-numeric: tabular-nums;
+}
+
+.starmem-settings-warning {
+    padding: 0.5rem;
+    border-left: 3px solid var(--starmem-accent-warm);
+    background: color-mix(in srgb, var(--starmem-accent-warm) 12%, transparent);
+    color: var(--starmem-fg);
+    font-size: 0.85rem;
+}
+
+.starmem-settings-actions {
+    display: flex;
+    gap: 0.5rem;
+    justify-content: flex-end;
+}
+
+/* =========================================================================
+ * Viewer — native <dialog> per Decision 13.A.
+ * ========================================================================= */
+
+.starmem-viewer {
+    max-width: min(960px, 95vw);
+    max-height: 85vh;
+    width: 100%;
+    padding: 0;
+    border: 1px solid var(--starmem-border);
+    border-radius: calc(var(--starmem-radius) * 2);
+    background: var(--starmem-bg);
+    color: var(--starmem-fg);
+    overflow: hidden;                                     /* tabs own their scroll */
+}
+
+.starmem-viewer::backdrop {
+    /* exempt: ::backdrop is a pseudo-element the <dialog> owns */
+    background: rgba(0, 0, 0, 0.55);
+    backdrop-filter: blur(2px);
+}
+
+.starmem-viewer-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: var(--starmem-gap) calc(var(--starmem-gap) * 1.5);
+    border-bottom: 1px solid var(--starmem-border);
+    background: var(--starmem-bg-elevated);
+}
+
+.starmem-viewer-title {
+    font-size: 1.1rem;
+    font-weight: 600;
+    margin: 0;
+}
+
+.starmem-viewer-close {
+    background: transparent;
+    color: var(--starmem-fg);
+    border: 1px solid var(--starmem-border);
+    border-radius: var(--starmem-radius);
+    padding: 0.25rem 0.5rem;
+    cursor: pointer;
+}
+
+.starmem-viewer-close:hover {
+    background: var(--starmem-bg);
+}
+
+/* -- Tab strip (desktop) ---------------------------------------------------- */
+
+.starmem-viewer-tabs {
+    display: flex;
+    gap: 0;
+    border-bottom: 1px solid var(--starmem-border);
+    background: var(--starmem-bg-elevated);
+}
+
+.starmem-viewer-tab {
+    flex: 1 1 0;
+    padding: 0.6rem 0.75rem;
+    background: transparent;
+    color: var(--starmem-fg-muted);
+    border: none;
+    border-bottom: 2px solid transparent;
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 0.9rem;
+    transition: color 120ms ease-out, border-color 120ms ease-out;
+}
+
+.starmem-viewer-tab:hover {
+    color: var(--starmem-fg);
+}
+
+.starmem-viewer-tab.starmem-viewer-tab-active {
+    color: var(--starmem-fg);
+    border-bottom-color: var(--starmem-accent);
+}
+
+/* -- Tab strip (mobile, < 640px) ------------------------------------------ */
+
+.starmem-viewer-tab-select {
+    display: none;                                        /* shown in media query */
+    width: 100%;
+    margin: 0.5rem 0;
+    padding: 0.4rem 0.5rem;
+    background: var(--starmem-bg-elevated);
+    color: var(--starmem-fg);
+    border: 1px solid var(--starmem-border);
+    border-radius: var(--starmem-radius);
+    font-family: inherit;
+}
+
+.starmem-viewer-body {
+    padding: var(--starmem-gap);
+    overflow-y: auto;
+    max-height: calc(85vh - 8rem);                        /* leaves room for header+tabs */
+}
+
+/* =========================================================================
+ * Tab-specific — Working / Episodic / Persona / Graph / Traces.
+ * ========================================================================= */
+
+.starmem-viewer-entry-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    list-style: none;
+    padding: 0;
+    margin: 0;
+}
+
+.starmem-viewer-entry {
+    padding: 0.5rem 0.75rem;
+    border: 1px solid var(--starmem-border);
+    border-radius: var(--starmem-radius);
+    background: var(--starmem-bg-elevated);
+}
+
+.starmem-viewer-entry-subject {
+    font-weight: 600;
+    color: var(--starmem-accent);
+    margin-right: 0.5rem;
+}
+
+.starmem-viewer-entry-meta {
+    color: var(--starmem-fg-muted);
+    font-size: 0.8rem;
+    margin-top: 0.25rem;
+}
+
+.starmem-viewer-entry-tag {
+    display: inline-block;
+    padding: 1px 6px;
+    margin: 2px 4px 0 0;
+    border-radius: 10px;
+    background: color-mix(in srgb, var(--starmem-accent) 25%, transparent);
+    color: var(--starmem-fg);
+    font-size: 0.75rem;
+}
+
+/* -- Persona rebuild progress -- */
+
+.starmem-viewer-persona-rebuild {
+    margin-top: 0.5rem;
+}
+
+.starmem-viewer-persona-rebuild-form {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+}
+
+.starmem-viewer-progress-line {
+    font-family: ui-monospace, Menlo, Consolas, monospace;
+    font-size: 0.8rem;
+    color: var(--starmem-fg-muted);
+}
+
+/* -- Graph tab -- */
+
+.starmem-viewer-graph-canvas {
+    width: 100%;
+    height: 400px;
+    background: var(--starmem-bg-elevated);
+    border: 1px solid var(--starmem-border);
+    border-radius: var(--starmem-radius);
+}
+
+.starmem-viewer-graph-empty {
+    padding: 2rem;
+    text-align: center;
+    color: var(--starmem-fg-muted);
+}
+
+/* -- Traces tab -- */
+
+.starmem-viewer-traces-toolbar {
+    display: flex;
+    gap: 0.5rem;
+    justify-content: flex-end;
+    margin-bottom: 0.5rem;
+}
+
+.starmem-viewer-trace {
+    padding: 0.5rem;
+    border: 1px solid var(--starmem-border);
+    border-radius: var(--starmem-radius);
+    margin-bottom: 0.5rem;
+    background: var(--starmem-bg-elevated);
+}
+
+.starmem-viewer-trace-summary {
+    display: flex;
+    gap: 0.75rem;
+    font-family: ui-monospace, Menlo, Consolas, monospace;
+    font-size: 0.85rem;
+}
+
+.starmem-viewer-trace-raw {
+    display: none;
+    white-space: pre-wrap;
+    font-family: ui-monospace, Menlo, Consolas, monospace;
+    font-size: 0.75rem;
+    color: var(--starmem-fg-muted);
+    margin-top: 0.5rem;
+    max-height: 200px;
+    overflow-y: auto;
+}
+
+.starmem-viewer-trace.starmem-viewer-trace-expanded .starmem-viewer-trace-raw {
+    display: block;
+}
+
+/* =========================================================================
+ * Responsive — single breakpoint at 639px (mobile).
+ * Decision 15c: collapse tab strip into a <select>; stack settings rows.
+ * ========================================================================= */
+
+@media (max-width: 639px) {
+    .starmem-viewer-tabs {
+        display: none;
+    }
+
+    .starmem-viewer-tab-select {
+        display: block;
+    }
+
+    .starmem-viewer {
+        max-width: 100vw;
+        max-height: 100vh;
+        border-radius: 0;
+    }
+
+    .starmem-viewer-body {
+        max-height: calc(100vh - 7rem);
+    }
+
+    .starmem-settings-row {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 0.25rem;
+    }
+
+    .starmem-settings-label {
+        min-width: 0;
+    }
+
+    .starmem-viewer-graph-canvas {
+        height: 250px;
+    }
+}
+```
+
+**Step 2: Create `tests/integration/integration/style-css-invariants.test.js`**
+
+```js
+/**
+ * Regex invariants on style.css — not a visual test, just hygiene.
+ *
+ * Checks:
+ *   1. Every selector token (`.foo` or `#foo`) is `starmem-*` or an exempt
+ *      identifier with an inline `/* exempt: ... *\/` comment.
+ *   2. No more than 3 uses of `!important` repo-wide.
+ *   3. Every var(--SmartTheme…) has a fallback (second arg).
+ *   4. Mobile breakpoint is exactly `(max-width: 639px)` — single breakpoint
+ *      discipline per Decision 15c.
+ */
+import { describe, test, expect } from '@jest/globals';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
+
+const CSS_PATH = path.resolve(
+    new URL('.', import.meta.url).pathname,
+    '..', '..', '..', 'style.css',
+);
+
+describe('style.css invariants', () => {
+    const css = readFileSync(CSS_PATH, 'utf8');
+
+    test('every selector is `starmem-*` or explicitly exempted', () => {
+        // Strip comments so "/* exempt: ... */" tokens don't confuse the matcher,
+        // but track which selectors they guard.
+        const exemptedLines = new Set();
+        const re = /^(.*?)\/\*\s*exempt:.*?\*\//gm;
+        let m;
+        while ((m = re.exec(css)) !== null) {
+            // Next non-blank, non-comment line is the exempted selector.
+            const after = css.slice(m.index + m[0].length);
+            const firstLine = after.split('\n').slice(0, 4).join('\n');
+            for (const sub of firstLine.matchAll(/[.#]([a-zA-Z][\w-]*)/g)) {
+                exemptedLines.add(sub[1]);
+            }
+        }
+
+        const selectors = new Set();
+        for (const sub of css.matchAll(/[.#]([a-zA-Z][\w-]*)/g)) {
+            selectors.add(sub[1]);
+        }
+
+        const violations = [];
+        for (const s of selectors) {
+            if (s.startsWith('starmem-')) continue;
+            if (exemptedLines.has(s)) continue;
+            violations.push(s);
+        }
+        expect(violations).toEqual([]);
+    });
+
+    test('no more than 3 uses of !important', () => {
+        const count = (css.match(/!important/g) || []).length;
+        expect(count).toBeLessThanOrEqual(3);
+    });
+
+    test('every var(--SmartTheme…) has a fallback', () => {
+        const bad = [];
+        for (const m of css.matchAll(/var\(\s*--SmartTheme[A-Za-z]+\s*(,[^)]*)?\)/g)) {
+            if (!m[1]) bad.push(m[0]);
+        }
+        expect(bad).toEqual([]);
+    });
+
+    test('mobile breakpoint is exactly 639px', () => {
+        const mqs = [...css.matchAll(/@media[^{]+/g)].map(m => m[0].trim());
+        expect(mqs).toEqual(['@media (max-width: 639px)']);
+    });
+});
+```
+
+**Step 3: Run + commit**
+
+```bash
+npm run lint
+npm test --silent -- tests/integration/integration/style-css-invariants.test.js
+# expect: 4 tests pass
+npm test --silent 2>&1 | grep -E "Test Suites|Tests:"
+git add style.css tests/integration/integration/style-css-invariants.test.js
+git commit -m "feat(integration): style.css — hybrid theme, <dialog>, mobile breakpoint"
+```
+
+**Done when:**
+- 4 style invariants green
+- Manual eyeball from Eva before we declare done (Decision 12.C stipulates look-see)
+- No stray non-prefixed selectors
+- Breakpoint singular at 639px
+- Every ST theme var has a fallback
+
+---
+
+## Task 11 — `scripts/smoke.md` + ROADMAP retro + plan rename
+
+**Objective:** Close Phase 8 out. Three artifacts:
+
+1. **`scripts/smoke.md`** — 18-step manual smoke checklist per Decision 15.B (thorough, pure prose per 15b).
+2. **`docs/plans/ROADMAP.md`** — append Phase 8 retro, matching Phase 7's format (what shipped, decisions held, surprises, notes for Phase 9).
+3. **File rename** — `docs/plans/phase-8-integration.md` → `docs/plans/phase-8-st-integration.md` (ROADMAP convention; mentioned in Hindsight too).
+
+**Owner:** Controller. No code, no tests — documentation-only, and the retro needs signal that only the controller has (decision drift, subagent surprises, commit counts).
+
+**Files:**
+- Create: `scripts/smoke.md`
+- Modify: `docs/plans/ROADMAP.md` (append Phase 8 section)
+- Rename: `docs/plans/phase-8-integration.md` → `docs/plans/phase-8-st-integration.md` (overwritten with the finalized plan from this chunked doc)
+
+**Step 1: Create `scripts/smoke.md`**
+
+```markdown
+# STARmem Phase 8 smoke checklist
+
+**Scope:** 18 manual steps verifying end-to-end ST integration. Run after every Phase 8 ship; also the baseline for Phase 9 regression checks.
+
+**Prerequisites:**
+- Fresh SillyTavern checkout (or a known-clean install; no prior STARmem state in `chatMetadata`).
+- At least one Connection Manager profile configured with a working LLM.
+- The Vectors extension installed and enabled (needed for Persona rebuild in step 14).
+- Browser devtools console open — every step cross-checks against console logs scoped to `[STARmem]`.
+
+## Happy path
+
+1. **Install.** `git clone` this repo into `public/scripts/extensions/third-party/`. Restart ST. Verify the Extensions panel lists "STARmem" as loaded without errors. Console shows `[STARmem] v2 loaded`.
+
+2. **Settings panel renders.** Open the Extensions panel → STARmem. Verify all eight inputs are present: profile, embed profile, buffer size, idle timeout, scorer, extraction model label, traces max length, debug mode. No broken labels or missing defaults.
+
+3. **Settings round-trip.** Change buffer size from 5 → 7. Reload ST. Reopen settings panel. Verify buffer size is still 7 (persisted to `extension_settings`). Change back to 5.
+
+4. **Settings clamp.** In devtools: `extension_settings.STARmem.bufferSize = 999; saveSettingsDebounced()`. Reload. Open settings — verify clamped to 50 (the max) and a `[STARmem] settings:` warn line appears in console.
+
+5. **Fresh chat, no memories yet.** Start a new chat. Send one user message. Verify the generation completes normally — interceptor runs (console `[STARmem] interceptor: no memories to inject` or similar) and does NOT prepend a system message.
+
+6. **Consolidation indicator idle.** Verify `#send_but_container` has a `.starmem-indicator` child and it is visually absent (no amber pulse).
+
+7. **Buffer grows.** Send 9 more user+assistant exchanges for a total of 10 messages. Verify console shows `[STARmem] workingBuffer: append` (or equivalent) on each. No consolidation yet.
+
+8. **Consolidation fires at threshold.** Send message 11 (total 11). Verify: indicator flips to amber pulse; console shows `[STARmem] consolidation: starting`; after ~seconds, `consolidation: done, added=N, updated=M`. Indicator returns to idle.
+
+9. **Episodic entries visible.** Open Memory Viewer (settings → "Open Memory Viewer" button). Click Episodic tab. Verify at least one entry is rendered with subject + content + tags.
+
+10. **Graph tab renders.** Click Graph tab. Verify either (a) a force-directed canvas with nodes/edges, or (b) the empty-state message if fewer than 2 entries with edges yet. No uncaught exceptions in console.
+
+11. **Traces tab renders.** Click Traces tab. Verify the summary line for the last retrieval: `T=<tier>  q="..."  top=<score>`. Click a trace to expand the raw JSON. Click Clear — confirm dialog appears; answer No; verify trace still present. Click Clear again, answer Yes; verify list empty.
+
+12. **JSONL export.** Expand Traces tab after a retrieval, click "Export JSONL". Verify a file downloads with `.jsonl` extension, filename contains `starmem-traces-<timestamp>`. Open the file — verify each line is valid JSON parseable independently.
+
+## Chat-switch hygiene
+
+13. **Chat switch mid-idle.** With idle timer running (no messages sent in last 30s), switch to another chat. Verify console shows `[STARmem] idleTimer: cancelled for <oldChatId>`. Switch back. Send a message. Verify idle timer restarts from 60s.
+
+14. **Persona rebuild.** Return to chat from step 9 (now has Episodic entries). In Memory Viewer → Persona tab, type a subject from the Episodic entries, click Rebuild. Verify progress lines scroll (`snapshot`, `chunk`, `knn`, `cluster`, `summarize`, `atomic-swap`). Verify final line shows `Done — N new / M replaced in Xms`. Switch to Persona tab proper — verify new entries.
+
+## Defensive paths
+
+15. **Vectors extension disabled.** Disable the Vectors extension. Attempt a Persona rebuild in any chat. Verify error rendered in the progress panel: `Failed: fetch …` with a descriptive message. No stack trace leaks to user. Re-enable Vectors.
+
+16. **Delete a message mid-chat.** With working buffer populated (≥3 entries), right-click a user message → Delete. Verify working buffer scrubs the corresponding entry (console: `workingBuffer: deleted message at idx N`), buffer count decreases by 1.
+
+17. **Settings drift + reload.** In devtools: `extension_settings.STARmem.schemaVersion = 99; saveSettingsDebounced()`. Reload ST. Open settings. Verify console warned about schemaVersion drift; settings now show defaults.
+
+18. **Disable + re-enable extension.** Disable STARmem via Extensions panel. Verify: indicator disappears; no console errors. Re-enable. Verify: `[STARmem] v2 loaded` appears; indicator re-mounts; next generation still works.
+
+## Regression baseline
+
+After running steps 1–18:
+- Copy the browser console output to `scripts/smoke-logs/<date>.log` (git-ignored).
+- Note any unexpected warnings/errors for Phase 9 triage.
+- If any step fails: **do not ship**. File as Phase 8 bug, fix, re-run the whole checklist.
+```
+
+**Step 2: Append Phase 8 retro to `docs/plans/ROADMAP.md`**
+
+The retro is appended above the existing Phase 7 retro entry (newest-first convention). Template (fill in during the actual retro pass — counts, commit hashes, surprises):
+
+```markdown
+## Phase 8—2026-04-21
+
+**What shipped:** SillyTavern integration surface — `src/integration/constants.js` (UI-scoped settings + injection constants), `src/integration/settings.js` (extension_settings persistence with defaults, clamps, schemaVersion drift handling, scorerId validation via `setScorer`), `src/integration/interceptor.js` (the real `STARmemInterceptor` body — chatId resolution, last-user-message query extraction, retrieve → splice at `INJECTION_DEPTH=4` with depth-fallback, per-returned-entry `applyAccessEvent`, all errors caught and swallowed), `src/integration/bootstrap.js` (APP_READY handler — settings load, indicator mount, viewer pre-mount, idle timer install, CHAT_CHANGED/MESSAGE_RECEIVED/MESSAGE_DELETED subscriptions, idempotent double-bootstrap), `src/integration/indicator.js` (consolidation dot mounted in `#send_but_container` — idempotent mount, 1s polling of `state.runtime.consolidating`, animated pulse), `src/integration/settingsPanel.js` + inlined HTML (eight inputs — profile/embedProfile dropdowns, three sliders, scorer select, label input, debug toggle — all persisting through `setSettings`), `src/integration/viewer/mount.js` (native `<dialog>` shell with tab strip + mobile `<select>` collapse at 639px, close/teardown, tab routing), `src/integration/viewer/tabs/{working,episodic,persona,graph,traces}.js` (five tabs, each self-contained, each JSDOM-tested), `tests/helpers/stContextMock.js` (minimal `getContext()` factory + `eventSource` spy for Phase 8 tests), `src/integration/index.js` barrel, root `index.js` rewrite (TLA subscription to APP_READY + interceptor shim), `style.css` (hybrid ST-var + hardcoded-accent theme, single 639px breakpoint, four CSS invariants enforced in tests), `scripts/smoke.md` (18-step thorough manual checklist), and the Phase 8 retro block above. File rename: `docs/plans/phase-8-integration.md` → `docs/plans/phase-8-st-integration.md`.
+
+**Test totals:** <CONTROLLER: fill in after final npm test run>. Expected ~440 baseline + ~130 new ≈ ~570 tests across ~55 suites.
+
+**Commits this phase:** <CONTROLLER: fill in>. Expected ~18 per Task overview table.
+
+**Execution mode:** Mixed — controller for load-bearing tasks (0, 2, 3, 8, 9, 11), subagents for DOM-heavy or mechanical tasks (1, 4, 5, 6, 7.1–7.5, 10). Reviews skipped per skill criteria (verbatim code + static checks). Controller audits: grep invariant on CSS prefix (Task 9), grep invariant on bootstrap event wiring (Task 3), tripwire verification on both.
+
+**Decisions locked in the planning conversation (all held through execution):**
+
+1. E2E harness: JSDOM + manual smoke checklist. Playwright deferred to Phase 9.
+2. DOM rendering: vanilla `createElement`/`textContent` for data, `innerHTML` only for static templates.
+3. Settings persistence: `extension_settings['STARmem']` for globals, no new per-chat settings.
+4. Injection format: `is_system` spliced at `INJECTION_DEPTH=4`, `role: system`, fallback-prepend at short chats.
+5. Access events: pre-generate — called on entries returned by `retrieve()`, not every candidate.
+6. Chat switch hygiene: `CHAT_CHANGED` handler cancels idle timer, clears per-chat caches, triggers `maybeConsolidate` on new chat if over threshold.
+7. Traces: 128-entry ring buffer, JSONL export via blob URL, per-trace expand.
+8. Delegation split: controller owns load-bearing/integration, subagents own DOM components.
+9. CSS scoping: `starmem-*` prefix on every class/id, enforced by grep invariant.
+10. Module layout deviates from spec §10 — documented in §5 of the phase plan; spec amendment needed.
+11. stContextMock surface: minimal + `eventSource` spy, factory-per-test (not shared singleton).
+12. CSS theming: hybrid — `var(--SmartTheme…, #fallback)` for surfaces, hardcoded accents for STARmem-specific elements.
+13. Viewer modal: native `<dialog>` with `showModal()`.
+14. Indicator mount: `#send_but_container` anchor (stable ST structure), NOT document.body — revised from chunk 3 draft.
+15. Smoke checklist: thorough (18 steps, pure prose).
+
+**Surprises:** <CONTROLLER: fill in>
+
+**Notes for Phase 9 (Benchmarking):** <CONTROLLER: fill in with Phase 8-observed behavior worth carrying forward>
+
+---
+```
+
+**Step 3: Run + commit**
+
+```bash
+# Rename the plan file (content overwrite happens earlier when we
+# stitch the finalized chunks together; this just fixes the filename).
+git mv docs/plans/phase-8-integration.md docs/plans/phase-8-st-integration.md
+
+# Verify full test suite is green before shipping retro.
+npm test --silent 2>&1 | grep -E "Test Suites|Tests:"
+
+# Manual: run smoke.md steps 1-18 against a fresh ST install. Record
+# outcomes. If any fail, do NOT proceed — fix, re-run, retry.
+
+# Final commit.
+git add scripts/smoke.md docs/plans/ROADMAP.md docs/plans/phase-8-st-integration.md
+git commit -m "docs(plans): Phase 8 retro + smoke checklist + plan rename"
+```
+
+**Done when:**
+- `scripts/smoke.md` exists with 18 steps in three sections (happy path / chat-switch hygiene / defensive paths)
+- ROADMAP.md has a Phase 8 section with filled-in counts, commits, surprises, notes-for-Phase-9
+- `docs/plans/phase-8-st-integration.md` is the canonical plan filename (old `phase-8-integration.md` gone)
+- Eva has eyeballed the rendered UI at least once (Decision 12.C stipulation)
+- All 18 smoke steps pass against a fresh ST install
+- Full `npm test` suite green
 
 ---
