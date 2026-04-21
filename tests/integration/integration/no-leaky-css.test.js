@@ -23,6 +23,7 @@ const ROOT = path.resolve(new URL('.', import.meta.url).pathname,
 /** Tokens allowed to break the prefix rule (tokens used unchanged by ST). */
 const WHITELIST = new Set([
     'extensions_settings',       // ST-provided container id our settings panel mounts into
+    'extensions_settings2',      // ST's right-column drawer (loading_order ≥ 100)
     'send_but',                  // ST's send button — we mount the indicator here
     'send_but_container',        // ST's send button wrapper
     'send_form',                 // ST's send form wrapper (indicator fallback)
