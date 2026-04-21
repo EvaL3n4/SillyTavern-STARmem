@@ -4982,6 +4982,15 @@ git commit -m "test(integration): stContextMock helper + eventSource spy (Phase 
 
 **Owner:** Controller. Small, load-bearing, and has the CSS-prefix grep invariant.
 
+> **Plan drift reconciled in Task 9 (commit 1d2350c):** Task 2 shipped
+> `starmemInterceptor` (not `runInterceptor`), Task 3 bootstrap.js has no
+> `teardown` export, Task 5 settingsPanel.js exports `renderSettingsPanel`
+> only, Task 6 viewer/mount.js exports `openViewer` only (no `unmountViewer`
+> / `isViewerOpen`). Verbatim code blocks below still show the original
+> plan names — the shipped barrel, root `index.js`, and barrel test all use
+> the real names. Task 10 subagent: if you reference the barrel, import by
+> the shipped names.
+
 **Files:**
 - Create: `src/integration/index.js` (barrel)
 - Modify: `index.js` (root — full rewrite, short)
