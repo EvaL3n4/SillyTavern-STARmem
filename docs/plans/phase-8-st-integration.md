@@ -4290,11 +4290,11 @@ Pick (a). Add clearTraces(chatId) to src/consolidation/triggers.js (or a new fil
 
 **Step 1: Add `clearTraces(chatId)` to consolidation barrel**
 
-In `src/consolidation/triggers.js`, append:
+In `src/consolidation/triggers.js`, append (note: `loadState` is already imported at the top of this file — do not re-import):
 
 ```js
 import { withWriteLock } from '../core/lock.js';
-import { loadState, persistState } from '../core/state.js';
+import { persistState } from '../core/state.js';
 
 /**
  * Clear the retrieval trace ring buffer for a chat.
@@ -4306,16 +4306,15 @@ import { loadState, persistState } from '../core/state.js';
 export async function clearTraces(chatId) {
     await withWriteLock(chatId, async () => {
         const state = await loadState(chatId);
-        const runtime = state.runtime || {};
         await persistState(chatId, {
             ...state,
-            runtime: { ...runtime, traces: [] },
+            runtime: { ...state.runtime, traces: [] },
         });
     });
 }
 ```
 
-And extend `src/consolidation/index.js` barrel:
+And extend `src/consolidation/index.js` barrel (add `clearTraces` to the existing triggers re-export, currently `{ maybeConsolidate, resetIdleTimer, cancelIdleTimer }`):
 
 ```js
 export {
@@ -4323,18 +4322,24 @@ export {
 } from './triggers.js';
 ```
 
-Unit test for `clearTraces` in `tests/unit/consolidation/triggers.test.js` (append):
+Unit test for `clearTraces` in `tests/unit/consolidation/triggers.test.js` (append). Two import adjustments at the top of that file:
+
+- Add `clearTraces` to the destructured import from `../../../src/consolidation/triggers.js`.
+- Add `loadState` to the destructured import from `../../../src/core/state.js`.
+
+Then append a new describe (or add inside the existing describe):
 
 ```js
 test('clearTraces empties state.runtime.traces under write lock', async () => {
-    const store = new Map();
-    setBackend({ read: id => store.get(id), write: (id, v) => { store.set(id, v); } });
-    store.set('c', {
+    store.set(CHAT, {
         ...createEmptyState(),
-        runtime: { traces: [{ timestamp: '', query: 'q', tierResolved: 2 }], consolidating: false },
+        runtime: {
+            ...createEmptyState().runtime,
+            traces: [{ timestamp: '', query: 'q', tierResolved: 2 }],
+        },
     });
-    await clearTraces('c');
-    const after = await loadState('c');
+    await clearTraces(CHAT);
+    const after = await loadState(CHAT);
     expect(after.runtime.traces).toEqual([]);
 });
 ```
