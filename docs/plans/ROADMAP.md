@@ -447,6 +447,38 @@ These are v2.1+ considerations. Do not implement them in any phase.
 
 _Appended after each phase ships. Format: `## Phase N—<date>`, with notes on surprises, scope changes, and lessons for subsequent phases._
 
+## Phase 9—2026-04-21
+
+**What shipped:** Benchmarking subsystem — `bench/cli.js` (single-harness entry point), `bench/runner.js` (seed → retrieve → metrics orchestration), `bench/baselines.js` (ladder / bm25only / recency / random comparison), `bench/harness/seeder.js` (conversation-to-state seeder), `bench/loaders/locomo.js` + `index.js` (LoCoMo JSON parser), `bench/metrics/retrieval.js` (precision@k, recall@k, MRR), `bench/sweeps/_driver.js` (coordinate-descent driver), `bench/sweeps/{tau,graph,consolidation,bm25}.js` (four knob sweeps), `bench/baselines/{bm25only,recency,random}.js` (three baseline retrievers), `docs/bench/baseline.json` (measured-values artifact with FLAT/DEFERRED status), `tests/integration/bench/cli-mounts-wired.test.js` (grep invariant across 6 bench entry points), `tests/integration/bench/baseline-json.test.js` (schema validator for baseline.json). 5 smoke writeups produced (4 sweeps + 1 baseline comparison, all untracked).
+
+**Test totals:** 70 suites / 734 tests — all green. Baseline at Phase 8 close was 68 suites / 732 tests; Task 9 added 2 suites and 2 tests (wire-invariant 12 assertions + baseline-json validator 7 assertions).
+
+**Commits this phase:** 9 (Tasks 0–8) + 3 (Task 9 close) = 12. Baseline commit `54986c2` (plan-patch preflight); Phase 9 HEAD after retro is the Task 9 close commit.
+
+**Execution mode:** Subagent-driven for Tasks 1–8 via Fireworks/Kimi-K2.6 routing (avoided Azure flakiness). Controller executed Task 9 directly (retro narrative quality > subagent speed). Preflight pattern: 6 Task dispatches, each preceded by a plan-patch commit. ~18 plan bugs caught preflight across Tasks 4–8; zero downstream-discovered bugs.
+
+**Decisions held (1–3, 6–10) / revised (4–5):**
+
+- Corpus (LoCoMo primary, synthetic smoke), metrics (P@k/R@k/MRR), harness shape (Node CLI), coordinate descent (one knob at a time), synthetic embeddings, advisory-only regression gate, out-of-scope list, spec amendment first — all held.
+- Decision 4 (Jaccard gold-match): worked mechanically, but rule-based seeder flattens the signal — extractor is the real bottleneck, not the matcher.
+- Decision 5 (baselines): bm25only > ladder on synthetic 4-QA is a non-structural flag (ladder-vs-random invariant held). Re-validate on real LoCoMo in sub-phase 9.5.
+
+**Surprises:**
+
+1. Rule-based extractor is the structural bottleneck for all four knob sweeps — flat metrics across τ, graph λ, dedup, and bm25 boosts on both synthetic and 3-conv real LoCoMo.
+2. bm25only > ladder on synthetic 4-QA (MRR 1.0 vs 0.6875). Scorer chain multiplicative factors introduce perturbations that hurt on tiny corpora; not a bug, but needs re-validation.
+3. Short-form key-name drift plan-bug pattern: Tasks 4, 5, 6 all had colloquial short names in the plan that didn't match `_SWEPT_*_KEYS`. Task 7 was the first clean match. Fix: preflight-audit skill now greps `_SWEPT_*_KEYS` first.
+4. Signature drift against Task 3c: Task 8 baseline plan drafted `(chatId, query, {k}) → Array` before real `retrieve()` shape `(state, queryStr, opts) → RetrieveResult` landed. Caught preflight.
+5. Azure empty-completion turns under >25KB payload bloat: Task 8 dispatch tripped threshold twice. Mitigation: smaller delegate_task contexts pointing at plan sections.
+6. Subagent seeder-API confabulation during Task 3c: `chatIdPrefix` vs `chatId` — caught in-flight, fixed in runner, no rework.
+
+**Notes for sub-phase 9.5 and Phase 10:**
+
+- **9.5:** Swap rule-based extractor for real LLM (env-gated), re-run all 4 sweeps on full LoCoMo, validate ladder ≥ bm25only, add `TIER3_MAX_HOPS` + `EXPLICIT_RELATION_WEIGHT` sweeps, tune `EXTRACT_MAX_TOKENS` with real token counts.
+- **Phase 10:** Playwright smoke harness for live ST integration, UX polish pass (settings panel hierarchy, viewer tab alignment, indicator tooltip), external memory-system baselines (Zep, Mem0).
+
+---
+
 ## Phase 8—2026-04-21
 
 **What shipped:** SillyTavern integration surface — `src/integration/constants.js` (UI-scoped settings + injection constants, `CSS_PREFIX=starmem`, `INJECTION_DEPTH=4`), `src/integration/settings.js` (`extension_settings['STARmem']` persistence with defaults, clamps, schemaVersion drift handling, injectable context for tests), `src/integration/interceptor.js` (the real `starmemInterceptor` body — chatId resolution, last-user-message query extraction, retrieve → splice at `INJECTION_DEPTH=4` with short-chat prepend fallback, all errors caught and swallowed), `src/integration/bootstrap.js` (APP_READY handler — settings load, state backend install, indicator mount, viewer pre-mount, idle timer install, `CHAT_CHANGED`/`MESSAGE_SENT`/`MESSAGE_RECEIVED`/`MESSAGE_DELETED` subscriptions, idempotent double-bootstrap), `src/integration/indicator.js` (consolidation dot mounted in `#send_but_container` with floating-fallback — idempotent mount, 1 s polling, animated amber pulse), `src/integration/settingsPanel.js` + inlined HTML (`renderSettingsPanel` — profile/embed profile / scorer dropdowns, three sliders, Reset button — all persisting through `setSettings`), `src/integration/viewer/mount.js` (native `<dialog>` shell via `openViewer` — tab strip + mobile `<select>` collapse at 639 px, close/teardown, tab routing, subject filter, popup fallback when `<dialog>` unavailable), `src/integration/viewer/tabs/{working,episodic,persona,graph,traces}.js` (five tabs, each self-contained, each JSDOM-tested), `tests/helpers/stContextMock.js` (minimal `getContext()` factory + real-pub/sub `eventSource` spy + `installGlobalSillyTavern` teardown — 11 self-tests), `src/integration/index.js` barrel, root `index.js` rewrite (TLA subscription to APP_READY + interceptor shim with try/catch shield), `src/consolidation/` got `clearTraces(chatId)` for the Traces tab, `style.css` (hybrid ST-var + hardcoded-accent theme, native `<dialog>` sizing, single 639 px breakpoint, four CSS invariants enforced in tests: prefix / `!important` budget / fallback requirement / single-breakpoint), grep invariant `no-leaky-css.test.js` (walks `src/integration/` for non-prefixed class/id tokens — tripwire-verified), `scripts/smoke.md` (18-step manual checklist in three sections). Plan finalized in-place as `docs/plans/phase-8-st-integration.md` — no rename needed, never had the old name.
