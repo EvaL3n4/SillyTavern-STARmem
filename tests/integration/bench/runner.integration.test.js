@@ -100,12 +100,14 @@ describe('runHarness integration', () => {
         }
     });
 
-    test('metrics.precisionAtK[1] is a number in [0, 1]', async () => {
+    test('metrics.precisionAtK[1] is NaN or a number in [0, 1]', async () => {
         const result = await runHarness({ corpus: [CONV_A, CONV_B] });
         const p1 = result.metrics.precisionAtK[1];
         expect(typeof p1).toBe('number');
-        expect(p1).toBeGreaterThanOrEqual(0);
-        expect(p1).toBeLessThanOrEqual(1);
+        // Post-9.4.6: NaN is a valid value when no QA in the batch scored
+        // (empty evidenceTurns or no retrieval intersection). Tiny synthetic
+        // fixtures like CONV_A/CONV_B may land here.
+        expect(Number.isNaN(p1) || (p1 >= 0 && p1 <= 1)).toBe(true);
     });
 
     test('9.4.6: retrieved entries carry sourceMessages for evidence-turn matching', async () => {
