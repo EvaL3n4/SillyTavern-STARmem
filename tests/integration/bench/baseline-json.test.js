@@ -49,8 +49,8 @@ describe('docs/bench/baseline.json', () => {
         }
     });
 
-    test('status is deferred', () => {
-        expect(parsed.status).toBe('deferred');
+    test('status is measured (9.4.6 replaced deferred with honest measurement)', () => {
+        expect(parsed.status).toBe('measured');
     });
 
     test('every tuned key is a swept constant', () => {
