@@ -23,6 +23,41 @@
 
 ---
 
+## Manual Modal Invocation Protocol (established 2026-04-22)
+
+**Agent sandbox does not have the `modal` Python package.** Eva's real-user environment does (version 1.4.2). Rather than duplicate the install into the Hanami sandbox Python path (which is Python 3.14.4; Modal may not ship wheels for it), Modal CLI invocations are routed to Eva.
+
+**Protocol:**
+
+- **Subagents write code, edit files, and commit.** No `modal` CLI invocations from subagents.
+- **When a step says "Run: `modal run ...`" or "Run: `time node bench/sweeps/*.js --modal`" or similar**, the subagent MUST:
+  1. Finish all file edits + local verifications in that step.
+  2. Commit whatever is committable at that point (per the step's commit block).
+  3. STOP and return with a short report: *"Ready for Eva to run `<exact command>` in the repo root. Expected output: `<expected>`."*
+  4. Do NOT proceed to the next step until the controller supplies Eva's command output.
+
+- **Controller role:** passes Eva's stdout back to the subagent (or to a fresh subagent for the next step) via delegation context. Eva's output becomes the "expected" verification that would otherwise be checked by the subagent directly.
+
+- **Local (non-Modal) commands are agent-runnable.** `node bench/sweeps/tau.js --synthetic` (without `--modal`), `npm test`, `npm run lint`, `npm run typecheck`, `git ...`, and all file reads/writes run in the subagent's sandbox as normal.
+
+**Affected steps** (subagent STOPs at these and hands off to controller → Eva):
+- Task 1 Step 3 (`modal run bench/modal/sweep_app.py` — hello-world smoke)
+- Task 2 Steps 3 and 4 (`modal run bench/modal/upload_cache.py`, then re-run of sweep_app.py to verify volume)
+- Task 3 Steps 3 and 4 (`modal run bench/modal/sweep_app.py::run_point --overrides-json ...`)
+- Task 4 Step 6 (`modal run bench/modal/sweep_app.py --sweep-name tau --synthetic`)
+- Task 6 Steps 1 and 4 (`time node bench/sweeps/tau.js --modal --synthetic` and bm25 equivalent)
+- Task 7 Step 1 (`time node bench/sweeps/tau.js --modal` — full τ sweep)
+- Task 8 Step 1 (`time node bench/sweeps/bm25.js --modal` — full bm25 sweep)
+
+**Tasks that are 100% agent-runnable (no handoff needed):**
+- Task 0 (plan commit — done)
+- Task 4 except Step 6 (pure Python code additions)
+- Task 5 (pure JS code additions + local-path verification via plain `node bench/sweeps/tau.js --synthetic`, NOT `--modal`)
+- Task 9 (baseline.json edit + baseline-json test verification)
+- Task 10 (retro write + final lint/typecheck/test)
+
+---
+
 ## Task 0: Commit the plan
 
 **Objective:** Stabilize the plan reference for subagents and future sessions.
