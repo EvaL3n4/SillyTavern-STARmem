@@ -108,6 +108,20 @@ describe('runHarness integration', () => {
         expect(p1).toBeLessThanOrEqual(1);
     });
 
+    test('9.4.6: retrieved entries carry sourceMessages for evidence-turn matching', async () => {
+        const result = await runHarness({ corpus: [CONV_A, CONV_B] });
+        const runsWithRetrieved = result.runs.filter(r => r.retrieved.length > 0);
+        expect(runsWithRetrieved.length).toBeGreaterThan(0);
+        for (const run of runsWithRetrieved) {
+            for (const entry of run.retrieved) {
+                expect(Array.isArray(entry.sourceMessages)).toBe(true);
+                for (const n of entry.sourceMessages) {
+                    expect(typeof n).toBe('number');
+                }
+            }
+        }
+    });
+
     test('overrides affect retrieval tierResolved (weak assertion)', async () => {
         // With TIER2_TAU_CONFIDENCE set to 999, Tier 2 exit condition should
         // never fire, so we should see tierResolved skewed away from 2.

@@ -34,7 +34,7 @@ import { computeMetrics } from './metrics/retrieval.js';
  * @typedef {object} HarnessRun
  * @property {string} conversationId
  * @property {import('./loaders/locomo.js').QAItem} qa
- * @property {Array<{id: string, content: string, score: number, tier: number|string}>} retrieved
+ * @property {Array<{id: string, content: string, sourceMessages: number[], score: number, tier: number|string}>} retrieved
  * @property {Array<{turnIndex: number, text: string}>} goldTurns
  * @property {Trace[]} traces
  * @property {number} latencyMs
@@ -108,6 +108,7 @@ export async function runHarness({
                     retrieved: result.entries.map(e => ({
                         id: e.id,
                         content: e.content ?? '',
+                        sourceMessages: e.provenance?.sourceMessages ?? [],
                         score,
                         tier: result.tierResolved,
                     })),
