@@ -1,6 +1,7 @@
 export {
     jaccard,
     matchGold,
+    matchGoldByEvidence,
     precisionAtK,
     recallAtK,
     mrr,

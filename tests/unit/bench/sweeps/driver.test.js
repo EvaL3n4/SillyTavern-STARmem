@@ -31,6 +31,8 @@ function makeFakeHarness(opts = {}) {
             ],
             metrics: {
                 n: 3,
+                n_scored: 3,
+                n_skipped: 0,
                 precisionAtK: { 1: 0.5, 3: 0.5, 5: 0.5, 10: 0.5 },
                 recallAtK: { 1: 0.1, 3: 0.2, 5: recallAt5, 10: 0.4 },
                 mrr: 0.5,

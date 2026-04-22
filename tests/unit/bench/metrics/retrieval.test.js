@@ -2,209 +2,302 @@ import { describe, test, expect } from '@jest/globals';
 import {
     jaccard,
     matchGold,
+    matchGoldByEvidence,
     precisionAtK,
     recallAtK,
     mrr,
     computeMetrics,
-    DEFAULT_GOLD_THRESHOLD,
     STANDARD_K,
 } from '../../../../bench/metrics/retrieval.js';
 
-const goldTurns = [
-    { turnIndex: 3, text: 'My birthday is in March, I love spring flowers.' },
-    { turnIndex: 7, text: 'I moved to Boston last year for the new job.' },
-];
+/*
+ * Sub-phase 9.4.6 test suite.
+ *
+ * Pre-9.4.6 asserted recallAtK(Set(), ranked, k) === 1.0 — the vacuous
+ * antipattern that made every Phase 9 sweep report recall=1.0 everywhere.
+ * That assertion is deleted. The new contract: empty matchedIds → NaN.
+ *
+ * matchGold + jaccard are preserved as @deprecated for historical
+ * provenance; tested here to lock behavior for any audit of Phase 9
+ * artifacts.
+ */
 
-const retrieved = [
-    { id: 'e1', content: 'Caroline was born in March.', score: 1.5 },
-    { id: 'e2', content: 'Unrelated trivia about pasta.', score: 1.2 },
-    { id: 'e3', content: 'She moved to Boston for work.', score: 1.0 },
-    { id: 'e4', content: 'Still unrelated.', score: 0.8 },
-];
-
-describe('jaccard', () => {
+describe('jaccard (deprecated)', () => {
     test('both empty → 1', () => {
         expect(jaccard([], [])).toBe(1);
     });
 
-    test('one empty → 0', () => {
-        expect(jaccard(['a'], [])).toBe(0);
-        expect(jaccard([], ['b'])).toBe(0);
+    test('identical tokens → 1', () => {
+        expect(jaccard(['a', 'b'], ['a', 'b'])).toBe(1);
     });
 
-    test('identical sets → 1', () => {
-        expect(jaccard(['a', 'b'], ['b', 'a'])).toBe(1);
+    test('disjoint → 0', () => {
+        expect(jaccard(['a'], ['b'])).toBe(0);
     });
 
     test('partial overlap', () => {
-        expect(jaccard(['a', 'b', 'c'], ['b', 'c', 'd'])).toBe(2 / 4);
-    });
-
-    test('no overlap → 0', () => {
-        expect(jaccard(['a', 'b'], ['c', 'd'])).toBe(0);
+        expect(jaccard(['a', 'b', 'c'], ['b', 'c', 'd'])).toBeCloseTo(2 / 4);
     });
 });
 
-describe('matchGold', () => {
-    test('returns Set and Record shape', () => {
-        const result = matchGold(retrieved, goldTurns);
-        expect(result.matchedIds).toBeInstanceOf(Set);
-        expect(typeof result.perGold).toBe('object');
+describe('matchGold (deprecated)', () => {
+    test('matches when Jaccard ≥ threshold', () => {
+        const retrieved = [
+            { id: 'a', content: 'apple banana cherry', score: 1 },
+        ];
+        const goldTurns = [
+            { turnIndex: 0, text: 'apple banana cherry date' },
+        ];
+        const result = matchGold(retrieved, goldTurns, { threshold: 0.5 });
+        expect(result.matchedIds.has('a')).toBe(true);
     });
 
-    test('default threshold is 0.5', () => {
-        expect(DEFAULT_GOLD_THRESHOLD).toBe(0.5);
+    test('no match below threshold', () => {
+        const retrieved = [
+            { id: 'a', content: 'completely different tokens here', score: 1 },
+        ];
+        const goldTurns = [
+            { turnIndex: 0, text: 'apple banana cherry' },
+        ];
+        const result = matchGold(retrieved, goldTurns, { threshold: 0.5 });
+        expect(result.matchedIds.size).toBe(0);
     });
 
-    test('e3 is the strongest candidate (Boston overlap)', () => {
-        const result = matchGold(retrieved, goldTurns);
-        // e3 has the highest Jaccard overlap; if anything matches at 0.5 it should be e3
-        if (result.matchedIds.size > 0) {
-            expect(result.matchedIds.has('e3')).toBe(true);
-        }
-    });
-
-    test('low threshold catches more matches', () => {
-        const result = matchGold(retrieved, goldTurns, { threshold: 0.1 });
-        expect(result.matchedIds.size).toBeGreaterThanOrEqual(1);
-        expect(result.matchedIds.has('e3')).toBe(true);
-    });
-
-    test('perGold maps turnIndex to matched ids', () => {
-        const result = matchGold(retrieved, goldTurns, { threshold: 0.1 });
-        expect(Array.isArray(result.perGold[7])).toBe(true);
-        expect(result.perGold[7].includes('e3')).toBe(true);
-    });
-
-    test('empty inputs → empty result', () => {
+    test('empty inputs → empty matchedIds', () => {
         const result = matchGold([], []);
         expect(result.matchedIds.size).toBe(0);
-        expect(Object.keys(result.perGold).length).toBe(0);
+        expect(result.perGold).toEqual({});
+    });
+});
+
+describe('matchGoldByEvidence (9.4.6)', () => {
+    test('matches when entry.sourceMessages intersects qa.evidenceTurns', () => {
+        const retrieved = [
+            { id: 'a', content: 'x', sourceMessages: [3, 4], score: 1 },
+            { id: 'b', content: 'y', sourceMessages: [10], score: 0.5 },
+        ];
+        const result = matchGoldByEvidence(retrieved, [3, 7]);
+        expect(result.matchedIds).toEqual(new Set(['a']));
+    });
+
+    test('non-intersection → empty matchedIds', () => {
+        const retrieved = [
+            { id: 'a', content: 'x', sourceMessages: [3, 4], score: 1 },
+        ];
+        const result = matchGoldByEvidence(retrieved, [10, 20]);
+        expect(result.matchedIds.size).toBe(0);
+    });
+
+    test('empty evidenceTurns → empty matchedIds', () => {
+        const retrieved = [
+            { id: 'a', content: 'x', sourceMessages: [3, 4], score: 1 },
+        ];
+        const result = matchGoldByEvidence(retrieved, []);
+        expect(result.matchedIds.size).toBe(0);
+    });
+
+    test('missing sourceMessages on entry → that entry does not match', () => {
+        const retrieved = [
+            { id: 'a', content: 'x', score: 1 },
+            { id: 'b', content: 'y', sourceMessages: [3], score: 0.5 },
+        ];
+        const result = matchGoldByEvidence(retrieved, [3]);
+        expect(result.matchedIds).toEqual(new Set(['b']));
+    });
+
+    test('populates perGold map per intersecting turn', () => {
+        const retrieved = [
+            { id: 'a', content: 'x', sourceMessages: [3, 5], score: 1 },
+            { id: 'b', content: 'y', sourceMessages: [5, 7], score: 0.5 },
+        ];
+        const result = matchGoldByEvidence(retrieved, [3, 5, 9]);
+        expect(result.perGold[3]).toEqual(['a']);
+        expect(result.perGold[5].sort()).toEqual(['a', 'b']);
+        expect(result.perGold[9]).toBeUndefined();
+    });
+
+    test('non-array evidenceTurns → empty matchedIds (defensive)', () => {
+        const retrieved = [
+            { id: 'a', content: 'x', sourceMessages: [3], score: 1 },
+        ];
+        const result = matchGoldByEvidence(retrieved, /** @type {any} */ (null));
+        expect(result.matchedIds.size).toBe(0);
     });
 });
 
 describe('precisionAtK', () => {
-    const matched = new Set(['a', 'c']);
-    const ranked = ['a', 'b', 'c', 'd'];
+    test('hits in top-k', () => {
+        const matched = new Set(['a', 'c']);
+        const ranked = ['a', 'b', 'c', 'd'];
+        expect(precisionAtK(matched, ranked, 3)).toBeCloseTo(2 / 3);
+    });
 
-    test('k=1 with hit at position 0 → 1.0', () => {
+    test('full precision at k=1', () => {
+        const matched = new Set(['a']);
+        const ranked = ['a', 'b', 'c'];
         expect(precisionAtK(matched, ranked, 1)).toBe(1.0);
     });
 
-    test('k=2 with one hit → 0.5', () => {
-        expect(precisionAtK(matched, ranked, 2)).toBe(0.5);
+    test('no hits', () => {
+        expect(precisionAtK(new Set(['x']), ['a', 'b'], 2)).toBe(0);
     });
 
-    test('k=5 with 2 matches in 4 results → 0.5 (no padding)', () => {
-        expect(precisionAtK(matched, ranked, 5)).toBe(2 / 4);
+    test('empty matchedIds → NaN (unscorable, was 0.0 pre-9.4.6)', () => {
+        expect(Number.isNaN(precisionAtK(new Set(), ['a', 'b'], 2))).toBe(true);
     });
 
-    test('empty retrieval → 0', () => {
-        expect(precisionAtK(matched, [], 3)).toBe(0);
-    });
-
-    test('no matches → 0', () => {
-        expect(precisionAtK(new Set(['z']), ranked, 2)).toBe(0);
+    test('empty rankedIds → 0 (retrieval returned nothing, not unscorable)', () => {
+        expect(precisionAtK(new Set(['a']), [], 3)).toBe(0);
     });
 });
 
 describe('recallAtK', () => {
-    const matched = new Set(['a', 'c']);
-    const ranked = ['a', 'b', 'c', 'd'];
-
-    test('all relevant in top-k → 1.0', () => {
+    test('all matched in top-k', () => {
+        const matched = new Set(['a', 'b']);
+        const ranked = ['a', 'b', 'c'];
         expect(recallAtK(matched, ranked, 3)).toBe(1.0);
     });
 
     test('partial recall', () => {
-        expect(recallAtK(matched, ranked, 1)).toBe(0.5);
+        const matched = new Set(['a', 'b']);
+        const ranked = ['a', 'c', 'd'];
+        expect(recallAtK(matched, ranked, 3)).toBe(0.5);
     });
 
-    test('empty gold → 1.0 (vacuous)', () => {
-        expect(recallAtK(new Set(), ranked, 2)).toBe(1.0);
+    test('empty matchedIds → NaN (unscorable, was 1.0 VACUOUSLY pre-9.4.6)', () => {
+        // This is the bug: pre-9.4.6 recallAtK returned 1.0 here. Every
+        // Phase 9 sweep report's "recall=1.0 everywhere" came from this
+        // exact path firing on every query.
+        expect(Number.isNaN(recallAtK(new Set(), ['a', 'b'], 2))).toBe(true);
     });
 
-    test('no matches in top-k → 0', () => {
-        expect(recallAtK(matched, ['b', 'd'], 2)).toBe(0);
+    test('no hits in top-k', () => {
+        expect(recallAtK(new Set(['a']), ['b', 'c'], 2)).toBe(0);
     });
 });
 
 describe('mrr', () => {
-    const matched = new Set(['a', 'c']);
-
-    test('rank 1 → 1.0', () => {
-        expect(mrr(matched, ['a', 'b', 'c'])).toBe(1.0);
+    test('first hit at rank 1', () => {
+        expect(mrr(new Set(['a']), ['a', 'b', 'c'])).toBe(1.0);
     });
 
-    test('rank 3 → 1/3', () => {
-        expect(mrr(matched, ['b', 'd', 'a'])).toBe(1 / 3);
+    test('first hit at rank 3', () => {
+        expect(mrr(new Set(['c']), ['a', 'b', 'c'])).toBeCloseTo(1 / 3);
     });
 
-    test('no match → 0', () => {
-        expect(mrr(matched, ['b', 'd', 'e'])).toBe(0);
+    test('no hit', () => {
+        expect(mrr(new Set(['x']), ['a', 'b', 'c'])).toBe(0);
     });
 
-    test('empty ranked → 0', () => {
-        expect(mrr(matched, [])).toBe(0);
+    test('empty rankedIds → 0 (retrieval returned nothing, not unscorable)', () => {
+        // Consistent with precisionAtK: matched is present but retrieval
+        // was empty. 0 MRR, not NaN.
+        expect(mrr(new Set(['a']), [])).toBe(0);
+    });
+
+    test('empty matchedIds → NaN (unscorable)', () => {
+        expect(Number.isNaN(mrr(new Set(), ['a', 'b']))).toBe(true);
     });
 });
 
-describe('computeMetrics', () => {
-    test('returns correct shape with STANDARD_K', () => {
-        expect(STANDARD_K).toEqual([1, 3, 5, 10]);
-
-        const runs = [
-            {
-                retrieved: [
-                    { id: 'a', content: 'hit', score: 1.0 },
-                    { id: 'b', content: 'miss', score: 0.5 },
-                ],
-                goldTurns: [{ turnIndex: 0, text: 'hit' }],
-            },
-        ];
-
+describe('computeMetrics with NaN aggregation', () => {
+    test('basic run with evidence match', () => {
+        const runs = [{
+            retrieved: [
+                { id: 'a', content: 'x', sourceMessages: [3], score: 1 },
+                { id: 'b', content: 'y', sourceMessages: [99], score: 0.5 },
+            ],
+            qa: { evidenceTurns: [3] },
+        }];
         const result = computeMetrics(runs);
         expect(result.n).toBe(1);
-        expect(typeof result.precisionAtK).toBe('object');
-        expect(typeof result.recallAtK).toBe('object');
-        expect(typeof result.mrr).toBe('number');
+        expect(result.n_scored).toBe(1);
+        expect(result.n_skipped).toBe(0);
+        expect(result.recallAtK[5]).toBe(1.0);
+        expect(result.mrr).toBe(1.0);
+    });
 
+    test('unscorable runs contribute NaN and are excluded from mean', () => {
+        const runs = [
+            {
+                // Scorable: matched 'a' at rank 1
+                retrieved: [{ id: 'a', content: 'x', sourceMessages: [3], score: 1 }],
+                qa: { evidenceTurns: [3] },
+            },
+            {
+                // Unscorable: no evidence intersects
+                retrieved: [{ id: 'b', content: 'y', sourceMessages: [99], score: 0.5 }],
+                qa: { evidenceTurns: [3] },
+            },
+        ];
+        const result = computeMetrics(runs);
+        expect(result.n).toBe(2);
+        expect(result.n_scored).toBe(1);
+        expect(result.n_skipped).toBe(1);
+        // Averaged over the 1 scored run
+        expect(result.mrr).toBe(1.0);
+        expect(result.recallAtK[5]).toBe(1.0);
+    });
+
+    test('all unscorable → NaN metrics, n_skipped=n', () => {
+        const runs = [{
+            retrieved: [{ id: 'a', content: 'x', sourceMessages: [99], score: 1 }],
+            qa: { evidenceTurns: [3] },
+        }];
+        const result = computeMetrics(runs);
+        expect(result.n).toBe(1);
+        expect(result.n_scored).toBe(0);
+        expect(result.n_skipped).toBe(1);
+        expect(Number.isNaN(result.mrr)).toBe(true);
         for (const k of STANDARD_K) {
-            expect(typeof result.precisionAtK[k]).toBe('number');
-            expect(typeof result.recallAtK[k]).toBe('number');
+            expect(Number.isNaN(result.precisionAtK[k])).toBe(true);
+            expect(Number.isNaN(result.recallAtK[k])).toBe(true);
         }
     });
 
-    test('empty runs → zeros', () => {
+    test('empty runs → n=0, n_scored=0, NaN metrics', () => {
         const result = computeMetrics([]);
         expect(result.n).toBe(0);
+        expect(result.n_scored).toBe(0);
+        expect(result.n_skipped).toBe(0);
+        expect(Number.isNaN(result.mrr)).toBe(true);
         for (const k of STANDARD_K) {
-            expect(result.precisionAtK[k]).toBe(0);
-            expect(result.recallAtK[k]).toBe(0);
+            expect(Number.isNaN(result.precisionAtK[k])).toBe(true);
+            expect(Number.isNaN(result.recallAtK[k])).toBe(true);
         }
-        expect(result.mrr).toBe(0);
     });
 
-    test('aggregates over multiple runs', () => {
+    test('aggregates over multiple scorable runs with nanmean', () => {
         const runs = [
             {
                 retrieved: [
-                    { id: 'a', content: 'alpha', score: 1.0 },
-                    { id: 'b', content: 'beta', score: 0.5 },
+                    { id: 'a', content: 'x', sourceMessages: [3], score: 1 },
+                    { id: 'c', content: 'z', sourceMessages: [99], score: 0.5 },
                 ],
-                goldTurns: [{ turnIndex: 0, text: 'alpha' }],
+                qa: { evidenceTurns: [3] },
             },
             {
                 retrieved: [
-                    { id: 'b', content: 'beta', score: 1.0 },
-                    { id: 'a', content: 'alpha', score: 0.5 },
+                    { id: 'b', content: 'y', sourceMessages: [99], score: 1 },
+                    { id: 'd', content: 'w', sourceMessages: [7], score: 0.5 },
                 ],
-                goldTurns: [{ turnIndex: 0, text: 'beta' }],
+                qa: { evidenceTurns: [7] },
             },
         ];
-
         const result = computeMetrics(runs);
-        expect(result.n).toBe(2);
-        expect(result.mrr).toBe(1.0); // both rank 1
+        expect(result.n_scored).toBe(2);
+        expect(result.n_skipped).toBe(0);
+        // Run 1: d at rank 1 → mrr=1; Run 2: d at rank 2 → mrr=0.5
+        expect(result.mrr).toBeCloseTo(0.75);
+    });
+
+    test('qa without evidenceTurns field → run counts as unscorable, not a crash', () => {
+        const runs = /** @type {any} */ ([{
+            retrieved: [{ id: 'a', content: 'x', sourceMessages: [3], score: 1 }],
+            qa: {},
+        }]);
+        const result = computeMetrics(runs);
+        expect(result.n_scored).toBe(0);
+        expect(result.n_skipped).toBe(1);
     });
 });

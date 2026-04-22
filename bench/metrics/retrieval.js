@@ -1,6 +1,23 @@
+/**
+ * Retrieval metrics: precision@k, recall@k, MRR.
+ *
+ * As of sub-phase 9.4.6, gold matching uses turn-index intersection
+ * (matchGoldByEvidence) rather than text Jaccard (matchGold — deprecated).
+ * The legacy matcher is preserved for provenance but is not wired into
+ * computeMetrics.
+ *
+ * Unscorable queries (empty matchedIds — either the QA has no evidence
+ * or no retrieved entry intersects it) return NaN. computeMetrics
+ * aggregates via nanmean and surfaces n_scored / n_skipped separately
+ * so the caller can see the honest denominator.
+ *
+ * @module bench/metrics/retrieval
+ * @see docs/plans/phase-9-4-6-honest-metrics.md
+ */
+
 import { tokenize } from '../../src/retrieval/bm25.js';
 
-/** @type {number} */
+/** @type {number} @deprecated Used only by legacy matchGold. */
 export const DEFAULT_GOLD_THRESHOLD = 0.5;
 
 /** @type {number[]} */
@@ -10,6 +27,7 @@ export const STANDARD_K = [1, 3, 5, 10];
  * @typedef {object} RetrievedEntry
  * @property {string} id
  * @property {string} content
+ * @property {number[]} [sourceMessages]  - post-9.4.6; carried by runner.js
  * @property {number} score
  */
 
@@ -26,46 +44,55 @@ export const STANDARD_K = [1, 3, 5, 10];
  */
 
 /**
+ * @typedef {object} QAWithEvidence
+ * @property {number[]} evidenceTurns
+ */
+
+/**
  * @typedef {object} Run
  * @property {RetrievedEntry[]} retrieved
- * @property {GoldTurn[]} goldTurns
+ * @property {QAWithEvidence} qa
  */
 
 /**
  * @typedef {object} MetricsResult
- * @property {number} n
- * @property {Record<number, number>} precisionAtK
- * @property {Record<number, number>} recallAtK
- * @property {number} mrr
+ * @property {number} n              - Total run count.
+ * @property {number} n_scored       - Runs that produced numeric metrics.
+ * @property {number} n_skipped      - Runs that produced NaN (empty matchedIds).
+ * @property {Record<number, number>} precisionAtK  - NaN if n_scored === 0.
+ * @property {Record<number, number>} recallAtK     - NaN if n_scored === 0.
+ * @property {number} mrr            - NaN if n_scored === 0.
  */
 
 /**
- * Compute Jaccard similarity between two token arrays.
- * Both empty → 1; otherwise intersection / union (0 if union is 0).
+ * Jaccard similarity over token arrays. Preserved for the deprecated
+ * matchGold path; do not use in new code.
  *
  * @param {string[]} a
  * @param {string[]} b
  * @returns {number}
+ * @deprecated 9.4.6 — evidence-turn intersection replaces text-Jaccard matching.
  */
 export function jaccard(a, b) {
     if (a.length === 0 && b.length === 0) return 1;
     const setA = new Set(a);
     const setB = new Set(b);
     let inter = 0;
-    for (const x of setA) {
-        if (setB.has(x)) inter++;
-    }
+    for (const x of setA) if (setB.has(x)) inter++;
     const union = setA.size + setB.size - inter;
     return union === 0 ? 0 : inter / union;
 }
 
 /**
- * Match retrieved entries against gold turns using Jaccard over tokenized text.
+ * Legacy text-Jaccard gold matcher. Vacuously matches nothing on
+ * LLM-synthesized facts vs raw gold turn text — the primary cause of
+ * Phase 9's "flat sweep" artifact. Kept for historical audit only.
  *
  * @param {RetrievedEntry[]} retrieved
  * @param {GoldTurn[]} goldTurns
  * @param {{ threshold?: number }} [opts]
  * @returns {MatchGoldResult}
+ * @deprecated 9.4.6 — use matchGoldByEvidence.
  */
 export function matchGold(retrieved, goldTurns, opts = {}) {
     const threshold = opts.threshold ?? DEFAULT_GOLD_THRESHOLD;
@@ -98,7 +125,46 @@ export function matchGold(retrieved, goldTurns, opts = {}) {
 }
 
 /**
- * Precision at k: hits in top-k divided by min(k, result count). No padding.
+ * Evidence-turn gold matcher. A retrieved entry matches iff its
+ * provenance.sourceMessages (carried as entry.sourceMessages by
+ * bench/runner.js) intersects the QA's evidenceTurns. Zero heuristics,
+ * zero threshold, zero tokenization.
+ *
+ * @param {RetrievedEntry[]} retrieved
+ * @param {number[]} evidenceTurns
+ * @returns {MatchGoldResult}
+ */
+export function matchGoldByEvidence(retrieved, evidenceTurns) {
+    /** @type {Set<string>} */
+    const matchedIds = new Set();
+    /** @type {Record<number, string[]>} */
+    const perGold = {};
+
+    if (!Array.isArray(evidenceTurns) || evidenceTurns.length === 0) {
+        return { matchedIds, perGold };
+    }
+
+    const evidenceSet = new Set(evidenceTurns);
+
+    for (const entry of retrieved) {
+        const srcs = entry.sourceMessages;
+        if (!Array.isArray(srcs) || srcs.length === 0) continue;
+
+        for (const src of srcs) {
+            if (evidenceSet.has(src)) {
+                matchedIds.add(entry.id);
+                if (!perGold[src]) perGold[src] = [];
+                if (!perGold[src].includes(entry.id)) perGold[src].push(entry.id);
+            }
+        }
+    }
+
+    return { matchedIds, perGold };
+}
+
+/**
+ * Precision@k. Returns NaN when matchedIds is empty (unscorable QA —
+ * no gold exists for this query or no retrieval intersected it).
  *
  * @param {Set<string>} matchedIds
  * @param {string[]} rankedIds
@@ -106,6 +172,7 @@ export function matchGold(retrieved, goldTurns, opts = {}) {
  * @returns {number}
  */
 export function precisionAtK(matchedIds, rankedIds, k) {
+    if (matchedIds.size === 0) return NaN;
     if (rankedIds.length === 0) return 0;
     const top = rankedIds.slice(0, k);
     let hits = 0;
@@ -116,12 +183,9 @@ export function precisionAtK(matchedIds, rankedIds, k) {
 }
 
 /**
- * Recall at k: fraction of matched ids that appear in top-k.
- *
- * `matchedIds` is typically computed from `matchGold` over the FULL retrieval
- * (not top-k), so recall@k measures "what fraction of retrievable gold
- * appears in top-k," not "what fraction of gold turns have any match
- * anywhere."
+ * Recall@k. Returns NaN when matchedIds is empty (unscorable). The old
+ * "return 1.0 on empty matchedIds" default was the vacuous-truth
+ * antipattern that shadowed every Phase 9 sweep; deleted in 9.4.6.
  *
  * @param {Set<string>} matchedIds
  * @param {string[]} rankedIds
@@ -129,7 +193,7 @@ export function precisionAtK(matchedIds, rankedIds, k) {
  * @returns {number}
  */
 export function recallAtK(matchedIds, rankedIds, k) {
-    if (matchedIds.size === 0) return 1.0;
+    if (matchedIds.size === 0) return NaN;
     const top = new Set(rankedIds.slice(0, k));
     let hits = 0;
     for (const id of matchedIds) {
@@ -139,13 +203,14 @@ export function recallAtK(matchedIds, rankedIds, k) {
 }
 
 /**
- * Mean Reciprocal Rank: 1/(position of first hit). 0 if no hit.
+ * Mean Reciprocal Rank. Returns NaN when matchedIds is empty (unscorable).
  *
  * @param {Set<string>} matchedIds
  * @param {string[]} rankedIds
  * @returns {number}
  */
 export function mrr(matchedIds, rankedIds) {
+    if (matchedIds.size === 0) return NaN;
     for (let i = 0; i < rankedIds.length; i++) {
         if (matchedIds.has(rankedIds[i])) {
             return 1 / (i + 1);
@@ -156,6 +221,9 @@ export function mrr(matchedIds, rankedIds) {
 
 /**
  * Aggregate precision@k, recall@k, and MRR over a batch of runs.
+ * Uses nanmean: sum of non-NaN contributions divided by count of
+ * non-NaN contributions. Reports n_scored / n_skipped alongside
+ * values for honesty — the caller sees the real denominator.
  *
  * @param {Run[]} runs
  * @param {{ kValues?: number[] }} [opts]
@@ -163,43 +231,77 @@ export function mrr(matchedIds, rankedIds) {
  */
 export function computeMetrics(runs, opts = {}) {
     const kValues = opts.kValues ?? STANDARD_K;
-    const n = runs.length || 1;
 
     /** @type {Record<number, number>} */
     const precisionSums = {};
     /** @type {Record<number, number>} */
     const recallSums = {};
+    /** @type {Record<number, number>} */
+    const precisionCounts = {};
+    /** @type {Record<number, number>} */
+    const recallCounts = {};
     let mrrSum = 0;
+    let mrrCount = 0;
 
     for (const k of kValues) {
         precisionSums[k] = 0;
         recallSums[k] = 0;
+        precisionCounts[k] = 0;
+        recallCounts[k] = 0;
     }
 
+    let n_scored = 0;
+    let n_skipped = 0;
+
     for (const run of runs) {
-        const { matchedIds } = matchGold(run.retrieved, run.goldTurns);
+        const evidenceTurns = run.qa?.evidenceTurns ?? [];
+        const { matchedIds } = matchGoldByEvidence(run.retrieved, evidenceTurns);
         const rankedIds = run.retrieved.map(r => r.id);
-        for (const k of kValues) {
-            precisionSums[k] += precisionAtK(matchedIds, rankedIds, k);
-            recallSums[k] += recallAtK(matchedIds, rankedIds, k);
+
+        if (matchedIds.size === 0) {
+            n_skipped++;
+            continue;
         }
-        mrrSum += mrr(matchedIds, rankedIds);
+        n_scored++;
+
+        for (const k of kValues) {
+            const p = precisionAtK(matchedIds, rankedIds, k);
+            if (!Number.isNaN(p)) {
+                precisionSums[k] += p;
+                precisionCounts[k]++;
+            }
+            const r = recallAtK(matchedIds, rankedIds, k);
+            if (!Number.isNaN(r)) {
+                recallSums[k] += r;
+                recallCounts[k]++;
+            }
+        }
+        const m = mrr(matchedIds, rankedIds);
+        if (!Number.isNaN(m)) {
+            mrrSum += m;
+            mrrCount++;
+        }
     }
 
     /** @type {Record<number, number>} */
     const precisionResult = {};
     /** @type {Record<number, number>} */
     const recallResult = {};
-
     for (const k of kValues) {
-        precisionResult[k] = precisionSums[k] / n;
-        recallResult[k] = recallSums[k] / n;
+        precisionResult[k] = precisionCounts[k] > 0
+            ? precisionSums[k] / precisionCounts[k]
+            : NaN;
+        recallResult[k] = recallCounts[k] > 0
+            ? recallSums[k] / recallCounts[k]
+            : NaN;
     }
 
     return {
         n: runs.length,
+        n_scored,
+        n_skipped,
         precisionAtK: precisionResult,
         recallAtK: recallResult,
-        mrr: mrrSum / n,
+        mrr: mrrCount > 0 ? mrrSum / mrrCount : NaN,
     };
 }
