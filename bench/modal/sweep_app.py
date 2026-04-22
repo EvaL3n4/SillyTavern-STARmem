@@ -643,7 +643,15 @@ def run_graph_sweep(synthetic: bool = False) -> dict:
 # flagged flat and tuning defers to 9.5 live extraction.
 CONSOLIDATION_ROUNDS = [
     {"name": "dedup",       "knob": "DEDUP_JACCARD_THRESHOLD", "values": [0.5, 0.6, 0.7, 0.8, 0.9]},
-    {"name": "batch_size",  "knob": "BATCH_SIZE",              "values": [3, 5, 10, 15]},
+    # 9.4.9 mid-flight revision: BATCH_SIZE round dropped from scope.
+    # The warm extraction cache is keyed by (model, messages, maxTokens);
+    # changing BATCH_SIZE changes batch composition → new cache keys →
+    # systematic misses → live LLM fallback → 600s function timeout.
+    # Observed during synthetic smoke (2026-04-22): consolidation
+    # --synthetic hit FunctionTimeoutError on the BATCH_SIZE round.
+    # Filed as 9.5 candidate — live extraction regenerates cache on
+    # demand so BATCH_SIZE sweep becomes tractable there.
+    # {"name": "batch_size", "knob": "BATCH_SIZE", "values": [3, 5, 10, 15]},
 ]
 
 # Threshold for Branch C "flat surface" detection. Matches the ΔMRR
