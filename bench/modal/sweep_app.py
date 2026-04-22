@@ -630,6 +630,156 @@ def run_graph_sweep(synthetic: bool = False) -> dict:
     }
 
 
+# 9.4.9 — consolidation sweep.
+# Two independent single-axis rounds. Each is interpreted standalone
+# because the knobs affect orthogonal parts of the pipeline (dedup
+# Jaccard gates merge decisions; batch_size gates per-call drain
+# cardinality). No coordinate descent across rounds.
+#
+# Branch C pre-registered: 9.4.6 retro found rule-based seeder
+# under-stresses dedup (updateRate 4.4% → 0.7% across thresholds,
+# retrieval MRR flat to 4 decimals). If 9.4.9 reproduces flatness
+# (MRR range <0.005 across all points in a round), the round is
+# flagged flat and tuning defers to 9.5 live extraction.
+CONSOLIDATION_ROUNDS = [
+    {"name": "dedup",       "knob": "DEDUP_JACCARD_THRESHOLD", "values": [0.5, 0.6, 0.7, 0.8, 0.9]},
+    {"name": "batch_size",  "knob": "BATCH_SIZE",              "values": [3, 5, 10, 15]},
+]
+
+# Threshold for Branch C "flat surface" detection. Matches the ΔMRR
+# noise floor measured on LoCoMo in 9.4.6. Rounds with MRR range
+# below this threshold defer tuning to 9.5.
+CONSOLIDATION_FLAT_MRR_THRESHOLD = 0.005
+
+
+def render_consolidation_report_stub(payload):
+    """Minimal stub renderer — Task 6 replaces with the full port.
+
+    Produces a usable-but-terse Markdown listing each round's points
+    with aggStats counters when available, and the flat/elbow verdict.
+    Full renderer with updateRate band-rule recommendation lands in
+    Task 6.
+    """
+    from datetime import datetime
+    today = datetime.now().isoformat()[:10]
+    lines = [
+        f"# Consolidation sweep — {today} (STUB renderer, Task 6 ships full)",
+        "",
+        f"**Corpus:** {payload['corpus_len']} conversations, {payload['qa_count']} QA items",
+        f"**Rounds:** {len(payload['rounds'])}",
+        "",
+    ]
+    for r in payload["rounds"]:
+        lines.append(f"## Round {r['name']}  (`{r['knob']}`)")
+        lines.append("")
+        lines.append("| value | mrr | recallAt5 | updateRate | dedupHitRate |")
+        lines.append("|---|---|---|---|---|")
+        for p in r["points"]:
+            v = p["overrides"][r["knob"]]
+            mrr = f"{p['metrics']['mrr']:.4f}"
+            r5 = f"{p['metrics']['recallAtK']['5']:.4f}"
+            agg = p.get("aggStats") or {}
+            ur = f"{agg['updateRate']:.4f}" if "updateRate" in agg else "—"
+            dhr = f"{agg['dedupHitRate']:.4f}" if "dedupHitRate" in agg else "—"
+            lines.append(f"| {v} | {mrr} | {r5} | {ur} | {dhr} |")
+        lines.append("")
+        if r["elbow"]["flat"]:
+            lines.append(
+                f"**Branch C fires** — MRR range {r['mrr_range']:.4f} < "
+                f"{CONSOLIDATION_FLAT_MRR_THRESHOLD}. Knob inert on this corpus "
+                f"with rule-based extractor; defer tuning to sub-phase 9.5."
+            )
+        else:
+            lines.append(
+                f"**Round winner:** `{r['knob']}={r['elbow']['value']}` "
+                f"(mrr={r['elbow']['mrr']:.4f}, range={r['mrr_range']:.4f})"
+            )
+        lines.append("")
+    lines.append("_Stub output; Task 6 ships `render_consolidation_report` with updateRate band-rule recommendation per Phase 6 retro._")
+    return "\n".join(lines)
+
+
+def run_consolidation_sweep(synthetic: bool = False) -> dict:
+    """Run two independent consolidation knob sweeps.
+
+    Each round is a single-axis parallel fan-out via run_point.map().
+    Pre-registered Branch C flags rounds with MRR range below the
+    CONSOLIDATION_FLAT_MRR_THRESHOLD as "flat" and defers tuning to
+    9.5 live extraction. Non-flat rounds land an elbow at the
+    MRR-best point.
+
+    Called from run_sweep when sweep_name='consolidation'. Returns
+    the standard {report, result_json, run_dir} shape.
+    """
+    import os
+    from datetime import datetime, timezone
+
+    rounds_out = []
+    last_points = []
+
+    for round_def in CONSOLIDATION_ROUNDS:
+        knob_name = round_def["knob"]
+        values = round_def["values"][:2] if synthetic else round_def["values"]
+        grid = [{knob_name: v} for v in values]
+        overrides_jsons = [json.dumps(p) for p in grid]
+        point_results = list(run_point.map(overrides_jsons))
+        points = [json.loads(pr) for pr in point_results]
+        last_points = points
+
+        # Branch C detection: MRR range below noise floor
+        mrr_values = [p["metrics"]["mrr"] for p in points]
+        mrr_range = max(mrr_values) - min(mrr_values)
+        is_flat = mrr_range < CONSOLIDATION_FLAT_MRR_THRESHOLD
+
+        if is_flat:
+            elbow = {"value": None, "mrr": max(mrr_values), "flat": True}
+        else:
+            winner = max(points, key=lambda p: p["metrics"]["mrr"])
+            elbow = {
+                "value": winner["overrides"][knob_name],
+                "mrr": winner["metrics"]["mrr"],
+                "flat": False,
+            }
+
+        rounds_out.append({
+            "name": round_def["name"],
+            "knob": knob_name,
+            "values": values,
+            "points": points,
+            "elbow": elbow,
+            "mrr_range": mrr_range,
+        })
+
+    # Persistence — mirrors graph + tau/bm25 pattern
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H-%M-%SZ")
+    run_dir = f"/data/runs/{ts}-consolidation"
+    os.makedirs(run_dir, exist_ok=True)
+
+    payload = {
+        "_schema": 1,
+        "sweep_name": "consolidation",
+        "synthetic": synthetic,
+        "timestamp": ts,
+        "corpus_len": 10,
+        "qa_count": last_points[0]["runCount"] if last_points else 0,
+        "rounds": rounds_out,
+    }
+    result_json_str = json.dumps(payload, indent=2)
+    report = render_consolidation_report_stub(payload)
+
+    with open(os.path.join(run_dir, "result.json"), "w") as f:
+        f.write(result_json_str)
+    with open(os.path.join(run_dir, "report.md"), "w") as f:
+        f.write(report)
+    volume.commit()
+
+    return {
+        "report": report,
+        "result_json": result_json_str,
+        "run_dir": run_dir,
+    }
+
+
 def _cartesian_product(knobs):
     """Generate cartesian product of knob value arrays."""
     if not knobs:
