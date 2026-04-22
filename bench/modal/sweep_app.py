@@ -486,6 +486,150 @@ SWEEP_CONFIGS = {
 }
 
 
+# 9.4.9 — graph sweep coordinate descent.
+# Mirrors bench/sweeps/graph.js:254-269. Each round pins previous
+# rounds' winners as baseOverrides and sweeps one knob. Winner =
+# point with highest MRR in the round. TIER3_SEEDS_K round is new
+# in 9.4.9 (was pinned at spec default 3 pre-9.4.8).
+GRAPH_ROUNDS = [
+    {"name": "lambda_1",     "knob": "TIER3_LAMBDA_1",      "values": [0.5, 0.75, 1.0, 1.25, 1.5]},
+    {"name": "lambda_2",     "knob": "TIER3_LAMBDA_2",      "values": [0.1, 0.2, 0.3, 0.4, 0.5]},
+    {"name": "beam",         "knob": "TIER3_BEAM_WIDTH",    "values": [3, 5, 8, 10]},
+    {"name": "seeds_k",      "knob": "TIER3_SEEDS_K",       "values": [1, 3, 5, 7]},
+    {"name": "edge_cap",     "knob": "EDGE_CAP_PER_ENTRY",  "values": [10, 15, 20, 30, 50]},
+    {"name": "cooccurrence", "knob": "COOCCURRENCE_WEIGHT", "values": [0.25, 0.5, 0.75, 1.0]},
+]
+
+# Every point in every graph round runs with TIER2_TAU_GAP=10
+# (9.4.8 amendment). Without this baseOverride, Tier 2 shortcut fires
+# for most queries and graph knobs don't affect retrieval because
+# queries never reach Tier 3.
+GRAPH_BASE_OVERRIDES = {"TIER2_TAU_GAP": 10}
+
+
+def render_graph_report_stub(payload):
+    """Minimal stub renderer — Task 5 replaces with the full port.
+
+    Produces a usable-but-terse Markdown that lists each round's
+    winner so synthetic smoke has something to eyeball. The full
+    renderer with per-round tables, composite elbow, and spec
+    amendment proposal lands in Task 5.
+    """
+    from datetime import datetime
+    today = datetime.now().isoformat()[:10]
+    lines = [
+        f"# Graph sweep — {today} (STUB renderer, Task 5 ships full)",
+        "",
+        f"**Corpus:** {payload['corpus_len']} conversations, {payload['qa_count']} QA items",
+        f"**Base overrides:** `{json.dumps(payload['base_overrides'])}`",
+        f"**Rounds:** {len(payload['rounds'])}",
+        "",
+        "## Round winners",
+        "",
+        "| Round | Knob | Values | Winner value | Winner MRR |",
+        "|---|---|---|---|---|",
+    ]
+    for r in payload["rounds"]:
+        values_str = str(r["values"])
+        lines.append(
+            f"| {r['name']} | `{r['knob']}` | {values_str} | "
+            f"`{r['winner']['value']}` | {r['winner']['mrr']:.4f} |"
+        )
+    lines.append("")
+    lines.append("## Composite elbow")
+    lines.append("")
+    lines.append("```json")
+    lines.append(json.dumps(payload["composite_elbow"]["overrides"], indent=2))
+    lines.append("```")
+    lines.append("")
+    lines.append("_Stub output; Task 5 ships `render_graph_report` with per-round tables and spec amendment proposal._")
+    return "\n".join(lines)
+
+
+def run_graph_sweep(synthetic: bool = False) -> dict:
+    """Run the 6-round graph coordinate descent.
+
+    Each round sweeps one knob via run_point.map() (parallel across
+    containers within the round), picks the MRR-best point as the
+    winner, and pins that value in accumulated_overrides for the
+    next round. Synthetic mode shrinks each round's grid to 2 points
+    for smoke testing; corpus stays full LoCoMo-10 regardless.
+
+    Called from run_sweep when sweep_name='graph'. Returns the same
+    {report, result_json, run_dir} shape as the generic sweep path.
+    """
+    import os
+    from datetime import datetime, timezone
+
+    rounds_out = []
+    accumulated_overrides = dict(GRAPH_BASE_OVERRIDES)
+    last_points = []
+
+    for round_def in GRAPH_ROUNDS:
+        knob_name = round_def["knob"]
+        values = round_def["values"][:2] if synthetic else round_def["values"]
+
+        # Build grid: one point per value, all pinned with accumulated_overrides
+        grid = [
+            {**accumulated_overrides, knob_name: v}
+            for v in values
+        ]
+        overrides_jsons = [json.dumps(p) for p in grid]
+        point_results = list(run_point.map(overrides_jsons))
+        points = [json.loads(pr) for pr in point_results]
+        last_points = points
+
+        # Winner = highest MRR in this round
+        winner = max(points, key=lambda p: p["metrics"]["mrr"])
+        winning_value = winner["overrides"][knob_name]
+        winning_mrr = winner["metrics"]["mrr"]
+
+        rounds_out.append({
+            "name": round_def["name"],
+            "knob": knob_name,
+            "values": values,
+            "points": points,
+            "winner": {"value": winning_value, "mrr": winning_mrr},
+        })
+
+        # Pin for next round
+        accumulated_overrides[knob_name] = winning_value
+
+    # Persistence — mirrors run_sweep pattern (9.4.8 f5baae5)
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H-%M-%SZ")
+    run_dir = f"/data/runs/{ts}-graph"
+    os.makedirs(run_dir, exist_ok=True)
+
+    payload = {
+        "_schema": 1,
+        "sweep_name": "graph",
+        "synthetic": synthetic,
+        "timestamp": ts,
+        "corpus_len": 10,
+        "qa_count": last_points[0]["runCount"] if last_points else 0,
+        "base_overrides": GRAPH_BASE_OVERRIDES,
+        "rounds": rounds_out,
+        "composite_elbow": {
+            "overrides": accumulated_overrides,
+            "rationale": "Coordinate descent winners across 6 rounds, each round's MRR-best value pinned into the next round's baseOverrides.",
+        },
+    }
+    result_json_str = json.dumps(payload, indent=2)
+    report = render_graph_report_stub(payload)
+
+    with open(os.path.join(run_dir, "result.json"), "w") as f:
+        f.write(result_json_str)
+    with open(os.path.join(run_dir, "report.md"), "w") as f:
+        f.write(report)
+    volume.commit()
+
+    return {
+        "report": report,
+        "result_json": result_json_str,
+        "run_dir": run_dir,
+    }
+
+
 def _cartesian_product(knobs):
     """Generate cartesian product of knob value arrays."""
     if not knobs:
@@ -504,7 +648,7 @@ def run_sweep(sweep_name: str, synthetic: bool = False) -> dict:
     """Run a full parameter sweep in parallel via Modal.
 
     Args:
-        sweep_name: 'tau' or 'bm25'.
+        sweep_name: 'tau', 'bm25', 'graph', or 'consolidation'.
         synthetic: If True, use a tiny 2-point grid for smoke testing.
             The corpus is always full LoCoMo-10; `synthetic` only shrinks
             the knob grid, not the data.
@@ -516,11 +660,22 @@ def run_sweep(sweep_name: str, synthetic: bool = False) -> dict:
               with sweep_name, timestamp, points, elbow, corpus stats.
             - run_dir (str): path inside the Modal Volume where both
               `result.json` and `report.md` were persisted.
+
+    Dispatch: 'graph' and 'consolidation' (9.4.9) use specialized
+    multi-round runners; 'tau' and 'bm25' use the generic grid path
+    below.
     """
     import os
     import subprocess
     import json
     from datetime import datetime
+
+    # 9.4.9 dispatch — multi-round sweeps run in specialized helpers
+    # that manage their own persistence + rendering.
+    if sweep_name == "graph":
+        return run_graph_sweep(synthetic)
+    if sweep_name == "consolidation":
+        return run_consolidation_sweep(synthetic)
 
     config = SWEEP_CONFIGS[sweep_name]
     knobs = config["knobs"]
