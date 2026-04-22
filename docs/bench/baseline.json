@@ -1,48 +1,99 @@
 {
   "asOf": "2026-04-22",
-  "gitSha": "0b5e823",
-  "corpus": "locomo10-full",
-  "nodeVersion": "v25.9.0",
+  "gitSha": "10f7372",
+  "corpus": "locomo10-full (1986 QA items)",
+  "nodeVersion": "v20.20.2",
   "scorerId": "default",
   "status": "measured",
-  "statusReason": "Sub-phase 9.4.6 replaced the vacuous text-Jaccard gold matcher with evidence-turn intersection and fixed the LoCoMo D<day>:<turn> loader miss. All metrics below are measured against the full 10-conversation LoCoMo corpus (1986 QA items) with a warm live-extraction cache (google/gemma-4-26b-a4b-it). n_scored ~ 71-73% of QAs on each sweep; n_skipped accounts for QAs whose retrieval produced no entry intersecting gold evidence.",
+  "statusReason": "Sub-phase 9.4.7 fixed the seeder idle-drain leak and 9.4.8 reran the sweeps on Modal (free-tier, 32-container waves) against the full 10-conversation LoCoMo corpus (1986 QA items) with a warm live-extraction cache (google/gemma-4-26b-a4b-it). Numbers supersede the 9.4.6 advisory-only baseline; the ladder now cleanly beats bm25only/recency/random on MRR and recall@5.",
   "knownIssues": [
-    "Ladder retriever underperforms both bm25only and random on LoCoMo by orders of magnitude — see structuralInvariants.ladderVsBm25Only and ladderVsRandom. The scorer chain appears to actively demote correct results past rank 10 for most queries. Recall@10 on the ladder is 0.6074 vs 1.0000 for bm25only/recency/random, indicating the ladder keeps the gold entry inside its retrieval window but ranks it poorly. Not a 9.4.6 scope; defer to sub-phase 9.4.7 or Phase 11 for structural diagnosis.",
-    "Tier 3 (graph) contributes 0.0001 MRR lift over Tier-2-only baseline at best elbow — well below the 0.05 threshold. Graph sweep flags structural-bug on every round. Deferred for same reason as above.",
-    "Tuning recommendations below are local elbows on a structurally-broken retrieval surface — treat as advisory, not authoritative. Ladder MRR range across all 48 tau points is 0.1108 - 0.1136 (delta 0.0028); this is noise-level compared to bm25only's 0.6909.",
-    "Baseline sweeps used small synthetic corpora before Phase 9; full-LoCoMo numbers here supersede all 2026-04-21 sweep artifacts (preserved in-tree as 2026-04-21-*.md with -rulebased-prefix / -VACUOUS-pre-9-4-6 rename for provenance)."
+    "9.4.6 baseline.json claimed Tier 3 contributes 0.0001 MRR lift (well below 0.05 threshold). That measurement was on the broken ladder with residual-working-buffer contamination. Post-9.4.7 seeder idle-drain fix + 9.4.8 Modal sweeps show Tier 3 actually contributes +0.0794 MRR lift when TIER2_TAU_GAP allows queries to reach it. The graph expansion is genuinely valuable; 9.4.6 couldn't see it through the bench-state noise.",
+    "Sweeps run via Modal per-knob-value parallelism (one container per grid point). Free-tier concurrency cap of 32 containers means 48-point sweeps run in two waves (~3-4 min wall-clock vs ~62 min serial per 9.4.6 retro).",
+    "Graph and consolidation sweeps remain deferred per 9.4.6 retro + 9.4.8 locked decision #6. With the ladder no longer structurally broken, these become meaningful follow-ups for a post-9.4.8 sub-phase (9.4.9 or Phase 11)."
   ],
   "tuned": {
-    "TIER2_TAU_CONFIDENCE":     { "specDefault": 2.0,  "measured": 0.5,   "source": "sweeps/2026-04-22-tau.md",           "note": "Advisory. MRR range 0.1108-0.1136 across 48 points; elbow falls at lowest knob value. Ladder structurally broken on this corpus; elbow is noise-level." },
-    "TIER2_TAU_GAP":            { "specDefault": 0.5,  "measured": 1.5,   "source": "sweeps/2026-04-22-tau.md",           "note": "Advisory. Same flat surface as TIER2_TAU_CONFIDENCE." },
-    "TIER3_LAMBDA_1":           { "specDefault": 1.0,  "measured": 0.5,   "source": "sweeps/2026-04-22-graph.md",         "note": "Advisory. Graph tier adds 0.0001 MRR over Tier-2-only baseline; structural-bug flag fired on all 5 rounds (lift < 0.05)." },
-    "TIER3_LAMBDA_2":           { "specDefault": 0.3,  "measured": 0.1,   "source": "sweeps/2026-04-22-graph.md",         "note": "Advisory. Same as TIER3_LAMBDA_1." },
-    "TIER3_BEAM_WIDTH":         { "specDefault": 5,    "measured": 3,     "source": "sweeps/2026-04-22-graph.md",         "note": "Advisory. No clear elbow; fallback to highest MRR = 0.1119." },
-    "EDGE_CAP_PER_ENTRY":       { "specDefault": 20,   "measured": 20,    "source": "sweeps/2026-04-22-graph.md",         "note": "Advisory. MRR lift 0.0003 at best. Spec default happens to coincide with elbow." },
-    "COOCCURRENCE_WEIGHT":      { "specDefault": 0.5,  "measured": 0.25,  "source": "sweeps/2026-04-22-graph.md",         "note": "Advisory. MRR lift 0.0001." },
-    "DEDUP_JACCARD_THRESHOLD":  { "specDefault": 0.7,  "measured": 0.9,   "source": "sweeps/2026-04-22-consolidation.md", "note": "Advisory. updateRate ranges 4.4% -> 0.7% across thresholds (knob is doing real work on consolidation internals) but retrieval quality is flat (recall@5 and MRR constant to 4 decimals). Dedup affects storage, not retrieval on this corpus." },
-    "TAG_BOOST":                { "specDefault": 2,    "measured": 3,     "source": "sweeps/2026-04-22-bm25.md",          "note": "Advisory. Flat heatmap (max-min < 0.01 across 16 cells); no clear elbow; fallback to highest MRR = 0.1126. Tags populated rate 100% confirms mechanism fires, but ladder score chain doesn't surface the signal." },
-    "SUBJECT_BOOST":            { "specDefault": 2,    "measured": 2,     "source": "sweeps/2026-04-22-bm25.md",          "note": "Advisory. Same." }
+    "TIER2_TAU_CONFIDENCE": {
+      "specDefault": 2.0,
+      "measured": 2.0,
+      "source": "sweeps/2026-04-22-tau.md",
+      "note": "INERT on LoCoMo-10. Initial 48-point sweep proved this axis produces identical MRR across values 0.5-5.0 at any fixed TIER2_TAU_GAP (rank-1 Tier-2 BM25 scores always clear even low thresholds). Keep at spec default; candidate for removal in future sweeps."
+    },
+    "TIER2_TAU_GAP": {
+      "specDefault": 0.5,
+      "measured": 10,
+      "source": "sweeps/2026-04-22-tau.md (+ extended/sledgehammer followups narrated in retro)",
+      "note": "AMENDED. Extended + sledgehammer sweeps (48-point \u2192 8-point \u2192 4-point) revealed MRR climbs monotonically from 0.7303 (gap=0.1) through 0.7721 (gap=1.5) to plateau at 0.8077 (gap=10) and stay flat through gap=1000. Tier 3 graph expansion becomes the dominant retrieval path at gap \u2265 10. +0.0625 absolute MRR lift vs spec default. Phase 11 candidate: Tier 2's confident-hit gating may be net-negative \u2014 ladder could simplify to always-Tier-3."
+    },
+    "TAG_BOOST": {
+      "specDefault": 2,
+      "measured": 2,
+      "source": "sweeps/2026-04-22-bm25.md",
+      "note": "ADVISORY. Sweep shows TAG_BOOST peaks at 3 (+0.0098 MRR absolute vs spec default, real non-flat signal). However the +0.0098 lift is redundantly absorbed by the TIER2_TAU_GAP=10 amendment (validation sweep at cb30323 landed at 0.8080, essentially matching gap=10 alone at 0.8077). Keeping at spec default 2 ships one-knob amendment rather than two."
+    },
+    "SUBJECT_BOOST": {
+      "specDefault": 2,
+      "measured": 2,
+      "source": "sweeps/2026-04-22-bm25.md",
+      "note": "INERT on LoCoMo-10. BM25 sweep showed <0.003 MRR variation across all values 1-4 (rounding noise). Keep at spec default."
+    }
   },
   "headlineMetrics": {
     "corpus": "locomo10-full (1986 QA items)",
-    "n_scored_range": "1403-1457 across sweeps (71-73%)",
-    "n_skipped_range": "529-583 across sweeps (27-29%)",
+    "n_scored_range": "~1412 on spec-default (71% of QAs)",
+    "n_skipped_range": "~574 on spec-default (29% of QAs)",
     "skipReasonNote": "Skipped QAs are those where no retrieved entry's provenance.sourceMessages intersected qa.evidenceTurns. Reflects retrieval misses, not corpus gaps (99.5% of LoCoMo QAs have non-empty evidenceTurns after the 9.4.6 Task 2 loader fix).",
-    "ladder":   { "recallAt1": 0.0007, "recallAt5": 0.0056, "recallAt10": 0.6074, "mrr": 0.1118, "p50LatencyMs": 1.89, "p95LatencyMs": 5.08 },
-    "bm25only": { "recallAt1": 0.3128, "recallAt5": 0.7932, "recallAt10": 1.0000, "mrr": 0.6909, "p50LatencyMs": 5.84, "p95LatencyMs": 6.96 },
-    "recency":  { "recallAt1": 0.0000, "recallAt5": 0.5692, "recallAt10": 1.0000, "mrr": 0.2703, "p50LatencyMs": 0.08, "p95LatencyMs": 0.29 },
-    "random":   { "recallAt1": 0.1032, "recallAt5": 0.5040, "recallAt10": 1.0000, "mrr": 0.3028, "p50LatencyMs": 0.04, "p95LatencyMs": 0.24 }
+    "ladder": {
+      "recallAt1": 0.4495,
+      "recallAt5": 0.8553,
+      "recallAt10": 1.0,
+      "mrr": 0.7452,
+      "p50LatencyMs": 1.85,
+      "p95LatencyMs": 4.16
+    },
+    "bm25only": {
+      "recallAt1": 0.3124,
+      "recallAt5": 0.7912,
+      "recallAt10": 1.0,
+      "mrr": 0.6898,
+      "p50LatencyMs": 6.01,
+      "p95LatencyMs": 7.34
+    },
+    "recency": {
+      "recallAt1": 0.0,
+      "recallAt5": 0.5692,
+      "recallAt10": 1.0,
+      "mrr": 0.2703,
+      "p50LatencyMs": 0.08,
+      "p95LatencyMs": 0.28
+    },
+    "random": {
+      "recallAt1": 0.0755,
+      "recallAt5": 0.4717,
+      "recallAt10": 1.0,
+      "mrr": 0.269,
+      "p50LatencyMs": 0.04,
+      "p95LatencyMs": 0.24
+    }
   },
   "structuralInvariants": {
-    "ladderVsRandom":  { "threshold": 0.02, "measuredMrrDelta": -0.1910, "status": "FAIL", "note": "Ladder MRR (0.1118) is 0.19 BELOW random (0.3028). Retrieval pipeline actively demotes gold below random selection. Defer to Phase 11 / sub-phase 9.4.7 for structural diagnosis." },
-    "ladderVsBm25Only": { "threshold": 0.02, "measuredMrrDelta": -0.5791, "status": "FAIL", "note": "Ladder MRR (0.1118) is 0.58 BELOW bm25only (0.6909). The same content that bm25only ranks at MRR 0.69 ends up at MRR 0.11 through the ladder. Scorer chain is catastrophically broken on LoCoMo." }
+    "ladderVsRandom": {
+      "threshold": 0.02,
+      "measuredMrrDelta": 0.4762,
+      "status": "PASS",
+      "note": "Ladder MRR (0.7452) is +0.4762 vs random (0.2690). Post-9.4.7 ladder cleanly beats the random baseline."
+    },
+    "ladderVsBm25Only": {
+      "threshold": 0.02,
+      "measuredMrrDelta": 0.0554,
+      "status": "PASS",
+      "note": "Ladder MRR (0.7452) is +0.0554 vs bm25only (0.6898). Scorer chain + Tier 3 graph expansion earn their keep."
+    }
   },
   "provenance": {
-    "tauSweep":           "sweeps/2026-04-22-tau.md",
-    "graphSweep":         "sweeps/2026-04-22-graph.md",
+    "tauSweep": "sweeps/2026-04-22-tau.md",
+    "graphSweep": "sweeps/2026-04-22-graph.md",
     "consolidationSweep": "sweeps/2026-04-22-consolidation.md",
-    "bm25Sweep":          "sweeps/2026-04-22-bm25.md",
+    "bm25Sweep": "sweeps/2026-04-22-bm25.md",
     "baselineComparison": "baselines/2026-04-22-comparison.md",
     "supersededArtifacts": [
       "sweeps/2026-04-21-tau-rulebased-prefix.md",
