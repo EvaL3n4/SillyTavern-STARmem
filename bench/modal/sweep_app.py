@@ -456,32 +456,134 @@ Not in scope for Phase 9 — note only.
     return report
 
 
+def render_single_axis_report(result, corpus_len, qa_count):
+    """Generic single-knob sweep renderer.
+
+    Used by the 9.5 `hops` and `relw` sweeps, both of which vary a single
+    graph-tier knob with TIER2_TAU_GAP=10 pinned in every grid point. Emits
+    a compact table (axis value → primary metric + secondary metrics) plus
+    a per-row ΔMRR column vs the sweep's own baseline (point with the
+    smallest primary-knob value). No heatmap — single axis.
+
+    This is intentionally simpler than render_tau_report / render_bm25_report:
+    no amendment proposal section, no environment snapshot. Both are emitted
+    centrally by run_sweep's post-processing (TODO: confirm — currently they
+    only live in tau/bm25 renderers). For 9.5 the elbow-detection output is
+    enough; 9.4.9-style amendment gating can be bolted on when a single-axis
+    sweep first surfaces a real elbow.
+    """
+    import json
+    from datetime import datetime
+    today = datetime.now().isoformat()[:10]
+    points = result["points"]
+    if not points:
+        return f"# {result['name']} sweep — {today}\n\nNo points returned.\n"
+
+    # Identify the swept knob (exclude inlined baseOverrides like TIER2_TAU_GAP)
+    overrides0 = points[0]["overrides"]
+    # The swept knob is the one with distinct values across points; baseOverrides
+    # are identical across all points.
+    swept_knob = None
+    for k in overrides0:
+        distinct = {p["overrides"].get(k) for p in points}
+        if len(distinct) > 1:
+            swept_knob = k
+            break
+    if swept_knob is None:
+        # Degenerate (1-point grid) — fall back to first non-baseOverride key
+        swept_knob = next(iter(overrides0))
+
+    sorted_pts = sorted(points, key=lambda p: p["overrides"][swept_knob])
+    baseline_mrr = sorted_pts[0]["metrics"]["mrr"]
+
+    header = f"| {swept_knob} | n_scored | recallAt5 | mrr | ΔMRR vs min | p50 | p95 |"
+    sep = "|---|---|---|---|---|---|---|"
+    rows = []
+    for p in sorted_pts:
+        v = p["overrides"][swept_knob]
+        n_scored = p["metrics"].get("n_scored", "-")
+        r5 = f"{p['metrics']['recallAtK']['5']:.4f}"
+        mrr = p["metrics"]["mrr"]
+        delta = mrr - baseline_mrr
+        mrr_s = f"{mrr:.4f}"
+        delta_s = f"{delta:+.4f}"
+        p50 = f"{p['latencyMs']['p50']:.2f}"
+        p95 = f"{p['latencyMs']['p95']:.2f}"
+        rows.append(f"| {v} | {n_scored} | {r5} | {mrr_s} | {delta_s} | {p50} | {p95} |")
+
+    elbow = result.get("elbow", {})
+    elbow_overrides = elbow.get("overrides", {})
+    elbow_rationale = elbow.get("rationale", "—")
+    base_overrides = {k: v for k, v in overrides0.items() if k != swept_knob}
+    base_block = (
+        f"**Base overrides (inlined into every point):** `{json.dumps(base_overrides)}`\n"
+        if base_overrides else ""
+    )
+
+    report = f"""# {result["name"]} sweep — {today}
+
+**Corpus:** LoCoMo-{corpus_len} ({qa_count} QA items, live extraction)
+**Swept:** {swept_knob}
+{base_block}
+## Results
+
+{header}
+{sep}
+{chr(10).join(rows)}
+
+## Elbow
+
+**Recommended:** `{json.dumps(elbow_overrides)}`
+**Rationale:** {elbow_rationale}
+"""
+    return report
+
+
 SWEEP_CONFIGS = {
     "tau": {
+        # 9.5: restored to the Phase 9 Task 4 full grid (48 points) so the
+        # renderer's heatmap is populated. 9.4.8 had trimmed this to a
+        # 4-knob validation config after amending gap=10; 9.5 re-sweeps
+        # under live extraction to detect whether the gap=10 plateau holds
+        # or the elbow shifts on Gemma-extracted facts.
         "knobs": [
-            # Validation sweep — combined amended spec.
-            # 9.4.8 sweeps found:
-            #   TIER2_TAU_CONFIDENCE inert across 0.5-5.0 (hold at 2.0)
-            #   TIER2_TAU_GAP plateau at ~10 (+0.0625 MRR absolute)
-            #   TAG_BOOST peaks at 3 (+0.0098 MRR absolute)
-            #   SUBJECT_BOOST inert on LoCoMo (hold at 2)
-            # Single-point confirmation that gap=10 and tag=3 compose
-            # additively. Expected MRR ~0.81 if both effects stack cleanly.
-            {"name": "TIER2_TAU_GAP", "values": [10]},
-            {"name": "TIER2_TAU_CONFIDENCE", "values": [2.0]},
-            {"name": "TAG_BOOST", "values": [3]},
-            {"name": "SUBJECT_BOOST", "values": [2]},
+            {"name": "TIER2_TAU_CONFIDENCE", "values": [0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 4.0, 5.0]},
+            {"name": "TIER2_TAU_GAP",        "values": [0.1, 0.3, 0.5, 1.0, 3.0, 10.0]},
         ],
         "primary_metric": "recallAt5",
         "renderer": render_tau_report,
     },
     "bm25": {
+        # 9.5: restored from 9.4.8's 2-knob validation config to the full
+        # 4×4 grid so render_bm25_report emits a heatmap.
         "knobs": [
-            {"name": "TAG_BOOST", "values": [1, 2, 3, 4]},
+            {"name": "TAG_BOOST",     "values": [1, 2, 3, 4]},
             {"name": "SUBJECT_BOOST", "values": [1, 2, 3, 4]},
         ],
         "primary_metric": "mrr",
         "renderer": render_bm25_report,
+    },
+    "hops": {
+        # 9.5: TIER3_MAX_HOPS sweep (Phase 9 left this knob uncovered).
+        # Every point runs with TIER2_TAU_GAP=10 baseOverride so queries
+        # reach Tier 3 (same invariant as GRAPH_ROUNDS). Inline the
+        # baseOverride into each grid point because run_sweep doesn't
+        # honor a config["base_overrides"] key — it hands `grid` directly
+        # to run_point.map.
+        "knobs": [
+            {"name": "TIER3_MAX_HOPS", "values": [1, 2, 3, 4]},
+        ],
+        "primary_metric": "mrr",
+        "renderer": render_single_axis_report,
+    },
+    "relw": {
+        # 9.5: EXPLICIT_RELATION_WEIGHT sweep (Phase 9 left this knob
+        # uncovered). Same gap=10 inlining as hops.
+        "knobs": [
+            {"name": "EXPLICIT_RELATION_WEIGHT", "values": [0.5, 1.0, 1.5, 2.0, 3.0]},
+        ],
+        "primary_metric": "mrr",
+        "renderer": render_single_axis_report,
     },
 }
 
@@ -1125,7 +1227,7 @@ def run_sweep(sweep_name: str, synthetic: bool = False) -> dict:
     """Run a full parameter sweep in parallel via Modal.
 
     Args:
-        sweep_name: 'tau', 'bm25', 'graph', or 'consolidation'.
+        sweep_name: 'tau', 'bm25', 'hops', 'relw', 'graph', or 'consolidation'.
         synthetic: If True, use a tiny 2-point grid for smoke testing.
             The corpus is always full LoCoMo-10; `synthetic` only shrinks
             the knob grid, not the data.
@@ -1180,13 +1282,33 @@ def run_sweep(sweep_name: str, synthetic: bool = False) -> dict:
                 {"TIER2_TAU_CONFIDENCE": 2.0, "TIER2_TAU_GAP": 0.5},  # spec defaults
                 {"TIER2_TAU_CONFIDENCE": 0.5, "TIER2_TAU_GAP": 0.5},  # low-confidence variant
             ]
-        else:  # bm25
+        elif sweep_name == "bm25":
             grid = [
                 {"TAG_BOOST": 2, "SUBJECT_BOOST": 2},  # spec defaults
                 {"TAG_BOOST": 3, "SUBJECT_BOOST": 2},  # +tag variant
             ]
+        elif sweep_name == "hops":
+            grid = [
+                {"TIER3_MAX_HOPS": 2, "TIER2_TAU_GAP": 10},  # spec default + gap=10
+                {"TIER3_MAX_HOPS": 3, "TIER2_TAU_GAP": 10},  # +1 hop variant
+            ]
+        elif sweep_name == "relw":
+            grid = [
+                {"EXPLICIT_RELATION_WEIGHT": 1.0, "TIER2_TAU_GAP": 10},  # spec default + gap=10
+                {"EXPLICIT_RELATION_WEIGHT": 2.0, "TIER2_TAU_GAP": 10},  # +1.0 variant
+            ]
+        else:
+            raise ValueError(f"Unknown synthetic sweep_name: {sweep_name!r}")
     else:
         grid = _cartesian_product(knobs)
+        # 9.5: single-axis graph-tier sweeps need TIER2_TAU_GAP=10 inlined
+        # into every grid point so queries actually reach Tier 3 (without
+        # it, Tier 2 gating short-circuits and the knob is inert by
+        # construction). Same invariant as GRAPH_BASE_OVERRIDES; run_sweep
+        # doesn't honor a config["base_overrides"] key today, so we inline.
+        if sweep_name in ("hops", "relw"):
+            for point in grid:
+                point.setdefault("TIER2_TAU_GAP", 10)
 
     # Fan out to parallel containers
     overrides_jsons = [json.dumps(point) for point in grid]
