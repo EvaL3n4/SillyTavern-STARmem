@@ -639,10 +639,40 @@ def render_graph_report_stub(payload):
         round_lift = r["winner"]["mrr"] - BASELINE_GAP10_MRR
         if spec is None:
             continue
-        if round_lift >= AMENDMENT_THRESHOLD:
+
+        # Hardened criterion (Task 5 fix post-Task 6 synthetic smoke):
+        # amendment requires BOTH ΔMRR ≥ threshold AND the winning point's
+        # coverage within COVERAGE_FLOOR_DELTA_PCT of baseline. Without the
+        # coverage gate, subset-selection bias (seeds_k=1, edge_cap=10, etc.)
+        # would produce spurious amendments — the knob narrows Tier 3
+        # retrieval to only the easy-to-answer subset, inflating MRR on
+        # the remainder.
+        winner_point = next(
+            (p for p in r["points"] if p["overrides"][knob] == measured),
+            None,
+        )
+        winner_coverage_pct = None
+        if winner_point:
+            wn_scored = winner_point["metrics"].get("n_scored")
+            wn_total = winner_point["metrics"].get("n", 1986)
+            if isinstance(wn_scored, int) and wn_total:
+                winner_coverage_pct = wn_scored / wn_total * 100
+        coverage_ok = (
+            winner_coverage_pct is None
+            or abs(winner_coverage_pct - BASELINE_COVERAGE_PCT) <= COVERAGE_FLOOR_DELTA_PCT
+        )
+
+        if round_lift >= AMENDMENT_THRESHOLD and coverage_ok:
             amendment_lines.append(
                 f"- **`{knob}`**: spec default `{spec}` → measured `{measured}` "
-                f"(ΔMRR {round_lift:+.4f}) — AMEND"
+                f"(ΔMRR {round_lift:+.4f}, coverage OK) — AMEND"
+            )
+        elif round_lift >= AMENDMENT_THRESHOLD and not coverage_ok:
+            amendment_lines.append(
+                f"- `{knob}`: spec default `{spec}` → winning value `{measured}` "
+                f"(ΔMRR {round_lift:+.4f} but coverage {winner_coverage_pct:.1f}% "
+                f"deviates >{COVERAGE_FLOOR_DELTA_PCT}pp from baseline) — "
+                f"**HOLD (subset-selection bias)**"
             )
         else:
             amendment_lines.append(
