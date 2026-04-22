@@ -8,6 +8,24 @@
 
 **Cache re-use:** The warm cache from 9.4.8 already holds every extraction for `google/gemma-4-26b-a4b-it` against full LoCoMo. As long as message shape and batch composition are preserved, Tasks 5/6/8/10 run on pure cache hits — zero new LLM calls. Task 7's new BATCH_SIZE round intentionally invalidates the cache (Pattern 2 per `sweep-cache-invalidation-audit`) and regenerates missing entries on demand via live Nano-GPT.
 
+---
+
+## Execution status (2026-04-22 preflight)
+
+Dispatch on 2026-04-22 discovered that **Tasks 1–3's implementation files already shipped earlier in the 9.4.x series** (during the 9.4.8 Modal-warm-cache work) and are present at HEAD:
+
+- `bench/harness/llmExtractor.js` + `tests/unit/bench/llmExtractor.test.js` — committed pre-9.5
+- `bench/harness/extractionCache.js` + `tests/unit/bench/extractionCache.test.js` — committed as `0dbac98` pre-9.5
+- `bench/harness/seeder.js`'s `_resolveExtractor()` + `tests/unit/bench/seeder-live-switch.test.js` — committed pre-9.5
+
+All folded into the 9.4.9 close baseline of 75 suites / 816 tests. The Task 1–3 expected test-count jumps (+6, +6, +4) in this plan are artefacts of the original 2026-04-21 draft written before 9.4.8/9.4.9 landed these modules — the real counts stay at 816 through Task 3 completion.
+
+**9.5's preflight contribution to Tasks 1–3:** commit `b180bb6` on 2026-04-22 updated the `llmExtractor.test.js` test URLs/model strings from the stale `http://litellm:8686/v1` + `gemma4-26b-a4b` to the canonical `https://nano-gpt.com/api/v1` + `google/gemma-4-26b-a4b-it` pair that matches the 9.4.8 warm cache keys. This was a hygiene fix, not a new feature — the production path never read those test-only values.
+
+**Net impact on plan execution:** skip Tasks 1–3's TDD loops at dispatch time; verify the shipped files match the plan's Step 3 code (they do, verbatim), mark Tasks 1–3 complete in the Done-when checklist, proceed to Task 4. Task 11's retro narrative should note the 9.4.8 pre-shipment as a tidiness observation, not a process failure.
+
+---
+
 **Tech Stack:** Node 25, ESM modules, vanilla `fetch`, `node:crypto` for cache keys, `node:fs/promises` for cache I/O. No runtime deps added.
 
 ---
@@ -1232,10 +1250,10 @@ Use `memory` or `hindsight_retain` to record:
 
 ## Done-when checklist
 
-- [ ] Task 0: Plan file committed.
-- [ ] Task 1: `llmExtractor.js` + tests green.
-- [ ] Task 2: `extractionCache.js` + tests green.
-- [ ] Task 3: Seeder env-gated switch + tests green; all prior tests still green.
+- [x] Task 0: Plan file committed.
+- [x] Task 1: `llmExtractor.js` + tests green. *(Pre-shipped in 9.4.x; preflight URL fix landed as `b180bb6`.)*
+- [x] Task 2: `extractionCache.js` + tests green. *(Pre-shipped in 9.4.x as `0dbac98`.)*
+- [x] Task 3: Seeder env-gated switch + tests green; all prior tests still green. *(Pre-shipped in 9.4.x.)*
 - [ ] Task 4: Smoke writeup confirms cold/warm/rule-based comparison.
 - [ ] Task 5: τ sweep live writeup produced, flat/elbow verdict recorded.
 - [ ] Task 6: Graph sweep (5 rounds) live writeup, per-round verdicts.
