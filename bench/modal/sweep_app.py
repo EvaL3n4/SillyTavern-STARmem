@@ -459,18 +459,18 @@ Not in scope for Phase 9 — note only.
 SWEEP_CONFIGS = {
     "tau": {
         "knobs": [
-            # Sledgehammer sweep. Extended sweep showed MRR still climbing
-            # monotonically at gap=5.0 (0.8000). Testing boundary values
-            # to determine: (a) does the curve saturate somewhere reasonable,
-            # or (b) does it keep climbing arbitrarily, implying Tier 2's
-            # gating function is net-negative and should probably be
-            # removed or re-gated as a Phase 11 finding.
-            # gap=5 omitted — already measured at 0.8000 in the extended run.
-            # gap=0.001 included as a boundary sanity check (should produce
-            # near-identical MRR to gap=0.5 since any gap < top-bm25-score
-            # triggers Tier 2 hits on essentially every query).
-            {"name": "TIER2_TAU_GAP", "values": [0.001, 10, 50, 1000]},
+            # Validation sweep — combined amended spec.
+            # 9.4.8 sweeps found:
+            #   TIER2_TAU_CONFIDENCE inert across 0.5-5.0 (hold at 2.0)
+            #   TIER2_TAU_GAP plateau at ~10 (+0.0625 MRR absolute)
+            #   TAG_BOOST peaks at 3 (+0.0098 MRR absolute)
+            #   SUBJECT_BOOST inert on LoCoMo (hold at 2)
+            # Single-point confirmation that gap=10 and tag=3 compose
+            # additively. Expected MRR ~0.81 if both effects stack cleanly.
+            {"name": "TIER2_TAU_GAP", "values": [10]},
             {"name": "TIER2_TAU_CONFIDENCE", "values": [2.0]},
+            {"name": "TAG_BOOST", "values": [3]},
+            {"name": "SUBJECT_BOOST", "values": [2]},
         ],
         "primary_metric": "recallAt5",
         "renderer": render_tau_report,
