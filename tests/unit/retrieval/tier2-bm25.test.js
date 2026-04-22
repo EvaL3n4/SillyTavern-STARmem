@@ -58,12 +58,13 @@ describe('tier2', () => {
     });
 
     test('hit=false when top score below τ_confidence', () => {
-        const lowScorer = () => 0.5;
-        registerScorer('low', lowScorer);
-        setScorer('low');
         const s = state([
-            ep('a', 'alice marseille'),
-            ep('b', 'bob paris'),
+            ep('a', 'alice marseille', null, [], {
+                lifecycle: { importance: 0, maturity: 'draft', createdAt: new Date('2026-04-20T12:00:00Z') },
+            }),
+            ep('b', 'bob paris', null, [], {
+                lifecycle: { importance: 0, maturity: 'draft', createdAt: new Date('2026-04-20T12:00:00Z') },
+            }),
         ]);
         const r = tier2(s, 'alice', { now, intent: 'factual' });
         expect(r.hit).toBe(false);
@@ -83,10 +84,11 @@ describe('tier2', () => {
     });
 
     test('single-result hit: gap computed against implicit 0', () => {
-        const highScorer = () => 10.0;
-        registerScorer('high', highScorer);
-        setScorer('high');
-        const s = state([ep('a', 'alice marseille')]);
+        const s = state([
+            ep('a', 'alice marseille', null, [], {
+                lifecycle: { importance: 100, maturity: 'core', createdAt: new Date('2026-04-20T12:00:00Z') },
+            }),
+        ]);
         const r = tier2(s, 'alice', { now, intent: 'factual' });
         if (r.scored.length === 1) {
             expect(r.hit).toBe(true);
@@ -95,16 +97,15 @@ describe('tier2', () => {
         }
     });
 
-    test('zero-scored candidates are filtered out before gap check', () => {
-        const zeroForA = (entry) => entry.id === 'a' ? 0 : 3.0;
-        registerScorer('zeroForA', zeroForA);
-        setScorer('zeroForA');
+    test('identical scores produce zero gap → hit=false', () => {
         const s = state([
             ep('a', 'alice marseille'),
             ep('b', 'alice marseille'),
         ]);
         const r = tier2(s, 'alice marseille', { now, intent: 'factual' });
-        expect(r.scored.find(s2 => s2.entry.id === 'a')).toBeUndefined();
+        expect(r.scored.length).toBe(2);
+        expect(r.scored[0].score).toBeCloseTo(r.scored[1].score, 10);
+        expect(r.hit).toBe(false);
     });
 
     test('working-scope entries are NOT indexed by Tier 2', () => {
@@ -113,5 +114,32 @@ describe('tier2', () => {
         const s = state([working, ep('a', 'alice marseille')]);
         const r = tier2(s, 'alice', { now, intent: 'factual' });
         expect(r.scored.every(s2 => s2.entry.id !== 'w')).toBe(true);
+    });
+
+    test('diagnostic mode exposes per-candidate factor breakdown', () => {
+        const s = state([
+            ep('a', 'alice marseille', 'alice', ['location'], {
+                lifecycle: { importance: 50, maturity: 'validated', createdAt: new Date('2026-04-20T12:00:00Z') },
+            }),
+            ep('b', 'bob paris', 'bob', ['location'], {
+                lifecycle: { importance: 10, maturity: 'draft', createdAt: new Date('2026-04-19T12:00:00Z') },
+            }),
+        ]);
+        const r = tier2(s, 'alice marseille', { now, intent: 'factual', diagnostic: true });
+        expect(r.scored.length).toBeGreaterThanOrEqual(1);
+        const first = r.scored[0];
+        expect(first.factors).toBeDefined();
+        expect(typeof first.factors.bm25).toBe('number');
+        expect(typeof first.factors.importance).toBe('number');
+        expect(typeof first.factors.recencyFactor).toBe('number');
+        expect(typeof first.factors.maturityFactor).toBe('number');
+        expect(typeof first.factors.importanceFactor).toBe('number');
+        expect(typeof first.score).toBe('number');
+        // Score should equal the product of factors
+        const expectedScore = first.factors.bm25
+            * first.factors.importanceFactor
+            * first.factors.recencyFactor
+            * first.factors.maturityFactor;
+        expect(first.score).toBeCloseTo(expectedScore, 10);
     });
 });
