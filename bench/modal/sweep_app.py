@@ -459,17 +459,17 @@ Not in scope for Phase 9 — note only.
 SWEEP_CONFIGS = {
     "tau": {
         "knobs": [
-            # GAP is the primary (elbow-detected) axis — it's the
-            # load-bearing knob per 9.4.8's first full sweep.
-            # CONFIDENCE is held at spec default; the initial 48-point
-            # sweep proved that axis is inert on LoCoMo-10 (every
-            # confidence value 0.5-5.0 produced identical MRR at any
-            # fixed gap). One value keeps the override shape honest
-            # without wasting grid budget.
-            # Extended GAP range brackets the monotonic climb observed
-            # in the first sweep (0.1→1.5 saw +0.042 MRR); we need to
-            # find the peak or confirm saturation.
-            {"name": "TIER2_TAU_GAP", "values": [0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 4.0, 5.0]},
+            # Sledgehammer sweep. Extended sweep showed MRR still climbing
+            # monotonically at gap=5.0 (0.8000). Testing boundary values
+            # to determine: (a) does the curve saturate somewhere reasonable,
+            # or (b) does it keep climbing arbitrarily, implying Tier 2's
+            # gating function is net-negative and should probably be
+            # removed or re-gated as a Phase 11 finding.
+            # gap=5 omitted — already measured at 0.8000 in the extended run.
+            # gap=0.001 included as a boundary sanity check (should produce
+            # near-identical MRR to gap=0.5 since any gap < top-bm25-score
+            # triggers Tier 2 hits on essentially every query).
+            {"name": "TIER2_TAU_GAP", "values": [0.001, 10, 50, 1000]},
             {"name": "TIER2_TAU_CONFIDENCE", "values": [2.0]},
         ],
         "primary_metric": "recallAt5",
