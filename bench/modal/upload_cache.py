@@ -1,51 +1,65 @@
-"""Upload STARmem bench cache files to the Modal Volume.
+"""Verify STARmem bench cache files on the Modal Volume.
 
-Usage:
+The Volume is populated via Modal CLI, NOT from inside a function
+(Modal containers can't see the controller's filesystem). Run these
+commands from the repo root on the host shell:
+
+    modal volume put starmem-bench-data bench/.cache/locomo10.json /locomo10.json
+    modal volume put starmem-bench-data bench/.cache/extractions /extractions
+
+Then run this script to verify what landed:
+
     modal run bench/modal/upload_cache.py
-
-Expects to find:
-    bench/.cache/locomo10.json   → /data/locomo10.json
-    bench/.cache/extractions/    → /data/extractions/
 """
 
 import modal
-import os
 import json
+import os
 
 app = modal.App("starmem-bench-upload")
 volume = modal.Volume.from_name("starmem-bench-data", create_if_missing=True)
 
-@app.function(volumes={"/data": volume}, timeout=300)
-def upload():
-    import shutil
-    repo_root = "/home/opus/.hermes/profiles/hanami/home/SillyTavern/public/scripts/extensions/third-party/SillyTavern-STARmem"
-    src_corpus = os.path.join(repo_root, "bench", ".cache", "locomo10.json")
-    src_cache = os.path.join(repo_root, "bench", ".cache", "extractions")
-    dst_corpus = "/data/locomo10.json"
-    dst_cache = "/data/extractions"
 
-    if not os.path.exists(src_corpus):
-        raise FileNotFoundError(f"Corpus cache not found: {src_corpus}")
-    if not os.path.exists(src_cache):
-        raise FileNotFoundError(f"Extraction cache not found: {src_cache}")
+@app.function(volumes={"/data": volume}, timeout=120)
+def verify():
+    """Inspect the Volume contents and return stats."""
+    corpus_path = "/data/locomo10.json"
+    cache_path = "/data/extractions"
 
-    shutil.copy2(src_corpus, dst_corpus)
-    if os.path.exists(dst_cache):
-        shutil.rmtree(dst_cache)
-    shutil.copytree(src_cache, dst_cache)
+    corpus_exists = os.path.exists(corpus_path)
+    cache_exists = os.path.exists(cache_path)
 
-    # Verify
-    corpus_size = os.path.getsize(dst_corpus)
-    cache_files = sum(1 for _root, _dirs, files in os.walk(dst_cache) for _ in files)
+    corpus_size = os.path.getsize(corpus_path) if corpus_exists else 0
+    cache_file_count = 0
+    cache_size = 0
+    if cache_exists:
+        for root, _dirs, files in os.walk(cache_path):
+            for f in files:
+                cache_file_count += 1
+                try:
+                    cache_size += os.path.getsize(os.path.join(root, f))
+                except OSError:
+                    pass
+
     return {
-        "corpus": dst_corpus,
+        "corpusPath": corpus_path,
+        "corpusExists": corpus_exists,
         "corpusSizeBytes": corpus_size,
-        "cacheDir": dst_cache,
-        "cacheFiles": cache_files,
+        "cacheDir": cache_path,
+        "cacheExists": cache_exists,
+        "cacheFiles": cache_file_count,
+        "cacheSizeBytes": cache_size,
     }
 
 
 @app.local_entrypoint()
 def main():
-    result = upload.remote()
+    result = verify.remote()
     print(json.dumps(result, indent=2))
+    if not result["corpusExists"] or not result["cacheExists"]:
+        print()
+        print("One or both paths missing. Run from repo root on the host:")
+        print("  modal volume put starmem-bench-data bench/.cache/locomo10.json /locomo10.json")
+        print("  modal volume put starmem-bench-data bench/.cache/extractions /extractions")
+        print()
+        print("Then re-run: modal run bench/modal/upload_cache.py")
