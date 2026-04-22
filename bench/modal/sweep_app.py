@@ -508,42 +508,184 @@ GRAPH_BASE_OVERRIDES = {"TIER2_TAU_GAP": 10}
 
 
 def render_graph_report_stub(payload):
-    """Minimal stub renderer — Task 5 replaces with the full port.
+    """9.4.9 — full graph sweep renderer.
 
-    Produces a usable-but-terse Markdown that lists each round's
-    winner so synthetic smoke has something to eyeball. The full
-    renderer with per-round tables, composite elbow, and spec
-    amendment proposal lands in Task 5.
+    Replaces the minimal stub from Task 2. Ports bench/sweeps/graph.js's
+    renderReport() structure, with one intentional deviation: the JS
+    reference used a synthesized Tier-2-only baseline row (via a
+    TIER2_TAU_CONFIDENCE=0.01 forced-exit probe) because 9.4.6 measured
+    the ladder as structurally broken and needed a non-Tier-3 reference
+    point. Post-9.4.8 the baseline is TIER2_TAU_GAP=10 alone
+    (MRR 0.8077 from baseline.json), so the Python renderer compares
+    against that directly — no separate baseline probe required.
+
+    Name kept as `_stub` for backward compat with existing call sites;
+    rename to `render_graph_report` is a trivial follow-up.
     """
     from datetime import datetime
     today = datetime.now().isoformat()[:10]
-    lines = [
-        f"# Graph sweep — {today} (STUB renderer, Task 5 ships full)",
-        "",
-        f"**Corpus:** {payload['corpus_len']} conversations, {payload['qa_count']} QA items",
-        f"**Base overrides:** `{json.dumps(payload['base_overrides'])}`",
-        f"**Rounds:** {len(payload['rounds'])}",
-        "",
-        "## Round winners",
-        "",
-        "| Round | Knob | Values | Winner value | Winner MRR |",
-        "|---|---|---|---|---|",
-    ]
-    for r in payload["rounds"]:
-        values_str = str(r["values"])
-        lines.append(
-            f"| {r['name']} | `{r['knob']}` | {values_str} | "
-            f"`{r['winner']['value']}` | {r['winner']['mrr']:.4f} |"
+    rounds = payload["rounds"]
+    base = payload["base_overrides"]
+    composite = payload["composite_elbow"]["overrides"]
+
+    # Gap=10-alone baseline MRR (from docs/bench/baseline.json measured at
+    # commit 10f7372, validation sweep confirmed at cb30323).
+    BASELINE_GAP10_MRR = 0.8077
+    AMENDMENT_THRESHOLD = 0.02  # per plan decision 5
+
+    # Per-round sections
+    round_sections = []
+    for idx, r in enumerate(rounds):
+        knob = r["knob"]
+        # Build base-overrides string reflecting previous rounds' winners.
+        prev_overrides = dict(base)
+        for prev_idx in range(idx):
+            prev = rounds[prev_idx]
+            prev_overrides[prev["knob"]] = prev["winner"]["value"]
+
+        header = f"| {knob} | n_scored | recallAt5 | precisionAt3 | mrr | p50 | p95 | ΔMRR vs gap=10 |"
+        separator = "|---|---|---|---|---|---|---|---|"
+        rows = []
+        has_coverage_drop = False
+        for p in r["points"]:
+            v = p["overrides"][knob]
+            m = p["metrics"]
+            n_scored = m.get("n_scored", "—")
+            n_total = m.get("n", 1986)
+            r5 = f"{m['recallAtK']['5']:.4f}"
+            p3 = f"{m['precisionAtK']['3']:.4f}"
+            mrr = m["mrr"]
+            mrr_str = f"{mrr:.4f}"
+            lift = mrr - BASELINE_GAP10_MRR
+            lift_str = f"{lift:+.4f}"
+            p50 = f"{p['latencyMs']['p50']:.2f}"
+            p95 = f"{p['latencyMs']['p95']:.2f}"
+            # Coverage: flag if n_scored < 60% of n_total (baseline ~71%).
+            # Below 60% means the winning knob traded coverage for precision,
+            # and the MRR is computed over a smaller, possibly-easier subset.
+            coverage_pct = (n_scored / n_total * 100) if isinstance(n_scored, int) and n_total else None
+            n_scored_cell = f"{n_scored}"
+            if coverage_pct is not None and coverage_pct < 60:
+                n_scored_cell = f"⚠️ {n_scored}"
+                has_coverage_drop = True
+            # Bold the winner row
+            is_winner = v == r["winner"]["value"]
+            v_cell = f"**{v}**" if is_winner else str(v)
+            rows.append(
+                f"| {v_cell} | {n_scored_cell} | {r5} | {p3} | "
+                f"{mrr_str} | {p50} | {p95} | {lift_str} |"
+            )
+        rows_joined = "\n".join(rows)
+
+        winner_mrr = r["winner"]["mrr"]
+        round_lift = winner_mrr - BASELINE_GAP10_MRR
+        amend_flag = " **(clears amendment threshold)**" if round_lift >= AMENDMENT_THRESHOLD else ""
+
+        coverage_warning = ""
+        if has_coverage_drop:
+            coverage_warning = (
+                "\n\n> **⚠️ Coverage warning:** at least one point in this round scored "
+                "under 60% of the QA corpus (baseline coverage is ~71%). MRR gains may "
+                "reflect subset-selection bias — the knob traded coverage for per-query "
+                "precision. Verify against recall@5 on the full corpus before amending."
+            )
+
+        prev_overrides_json = json.dumps(prev_overrides)
+
+        round_sections.append(
+            f"## Round — {knob}\n\n"
+            f"**Base overrides:** `{prev_overrides_json}`\n\n"
+            f"{header}\n{separator}\n{rows_joined}\n\n"
+            f"**Winner:** `{knob} = {r['winner']['value']}` "
+            f"(mrr={winner_mrr:.4f}, ΔMRR vs gap=10 = {round_lift:+.4f})"
+            f"{amend_flag}"
+            f"{coverage_warning}"
         )
-    lines.append("")
-    lines.append("## Composite elbow")
-    lines.append("")
-    lines.append("```json")
-    lines.append(json.dumps(payload["composite_elbow"]["overrides"], indent=2))
-    lines.append("```")
-    lines.append("")
-    lines.append("_Stub output; Task 5 ships `render_graph_report` with per-round tables and spec amendment proposal._")
-    return "\n".join(lines)
+
+    rounds_joined = "\n\n".join(round_sections)
+
+    # Composite elbow: all winners stacked.
+    composite_mrr = rounds[-1]["winner"]["mrr"] if rounds else None
+    composite_lift = (composite_mrr - BASELINE_GAP10_MRR) if composite_mrr is not None else 0.0
+    composite_verdict = (
+        f"clears amendment threshold ({AMENDMENT_THRESHOLD:.2f})"
+        if composite_lift >= AMENDMENT_THRESHOLD
+        else f"below amendment threshold ({AMENDMENT_THRESHOLD:.2f}) — composite is noise-level"
+    )
+
+    # Per-knob spec defaults for the amendment proposal section.
+    # Source: src/core/constants.js, pre-9.4.9 defaults.
+    spec_defaults = {
+        "TIER3_LAMBDA_1": 1.0,
+        "TIER3_LAMBDA_2": 0.3,
+        "TIER3_BEAM_WIDTH": 5,
+        "TIER3_SEEDS_K": 3,
+        "EDGE_CAP_PER_ENTRY": 20,
+        "COOCCURRENCE_WEIGHT": 0.5,
+    }
+    amendment_lines = []
+    for r in rounds:
+        knob = r["knob"]
+        spec = spec_defaults.get(knob)
+        measured = r["winner"]["value"]
+        round_lift = r["winner"]["mrr"] - BASELINE_GAP10_MRR
+        if spec is None:
+            continue
+        if round_lift >= AMENDMENT_THRESHOLD:
+            amendment_lines.append(
+                f"- **`{knob}`**: spec default `{spec}` → measured `{measured}` "
+                f"(ΔMRR {round_lift:+.4f}) — AMEND"
+            )
+        else:
+            amendment_lines.append(
+                f"- `{knob}`: spec default `{spec}` → measured `{measured}` "
+                f"(ΔMRR {round_lift:+.4f}) — below threshold, hold at spec default"
+            )
+    amendment_section = "\n".join(amendment_lines) if amendment_lines else "No amendments proposed."
+
+    composite_json = json.dumps(composite, indent=2)
+    base_overrides_json = json.dumps(base)
+
+    report = f"""# Graph sweep — {today}
+
+**Corpus:** {payload['corpus_len']} conversations, {payload['qa_count']} QA items
+**Primary metric:** mrr
+**Baseline:** `TIER2_TAU_GAP=10` alone (MRR {BASELINE_GAP10_MRR:.4f}, docs/bench/baseline.json::headlineMetrics.ladder post-9.4.8)
+**Base overrides on every point:** `{base_overrides_json}`
+**Rounds:** {len(rounds)} coordinate-descent; each round's winner pins into the next.
+
+{rounds_joined}
+
+## Composite elbow
+
+All round winners stacked as a single override set:
+
+```json
+{composite_json}
+```
+
+**Composite ΔMRR vs gap=10 baseline:** {composite_lift:+.4f} — {composite_verdict}.
+
+## Spec amendment proposal
+
+Per-round amendments (amendment threshold = ΔMRR ≥ {AMENDMENT_THRESHOLD:.2f}):
+
+{amendment_section}
+
+Each AMEND knob ships as a separate commit per plan decision 5 —
+src/core/constants.js default + docs/specs/2026-04-20-starmem-v2-design.md
+§5.1 tuning callout + docs/bench/baseline.json::tuned entry update.
+
+## Notes
+
+- The baseline is gap=10 alone (not spec-default gap=0.5). Graph knobs
+  are only meaningful when Tier 2 gating is disabled, and 9.4.8 showed
+  that's the current production default. ΔMRR measurements here are
+  therefore on top of 9.4.8's +0.0625 MRR amendment.
+- Winner rows are **bolded** in each round's table. The elbow is the
+  MRR-best point in the round, not necessarily the middle of the range.
+"""
+    return report
 
 
 def run_graph_sweep(synthetic: bool = False) -> dict:
