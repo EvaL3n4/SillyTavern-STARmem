@@ -382,3 +382,22 @@
 GATE_VERDICT = STRUCTURAL
 GATE_RECOMMENDATION = "Redesign working-buffer prepend semantics in src/retrieval/workingBuffer.js and src/retrieval/ladder.js. The unconditional score=Infinity prepend systematically pushes all consolidated (episodic) results below a fixed-size working buffer, destroying MRR for any query whose gold has been consolidated. Options: (a) make prepend relevance-aware (score working entries by BM25 instead of Infinity), (b) cap prepend count to a small fraction of k, or (c) redefine benchmark gold to match consolidated facts rather than original turns. Any fix touches spec §5 semantics and requires Phase 11 planning."
 ```
+
+---
+
+## Decision Gate Record
+
+**Date:** 2026-04-22
+**Controller:** Hanami + Eva
+**Verdict:** NARROW_FIX (overriding subagent's STRUCTURAL recommendation)
+
+**Rationale:** Subagent correctly identified the mechanism — `prependWorking` places every working-buffer entry at `score=Infinity` ahead of all scored tier output, and the bench's 9-entry residual floods top-10. But the subagent framed this as a spec-§5 structural issue. The actual root cause is narrower: the seeder at `bench/harness/seeder.js:228-241` only fires `maybeConsolidate('buffer', ...)` per turn, which skips when `workingBuffer.length < WORKING_BUFFER_THRESHOLD (10)`. At end-of-conversation, 0-9 residual turns remain un-drained. In production, SillyTavern's idle timer fires `maybeConsolidate('idle', ...)` within 60s to drain the buffer — the bench never fires idle.
+
+The ladder's `prependWorking` semantics are correct per spec §5 AND match production (users do query a live chat with recent unconsolidated turns). The bug is that the **bench creates an unrealistic post-seed state**: a freeze-frame of a mid-turn conversation rather than a settled chat state. Fix the seed, not the spec.
+
+**Fix:** Add `await maybeConsolidate(chatId, 'idle', opts)` after the seeder's for-loop, fold the returned stats into `consolidationStats`. `maybeConsolidate('idle', ...)` has no buffer-size precondition beyond non-empty (see `src/consolidation/triggers.js:52-59`).
+
+**Target file:** `bench/harness/seeder.js`
+**Estimated lines changed:** ~13 (idle-drain call + stats-fold)
+
+**Deferred (future Phase 11 candidate):** The `prependWorking` score=Infinity semantics may still be worth revisiting — in chat edge cases (e.g. user asks about a topic from 2 days ago but has a fresh unrelated buffer), residual working entries may still bury relevant episodic results. Out of scope for 9.4.7; flagged for potential structural review.
