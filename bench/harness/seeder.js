@@ -241,6 +241,30 @@ export async function seedConversation(conv, opts = {}) {
             }
         }
 
+        // Drain any residual working buffer via idle-reason consolidation.
+        // Per-turn 'buffer' reason only fires at WORKING_BUFFER_THRESHOLD;
+        // 'idle' has no size precondition and matches what production's
+        // idle timer would do within 60s of the last turn.
+        // Loop because consolidate() drains at most BATCH_SIZE (5) per call.
+        // eslint-disable-next-line no-constant-condition
+        while (true) {
+            const drainResult = await maybeConsolidate(chatId, 'idle', {
+                profileId: 'bench',
+                extractorLabel: process.env.STARMEM_BENCH_LIVE_EXTRACTOR === '1'
+                    ? `bench-live:${process.env.STARMEM_BENCH_LLM_MODEL}@v1`
+                    : 'bench-ruleBased@v1',
+                messageOf: (e) => ({ role: 'user', content: e.content }),
+                now,
+            });
+            if (!drainResult || typeof drainResult !== 'object' || ('skipped' in drainResult) || (drainResult.drained ?? 0) === 0) {
+                break;
+            }
+            consolidationStats.added   += drainResult.added   ?? 0;
+            consolidationStats.updated += drainResult.updated ?? 0;
+            consolidationStats.drained += drainResult.drained ?? 0;
+            consolidationStats.batches += 1;
+        }
+
         const state = await loadState(chatId);
 
         const hash = createHash('sha256');

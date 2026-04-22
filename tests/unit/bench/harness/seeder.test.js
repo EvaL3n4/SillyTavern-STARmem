@@ -192,4 +192,30 @@ describe('seedConversation', () => {
         expect(r.consolidationStats.batches).toBeGreaterThanOrEqual(1);
         expect(Array.isArray(r.consolidationStats.factLengths)).toBe(true);
     });
+
+    test('drains residual working buffer via idle consolidation at end-of-conversation', async () => {
+        // 13 turns: one buffer-reason fire at turn 10, then 3 residual turns
+        // that must be drained by the final idle-reason call.
+        const conv = {
+            id: 'drain-test',
+            turns: Array.from({ length: 13 }, (_, i) => ({
+                speaker: i % 2 === 0 ? 'Alice' : 'Bob',
+                text: `Turn ${i} content about topic ${i}.`,
+                sessionId: 1,
+                turnIndex: i,
+            })),
+            qa: [],
+        };
+
+        const r = await seedConversation(conv, {
+            chatIdPrefix: 'drain-test',
+            now: FIXED_NOW,
+            keepBackend: true,
+        });
+        const state = await loadState(r.chatId);
+        expect(state.workingBuffer.length).toBe(0);
+        // One buffer-reason batch at turn 10 + one idle-reason drain at end = 2 batches
+        expect(r.consolidationStats.batches).toBeGreaterThanOrEqual(2);
+        cleanup();
+    });
 });
