@@ -1260,6 +1260,18 @@ Use `memory` or `hindsight_retain` to record:
 
 ---
 
+**Task 6 — full graph coordinate descent (6 rounds) — complete. Four findings:**
+
+1. **`TIER3_LAMBDA_1` / `TIER3_LAMBDA_2` inert under live Gemma — third-time reproduction.** Both rounds produce identical metrics across 5 values each (MRR 0.8057 flat to 4 decimals, ΔMRR -0.0020 vs gap=10 baseline). 9.4.9 framed this as edge-landscape homogeneity; live extraction did not change it. Evidence the inertness is corpus-structural, not extractor-dependent. **Hold both at spec.** Candidate for removal from future sweeps.
+
+2. **`TIER3_BEAM_WIDTH=3` borderline signal reproduces.** +0.0055 absolute MRR on clean coverage (n_scored=1263, 0.011pp drop — well inside the 5pp guard). Below the 0.02 amendment threshold so it doesn't land, but it's the *only* non-coverage-bias positive signal in the entire graph sweep. Flag for Phase 11 observation: the one knob where structure still matters after gating.
+
+3. **Coverage-bias trap reproduces on three knobs — third-time.** `TIER3_SEEDS_K=1` (MRR +0.1151 at n_scored=995, 50.1% coverage), `EDGE_CAP_PER_ENTRY=10` (MRR +0.1300 at n_scored=968, 48.7%), `COOCCURRENCE_WEIGHT=0.25` (MRR +0.1300 at n_scored=968, 48.7%). All three cleared the ΔMRR ≥ 0.02 threshold; renderer stamped ⚠️ and issued HOLD (subset-selection bias) on every one. Identical magnitudes to 9.4.9 under rule-based, within noise. **Zero amendments shipped** — detecting-vacuous-metrics skill's coverage guard did its job.
+
+4. **Strong-signal null for Phase 11.** Live Gemma changed *none* of the graph-sweep findings from 9.4.9. λ inertness, beam borderline, and three coverage-bias traps all reproduce with identical signatures. Reading: the graph tier's elbow surface is determined by corpus structure and retrieval-cone geometry, not extractor quality. Phase 11's "Tier 2 gating demolition / graph tier needs different instrumentation" candidate just got firmer evidence: changing what facts get extracted doesn't move the elbow on LoCoMo's graph structure. Instrumentation (coverage-weighted MRR) will, per the inherited v2.1 scope.
+
+---
+
 ## Task 5/6 observations (captured 2026-04-22)
 
 **Hops smoke (pre-flight for the SWEEP_CONFIGS restore commit):**
@@ -1299,7 +1311,7 @@ Phase 11 candidates identified during 9.5 dispatch. Task 11's retro expands thes
 - [x] Task 3: Seeder env-gated switch + tests green; all prior tests still green. *(Pre-shipped in 9.4.x.)*
 - [x] Task 4: Smoke writeup confirms Modal warm-cache replay. *(Completed 2026-04-22; run-point on full LoCoMo returned n_scored=1277, cache intact at 1182 entries, `--local-out` gap filed for Phase 11.)*
 - [x] Task 5: τ sweep live writeup produced, flat/elbow verdict recorded. *(48 points, 2026-04-22T19-06-35Z. `TIER2_TAU_CONFIDENCE` inert re-confirmed, `TIER2_TAU_GAP=10` plateau reproduces. Detector false-positive filed for Phase 11.)*
-- [ ] Task 6: Graph sweep (5 rounds) live writeup, per-round verdicts.
+- [x] Task 6: Graph sweep (6 rounds) live writeup, per-round verdicts. *(27 points across 6 rounds, 2026-04-22T19-35-03Z. λ1/λ2 inert third-time repro. beam=3 borderline clean. seeds_k/edge_cap/cooccurrence all coverage-bias HOLD'd. Zero amendments shipped — coverage guard did its job.)*
 - [ ] Task 7: Consolidation sweep + EXTRACT_MAX_TOKENS observation.
 - [ ] Task 8: BM25 sweep with tags-populated-rate reported.
 - [ ] Task 9: Baseline comparison with structural invariant verdict.
