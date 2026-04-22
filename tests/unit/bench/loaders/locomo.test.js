@@ -45,6 +45,39 @@ describe('loadLocomo', () => {
         expect(CANONICAL_URL).toContain('snap-research/locomo');
     });
 
+    test('9.4.6: evidenceTurns is non-empty for >95% of QAs (D<day>:<turn> fix)', () => {
+        // Pre-9.4.6: parseEvidence regex matched S<session>:T<index> but
+        // actual LoCoMo v10 uses D<day>:<turn>. evidenceTurns was empty on
+        // all 1986 QAs, which made the bench unscorable under the 9.4.6
+        // evidence-turn matcher. This test locks the fix.
+        let total = 0;
+        let withEv = 0;
+        for (const c of corpus) {
+            for (const qa of c.qa) {
+                total++;
+                if (qa.evidenceTurns.length > 0) withEv++;
+            }
+        }
+        expect(total).toBeGreaterThan(0);
+        expect(withEv / total).toBeGreaterThan(0.95);
+    });
+
+    test('9.4.6: evidenceTurns are integer indices into turns[] (no vacuous empty lists)', () => {
+        // Stronger than the original "evidence turns exist" test, which
+        // was vacuously true when evidenceTurns was []. Assert at least
+        // one QA has non-empty evidenceTurns, and every index is in bounds.
+        const allQa = corpus.flatMap(c => c.qa.map(q => ({ conv: c, qa: q })));
+        const withEv = allQa.filter(({ qa }) => qa.evidenceTurns.length > 0);
+        expect(withEv.length).toBeGreaterThan(0);
+        for (const { conv, qa } of withEv) {
+            for (const ev of qa.evidenceTurns) {
+                expect(Number.isInteger(ev)).toBe(true);
+                expect(ev).toBeGreaterThanOrEqual(0);
+                expect(ev).toBeLessThan(conv.turns.length);
+            }
+        }
+    });
+
     test('second call hits the cache (fast, no network)', async () => {
         const t0 = Date.now();
         const again = await loadLocomo({ maxConversations: 2, offline: true });

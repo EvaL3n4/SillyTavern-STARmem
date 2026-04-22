@@ -122,9 +122,20 @@ function normalizeLocomo(json) {
                     sessionId,
                     turnIndex,
                 });
-                // Map LoCoMo evidence key "D<sampleOrd>:S<session>:T<index>"
-                // to flat turnIndex. D is constant per-sample so we ignore it.
+                // Two evidence-key shapes observed in LoCoMo:
+                //   "S<session>:T<index>" — legacy placeholder, never observed
+                //     in the actual v10 cache but kept for forward compat.
+                //   "D<day>:<turn>"       — actual v10 shape. <day> equals
+                //     <session> (sessions are named session_<n> and turns
+                //     carry dia_id="D<n>:<m>" where <n>===sessionId).
+                //     <turn> is 1-indexed within the session.
                 turnByEvidenceKey.set(`S${sessionId}:T${i}`, turnIndex);
+                turnByEvidenceKey.set(`D${sessionId}:${i + 1}`, turnIndex);
+                // Also index by dia_id verbatim if present — belt-and-suspenders
+                // in case any future sample uses a different D<day> mapping.
+                if (typeof t.dia_id === 'string') {
+                    turnByEvidenceKey.set(t.dia_id, turnIndex);
+                }
             }
         }
 
@@ -147,11 +158,34 @@ function parseEvidence(evidence, turnByEvidenceKey) {
     if (!Array.isArray(evidence)) return [];
     const out = [];
     for (const ref of evidence) {
-        const m = String(ref).match(/S(\d+):T(\d+)/);
-        if (!m) continue;
-        const key = `S${m[1]}:T${m[2]}`;
-        const idx = turnByEvidenceKey.get(key);
-        if (idx != null) out.push(idx);
+        const s = String(ref);
+
+        // Try direct lookup first (handles D<day>:<turn> and any raw dia_id).
+        const direct = turnByEvidenceKey.get(s);
+        if (direct != null) {
+            out.push(direct);
+            continue;
+        }
+
+        // Legacy "S<session>:T<index>" shape.
+        const mLegacy = s.match(/S(\d+):T(\d+)/);
+        if (mLegacy) {
+            const idx = turnByEvidenceKey.get(`S${mLegacy[1]}:T${mLegacy[2]}`);
+            if (idx != null) out.push(idx);
+            continue;
+        }
+
+        // "D<day>:<turn>" shape (LoCoMo v10 actual).
+        const mDay = s.match(/^D(\d+):(\d+)$/);
+        if (mDay) {
+            const idx = turnByEvidenceKey.get(`D${mDay[1]}:${mDay[2]}`);
+            if (idx != null) out.push(idx);
+            continue;
+        }
+
+        // Unmatched refs are silently dropped — same behavior as before,
+        // kept for tolerance of malformed entries like the bare "D" observed
+        // in ~4 items across the v10 corpus.
     }
     return out;
 }
