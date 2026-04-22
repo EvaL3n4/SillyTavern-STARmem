@@ -49,7 +49,7 @@ def hello():
     image=image,
     volumes={"/data": volume},
     secrets=[env_secret],
-    timeout=600,
+    timeout=1500,
     memory=4096,
 )
 def run_point(overrides_json: str) -> str:
@@ -103,6 +103,15 @@ def run_point(overrides_json: str) -> str:
     )
     if result.returncode != 0:
         import json as _json
+        # Commit volume even on error — partial cache writes from live
+        # extractions are still valuable (survive to next run) even if
+        # this point crashed before the Node subprocess completed
+        # metrics computation. Guard against commit failures so an
+        # error return isn't masked by a commit exception.
+        try:
+            volume.commit()
+        except Exception:
+            pass
         return _json.dumps({
             "error": "node subprocess failed",
             "returncode": result.returncode,
@@ -110,6 +119,15 @@ def run_point(overrides_json: str) -> str:
             "stdout_tail": result.stdout[-2000:] if result.stdout else "",
             "diagnostics": diag,
         }, indent=2)
+    # 9.5 (2026-04-22): commit volume per-point so live extractions
+    # written to /data/extractions survive container timeouts.
+    # Previously commit only happened at run_sweep exit, which meant
+    # a run_point timeout (e.g. 600s cap on BATCH_SIZE round with
+    # ~500 live Nano-GPT calls @ ~1.3s/call) discarded every cached
+    # extraction. Fix: per-point commit so a re-run picks up the
+    # warm partial cache from the timed-out run. Minimal cost —
+    # commit is fast when there are no pending writes.
+    volume.commit()
     return result.stdout.strip()
 
 
