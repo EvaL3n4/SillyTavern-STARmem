@@ -495,7 +495,9 @@ def run_sweep(sweep_name: str, synthetic: bool = False) -> str:
 
     Args:
         sweep_name: 'tau' or 'bm25'.
-        synthetic: If True, use a tiny 2-conversation corpus for smoke testing.
+        synthetic: If True, use a tiny 2-point grid for smoke testing.
+            The corpus is always full LoCoMo-10; `synthetic` only shrinks
+            the knob grid, not the data.
 
     Returns:
         Markdown report string.
@@ -554,7 +556,11 @@ def run_sweep(sweep_name: str, synthetic: bool = False) -> str:
     }
 
     # Compute corpus stats (Modal containers already ran the full corpus)
-    corpus_len = 10 if not synthetic else 2
+    # Corpus is always the full LoCoMo-10 (_modal-point.js calls
+    # loadLocomo({ offline: true }) with no maxConversations). The
+    # `synthetic` flag shrinks the GRID, not the corpus — so every
+    # point's metrics are over 1986 QAs regardless of synthetic mode.
+    corpus_len = 10
     qa_count = points[0]["runCount"] if points else 0
 
     if sweep_name == "bm25":
