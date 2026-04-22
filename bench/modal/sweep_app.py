@@ -264,23 +264,26 @@ def render_tau_report(result, corpus_len, qa_count):
         if first_point else "No points recorded."
     )
 
+    rows_joined = "\n".join(rows)
+    heatmap_rows_joined = "\n".join(heatmap_rows)
+
     report = f"""# τ sweep — {today}
 
-|**Corpus:** {corpus_len} conversations, {qa_count} QA items
-|**Primary metric:** {primary_metric}
+**Corpus:** {corpus_len} conversations, {qa_count} QA items
+**Primary metric:** {primary_metric}
 
 ## Points
 
 {header}
 {separator}
-{'\n'.join(rows)}
+{rows_joined}
 
 ## Heatmap (primary = {primary_metric})
 
                TIER2_TAU_GAP
 {gap_header}
 TIER2_TAU_CONFIDENCE
-{'\n'.join(heatmap_rows)}
+{heatmap_rows_joined}
 
 ## Elbow
 
@@ -389,10 +392,13 @@ def render_bm25_report(result, corpus_len, qa_count, tags_stats):
         if first_point else "No points recorded."
     )
 
+    rows_joined = "\n".join(rows)
+    heatmap_rows_joined = "\n".join(heatmap_rows)
+
     report = f"""# BM25 boost sweep — {today}
 
-|**Corpus:** {corpus_len} conversations, {qa_count} QA items
-|**Primary metric:** {primary_metric}
+**Corpus:** {corpus_len} conversations, {qa_count} QA items
+**Primary metric:** {primary_metric}
 {tags_line}
 {tags_interpretation}
 
@@ -400,14 +406,14 @@ def render_bm25_report(result, corpus_len, qa_count, tags_stats):
 
 {header}
 {separator}
-{'\n'.join(rows)}
+{rows_joined}
 
 ## Heatmap (primary = {primary_metric})
 
               SUBJECT_BOOST
 {subj_header}
 TAG_BOOST
-{'\n'.join(heatmap_rows)}
+{heatmap_rows_joined}
 
 ## Elbow
 
