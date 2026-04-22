@@ -7,10 +7,10 @@
 
 | retriever | recallAt1 | recallAt3 | recallAt5 | recallAt10 | precisionAt1 | precisionAt3 | precisionAt5 | precisionAt10 | mrr | p50 (ms) | p95 (ms) |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| ladder | 0.0007 | 0.0035 | 0.0056 | 0.6074 | 0.0007 | 0.0012 | 0.0011 | 0.0877 | 0.1118 | 1.89 | 5.08 |
-| bm25only | 0.3128 | 0.6402 | 0.7932 | 1.0000 | 0.5445 | 0.3902 | 0.2914 | 0.1847 | 0.6909 | 5.84 | 6.96 |
-| recency | 0.0000 | 0.3718 | 0.5692 | 1.0000 | 0.0000 | 0.1436 | 0.1354 | 0.1138 | 0.2703 | 0.08 | 0.29 |
-| random | 0.1032 | 0.3175 | 0.5040 | 1.0000 | 0.1032 | 0.1085 | 0.1063 | 0.1063 | 0.3028 | 0.04 | 0.24 |
+| ladder | 0.4495 | 0.7345 | 0.8553 | 1.0000 | 0.6140 | 0.3600 | 0.2603 | 0.1625 | 0.7452 | 1.85 | 4.16 |
+| bm25only | 0.3124 | 0.6374 | 0.7912 | 1.0000 | 0.5434 | 0.3880 | 0.2904 | 0.1844 | 0.6898 | 6.01 | 7.34 |
+| recency | 0.0000 | 0.3718 | 0.5692 | 1.0000 | 0.0000 | 0.1436 | 0.1354 | 0.1138 | 0.2703 | 0.08 | 0.28 |
+| random | 0.0755 | 0.2217 | 0.4717 | 1.0000 | 0.0755 | 0.0755 | 0.1000 | 0.1057 | 0.2690 | 0.04 | 0.24 |
 
 ## Per-category breakdown
 
@@ -18,50 +18,50 @@
 
 | retriever | recallAt5 | mrr | p50 |
 |---|---|---|---|
-| ladder | 0.0041 | 0.1122 | 1.95 |
-| bm25only | 0.8209 | 0.7592 | 5.89 |
+| ladder | 0.8639 | 0.7900 | 2.01 |
+| bm25only | 0.8170 | 0.7589 | 5.88 |
 | recency | 0.6154 | 0.2874 | 0.08 |
-| random | 0.5000 | 0.3156 | 0.04 |
+| random | 0.7059 | 0.3102 | 0.04 |
 
 ### Category: 3 (96 items)
 
 | retriever | recallAt5 | mrr | p50 |
 |---|---|---|---|
-| ladder | 0.0222 | 0.1088 | 2.17 |
-| bm25only | 0.6820 | 0.5974 | 5.91 |
+| ladder | 0.7481 | 0.5876 | 2.29 |
+| bm25only | 0.6952 | 0.5961 | 6.00 |
 | recency | 0.0000 | 0.1263 | 0.08 |
-| random | 0.3333 | 0.3155 | 0.04 |
+| random | 0.6250 | 0.2326 | 0.05 |
 
 ### Category: 1 (282 items)
 
 | retriever | recallAt5 | mrr | p50 |
 |---|---|---|---|
-| ladder | 0.0053 | 0.1044 | 2.12 |
-| bm25only | 0.7058 | 0.5788 | 5.74 |
+| ladder | 0.7656 | 0.6409 | 2.20 |
+| bm25only | 0.7000 | 0.5781 | 5.69 |
 | recency | 0.6875 | 0.2947 | 0.08 |
-| random | 0.5851 | 0.3071 | 0.04 |
+| random | 0.4464 | 0.2624 | 0.04 |
 
 ### Category: 4 (841 items)
 
 | retriever | recallAt5 | mrr | p50 |
 |---|---|---|---|
-| ladder | 0.0065 | 0.1136 | 2.08 |
-| bm25only | 0.8154 | 0.7002 | 6.16 |
+| ladder | 0.8714 | 0.7627 | 2.11 |
+| bm25only | 0.8125 | 0.6994 | 5.99 |
 | recency | 0.4167 | 0.2441 | 0.08 |
-| random | 0.4634 | 0.2980 | 0.04 |
+| random | 0.3684 | 0.2343 | 0.04 |
 
 ### Category: 5 (446 items)
 
 | retriever | recallAt5 | mrr | p50 |
 |---|---|---|---|
-| ladder | 0.0031 | 0.1126 | 2.01 |
-| bm25only | 0.7870 | 0.6891 | 5.83 |
+| ladder | 0.8841 | 0.7593 | 2.04 |
+| bm25only | 0.7882 | 0.6866 | 5.94 |
 | recency | 0.4000 | 0.2186 | 0.08 |
-| random | 0.4375 | 0.2848 | 0.04 |
+| random | 0.4333 | 0.3422 | 0.04 |
 
 ## Interpretation
 
-**Mixed signal:** ladder outperforms random, but the ordering among bm25only/recency is unexpected. Review corpus size and extraction quality before drawing conclusions.
+**Proceed:** ladder > bm25only > recency > random. The ladder is adding value over all baselines. Scorer chain and graph expansion are earning their keep.
 
 ## Structural notes
 
@@ -96,6 +96,6 @@
   },
   "scorerId": "default",
   "nodeVersion": "v25.9.0",
-  "gitSha": "0b5e823940ad6d0aba50a21e6c1b4c09664f3f63"
+  "gitSha": "b659d9137e8abc431941fa3d91ab78083509f9a5"
 }
 ```
