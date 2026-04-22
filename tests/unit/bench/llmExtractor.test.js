@@ -33,9 +33,9 @@ describe('makeLLMExtractor', () => {
         });
 
         const ext = makeLLMExtractor({
-            url: 'http://litellm:8686/v1',
+            url: 'https://nano-gpt.com/api/v1',
             apiKey: 'sk-test',
-            model: 'gemma4-26b-a4b',
+            model: 'google/gemma-4-26b-a4b-it',
         });
 
         const result = await ext('profile-id', [
@@ -45,7 +45,7 @@ describe('makeLLMExtractor', () => {
 
         expect(result).toBe('{"entries":[]}');
         expect(global.fetch).toHaveBeenCalledWith(
-            'http://litellm:8686/v1/chat/completions',
+            'https://nano-gpt.com/api/v1/chat/completions',
             expect.objectContaining({
                 method: 'POST',
                 headers: expect.objectContaining({
@@ -57,7 +57,7 @@ describe('makeLLMExtractor', () => {
         );
 
         const body = JSON.parse(/** @type {any} */ (global.fetch).mock.calls[0][1].body);
-        expect(body.model).toBe('gemma4-26b-a4b');
+        expect(body.model).toBe('google/gemma-4-26b-a4b-it');
         expect(body.max_tokens).toBe(2048);
         expect(body.temperature).toBe(0);
         expect(body.messages).toHaveLength(2);
