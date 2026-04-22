@@ -49,7 +49,10 @@ def run_point(overrides_json: str) -> str:
     import os
     import subprocess
 
-    # Symlink Volume cache to where the repo expects it
+    # Symlink Volume cache to where the repo expects it.
+    # NOTE: add_local_dir may or may not have copied bench/.cache/ into
+    # /repo (depends on gitignore handling). If it did, the existing
+    # guards prevent overwriting. If it didn't, we create the symlinks.
     repo_cache = "/repo/bench/.cache"
     os.makedirs(repo_cache, exist_ok=True)
     corpus_link = os.path.join(repo_cache, "locomo10.json")
@@ -59,17 +62,39 @@ def run_point(overrides_json: str) -> str:
     if not os.path.exists(cache_link):
         os.symlink("/data/extractions", cache_link)
 
+    # Diagnostic: collect filesystem state before running Node.
+    diag = {
+        "repo_cache_contents": sorted(os.listdir(repo_cache)) if os.path.isdir(repo_cache) else None,
+        "corpus_link_target": os.readlink(corpus_link) if os.path.islink(corpus_link) else "not-a-symlink",
+        "corpus_link_size": os.path.getsize(corpus_link) if os.path.exists(corpus_link) else 0,
+        "cache_link_target": os.readlink(cache_link) if os.path.islink(cache_link) else "not-a-symlink",
+        "cache_link_isdir": os.path.isdir(cache_link),
+        "modal_point_js_exists": os.path.exists("/repo/bench/sweeps/_modal-point.js"),
+        "runner_js_exists": os.path.exists("/repo/bench/runner.js"),
+        "node_modules_exists": os.path.exists("/repo/node_modules"),
+    }
+
     env = os.environ.copy()
     env["STARMEM_OVERRIDES"] = overrides_json
 
+    # check=False — we want to surface stderr on non-zero exit, not raise.
     result = subprocess.run(
         ["node", "bench/sweeps/_modal-point.js"],
         cwd="/repo",
         capture_output=True,
         text=True,
-        check=True,
+        check=False,
         env=env,
     )
+    if result.returncode != 0:
+        import json as _json
+        return _json.dumps({
+            "error": "node subprocess failed",
+            "returncode": result.returncode,
+            "stderr": result.stderr,
+            "stdout_tail": result.stdout[-2000:] if result.stdout else "",
+            "diagnostics": diag,
+        }, indent=2)
     return result.stdout.strip()
 
 
