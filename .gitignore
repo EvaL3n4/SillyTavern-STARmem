@@ -35,3 +35,13 @@ npm-debug.log*
 scratch/
 bench/.cache/
 .env.bench
+
+# Python bytecode (bench/modal/ uses local Python for renderers)
+__pycache__/
+*.pyc
+
+# Bench runtime artifacts — authoritative numbers live in
+# docs/bench/baseline.json + docs/bench/sweeps/*.md; raw JSONL traces
+# and Modal --local-out mirrors are ephemeral. The Modal Volume
+# (/data/runs/) holds durable copies.
+docs/bench/runs/
