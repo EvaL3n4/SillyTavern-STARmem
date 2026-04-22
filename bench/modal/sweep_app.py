@@ -127,14 +127,17 @@ def _detect_elbow(points, knobs, primary_metric):
     ELBOW_RATIO = 0.1
 
     def accessor(m):
+        # NOTE: JSON parses integer-looking keys as strings, so recallAtK/
+        # precisionAtK come back keyed by "1", "3", "5", "10" — not ints.
+        # All lookups in this module must use string keys.
         if primary_metric == "recallAt5":
-            return m["recallAtK"][5]
+            return m["recallAtK"]["5"]
         if primary_metric == "recallAt10":
-            return m["recallAtK"][10]
+            return m["recallAtK"]["10"]
         if primary_metric == "precisionAt3":
-            return m["precisionAtK"][3]
+            return m["precisionAtK"]["3"]
         if primary_metric == "precisionAt5":
-            return m["precisionAtK"][5]
+            return m["precisionAtK"]["5"]
         return m["mrr"]
 
     primary_knob = knobs[0]
@@ -215,8 +218,8 @@ def render_tau_report(result, corpus_len, qa_count):
     for p in result["points"]:
         tc = p["overrides"]["TIER2_TAU_CONFIDENCE"]
         tg = p["overrides"]["TIER2_TAU_GAP"]
-        r5 = f"{p['metrics']['recallAtK'][5]:.4f}"
-        p3 = f"{p['metrics']['precisionAtK'][3]:.4f}"
+        r5 = f"{p['metrics']['recallAtK']['5']:.4f}"
+        p3 = f"{p['metrics']['precisionAtK']['3']:.4f}"
         mrr = f"{p['metrics']['mrr']:.4f}"
         p50 = f"{p['latencyMs']['p50']:.2f}"
         p95 = f"{p['latencyMs']['p95']:.2f}"
@@ -235,7 +238,7 @@ def render_tau_report(result, corpus_len, qa_count):
                  if p["overrides"]["TIER2_TAU_CONFIDENCE"] == tc and p["overrides"]["TIER2_TAU_GAP"] == tg),
                 None,
             )
-            val = f"{point['metrics']['recallAtK'][5]:.2f}" if point else "N/A"
+            val = f"{point['metrics']['recallAtK']['5']:.2f}" if point else "N/A"
             cells.append(val.rjust(5))
         heatmap_rows.append(f"  {str(tc).ljust(4)}   {'  '.join(cells)}")
 
@@ -320,8 +323,8 @@ def render_bm25_report(result, corpus_len, qa_count, tags_stats):
     for p in result["points"]:
         tb = p["overrides"]["TAG_BOOST"]
         sb = p["overrides"]["SUBJECT_BOOST"]
-        r5 = f"{p['metrics']['recallAtK'][5]:.4f}"
-        p3 = f"{p['metrics']['precisionAtK'][3]:.4f}"
+        r5 = f"{p['metrics']['recallAtK']['5']:.4f}"
+        p3 = f"{p['metrics']['precisionAtK']['3']:.4f}"
         mrr = f"{p['metrics']['mrr']:.4f}"
         p50 = f"{p['latencyMs']['p50']:.2f}"
         p95 = f"{p['latencyMs']['p95']:.2f}"
