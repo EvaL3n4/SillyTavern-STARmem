@@ -925,15 +925,15 @@ def run_graph_sweep(synthetic: bool = False) -> dict:
 # flagged flat and tuning defers to 9.5 live extraction.
 CONSOLIDATION_ROUNDS = [
     {"name": "dedup",       "knob": "DEDUP_JACCARD_THRESHOLD", "values": [0.5, 0.6, 0.7, 0.8, 0.9]},
-    # 9.4.9 mid-flight revision: BATCH_SIZE round dropped from scope.
-    # The warm extraction cache is keyed by (model, messages, maxTokens);
-    # changing BATCH_SIZE changes batch composition → new cache keys →
-    # systematic misses → live LLM fallback → 600s function timeout.
-    # Observed during synthetic smoke (2026-04-22): consolidation
-    # --synthetic hit FunctionTimeoutError on the BATCH_SIZE round.
-    # Filed as 9.5 candidate — live extraction regenerates cache on
-    # demand so BATCH_SIZE sweep becomes tractable there.
-    # {"name": "batch_size", "knob": "BATCH_SIZE", "values": [3, 5, 10, 15]},
+    # 9.5 (2026-04-22): BATCH_SIZE round re-enabled. 9.4.9 dropped it
+    # because under rule-based extraction the warm cache can't absorb
+    # cache-key changes (Pattern 2 per sweep-cache-invalidation-audit:
+    # BATCH_SIZE reshapes `messages` → new sha256 → miss → 600s timeout).
+    # Under 9.5 live extraction, cache misses regenerate on demand via
+    # Nano-GPT (no Modal timeout; expected ~500 live calls per 9.4.9
+    # budget estimate, ~$0.25 at current Gemma rates). Grid from the
+    # 9.4.9 retro's deferred handoff.
+    {"name": "batch_size", "knob": "BATCH_SIZE", "values": [8, 16, 24, 32, 48]},
 ]
 
 # Threshold for Branch C "flat surface" detection. Matches the ΔMRR
@@ -1116,11 +1116,14 @@ def render_consolidation_report_stub(payload):
 
 - Branch C is pre-registered per 9.4.6 consolidation retro finding: rule-based
   seeder may under-stress dedup/consolidation machinery. Rounds with MRR range
-  <{CONSOLIDATION_FLAT_MRR_THRESHOLD} across all points defer tuning to 9.5 live extraction.
-- BATCH_SIZE round was dropped mid-flight — changing BATCH_SIZE invalidates the
-  warm extraction cache (cache key includes batch composition), causing Modal
-  function timeouts on live-LLM fallback. Filed as 9.5 candidate where live
-  extraction regenerates cache on demand. See plan decision 3 revision.
+  <{CONSOLIDATION_FLAT_MRR_THRESHOLD} across all points flag as flat. Under
+  9.5 live extraction the finding reproduced (fourth-time): Gemma 4 26B A4B
+  doesn't produce enough near-duplicates on LoCoMo to stress dedup either.
+  Interpretation: dedup flatness is corpus-structural (LoCoMo's fact
+  distribution), not extractor-dependent.
+- BATCH_SIZE round re-enabled in 9.5. Under live extraction, cache misses from
+  batch-composition changes trigger live Nano-GPT calls (no Modal timeout, per
+  Pattern 2 handoff in sweep-cache-invalidation-audit).
 - Band rule reminder: updateRate < 0.1 = too strict (dedup rarely fires),
   updateRate > 0.5 = too lax (over-merges distinct facts). Target [0.2, 0.4]
   closest to 0.3.
