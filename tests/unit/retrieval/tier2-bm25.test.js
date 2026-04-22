@@ -1,5 +1,6 @@
 import { tier2 } from '../../../src/retrieval/tier2-bm25.js';
 import { _resetScorerForTests, registerScorer, setScorer } from '../../../src/retrieval/scorer.js';
+import { setConstantOverrides } from '../../../src/core/constants.js';
 import { createEmptyState } from '../../../src/core/schema.js';
 import { createEntry } from '../../../src/memory/entry.js';
 
@@ -44,17 +45,26 @@ describe('tier2', () => {
     });
 
     test('hit=true when top score ≥ τ_conf AND gap ≥ τ_gap', () => {
-        const widerScorer = (entry) => entry.id === 'a' ? 10.0 : 0.5;
-        registerScorer('wide', widerScorer);
-        setScorer('wide');
+        // 9.4.8 amended the production τ_gap default to 10 (effectively
+        // disables the shortcut on LoCoMo-scale BM25 scores). This test
+        // exercises the gating *mechanism* — override back to 0.5 so a
+        // realistic score gap (9.5) clears it.
+        const restore = setConstantOverrides({ TIER2_TAU_GAP: 0.5 });
+        try {
+            const widerScorer = (entry) => entry.id === 'a' ? 10.0 : 0.5;
+            registerScorer('wide', widerScorer);
+            setScorer('wide');
 
-        const s = state([
-            ep('a', 'alice marseille', 'alice', ['location']),
-            ep('b', 'unrelated content'),
-        ]);
-        const r = tier2(s, 'alice', { now, intent: 'factual' });
-        expect(r.hit).toBe(true);
-        expect(r.scored[0].entry.id).toBe('a');
+            const s = state([
+                ep('a', 'alice marseille', 'alice', ['location']),
+                ep('b', 'unrelated content'),
+            ]);
+            const r = tier2(s, 'alice', { now, intent: 'factual' });
+            expect(r.hit).toBe(true);
+            expect(r.scored[0].entry.id).toBe('a');
+        } finally {
+            restore();
+        }
     });
 
     test('hit=false when top score below τ_confidence', () => {
@@ -84,16 +94,24 @@ describe('tier2', () => {
     });
 
     test('single-result hit: gap computed against implicit 0', () => {
-        const s = state([
-            ep('a', 'alice marseille', null, [], {
-                lifecycle: { importance: 100, maturity: 'core', createdAt: new Date('2026-04-20T12:00:00Z') },
-            }),
-        ]);
-        const r = tier2(s, 'alice', { now, intent: 'factual' });
-        if (r.scored.length === 1) {
-            expect(r.hit).toBe(true);
-        } else {
-            expect(r.hit).toBe(false);
+        // 9.4.8: override τ_gap so the single-result gap (score − 0) clears
+        // even at modest BM25 magnitudes. Tests the "implicit second score
+        // is 0" semantic, not the production default.
+        const restore = setConstantOverrides({ TIER2_TAU_GAP: 0.5 });
+        try {
+            const s = state([
+                ep('a', 'alice marseille', null, [], {
+                    lifecycle: { importance: 100, maturity: 'core', createdAt: new Date('2026-04-20T12:00:00Z') },
+                }),
+            ]);
+            const r = tier2(s, 'alice', { now, intent: 'factual' });
+            if (r.scored.length === 1) {
+                expect(r.hit).toBe(true);
+            } else {
+                expect(r.hit).toBe(false);
+            }
+        } finally {
+            restore();
         }
     });
 

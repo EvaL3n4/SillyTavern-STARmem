@@ -65,7 +65,12 @@ describe('constants', () => {
 
     test('RETRIEVAL Tier 2 exit thresholds', () => {
         expect(RETRIEVAL.TIER2_TAU_CONFIDENCE).toBe(2.0);
-        expect(RETRIEVAL.TIER2_TAU_GAP).toBe(0.5);
+        // 9.4.8 amended 0.5 → 10. See docs/plans/phase-9-4-8-retro.md and
+        // docs/bench/baseline.json::tuned.TIER2_TAU_GAP. The knob effectively
+        // acts as a boolean on LoCoMo: gap ≤ ~5 engages Tier 2 gating (MRR
+        // 0.73–0.77), gap ≥ 10 disables it (MRR plateau at 0.8077 through
+        // gap=1000). Phase 11 demolition candidate.
+        expect(RETRIEVAL.TIER2_TAU_GAP).toBe(10);
     });
 
     test('RETRIEVAL Phase 5 graph/Tier 3 constants', () => {

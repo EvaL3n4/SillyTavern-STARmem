@@ -74,10 +74,10 @@ export const RETRIEVAL = {
     SUBJECT_BOOST: 2,
     /** Integer replication factor for tag tokens in the BM25 document. */
     TAG_BOOST: 2,
-    /** Tier 2 exit: minimum top score required to shortcut the ladder. Spec §5; opening value, Phase 9 tunes. */
+    /** Tier 2 exit: minimum top score required to shortcut the ladder. Spec §5; 9.4.8 sweep: inert on LoCoMo (identical MRR across 0.5–5.0). */
     TIER2_TAU_CONFIDENCE: 2.0,
-    /** Tier 2 exit: minimum (top − #2) score gap required to shortcut. Spec §5; opening value, Phase 9 tunes. */
-    TIER2_TAU_GAP: 0.5,
+    /** Tier 2 exit: minimum (top − #2) score gap required to shortcut. Spec §5; 9.4.8 amended 0.5 → 10 (+0.0625 MRR). Effectively disables Tier 2 gating in favor of always-Tier-3; Phase 11 demolition candidate. */
+    TIER2_TAU_GAP: 10,
     /** Tier 3 seeds drawn from Tier 2's top-K. Spec §5.1. */
     TIER3_SEEDS_K: 3,
     /** Tier 3 beam width. Not in spec; opening value, Phase 9 tunes. */

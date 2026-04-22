@@ -112,6 +112,8 @@ Four deterministic tiers plus a floor. Working buffer is prepended to every resu
 | 3     | Intent-routed graph expansion from Tier 2 seeds     | Always returns (final tier)                 | <100ms  |
 | Floor | Top-K by `recency × importance × maturity_boost`    | Always (never fails)                        | <5ms    |
 
+> **Tuning amendment (9.4.8, 2026-04-22):** `τ_gap` default is **10** (was 0.5 in the opening spec). LoCoMo sweeps showed the knob effectively acts as a boolean: gap ≤ ~5 engages the Tier 2 shortcut (MRR 0.73–0.77), gap ≥ 10 disables it and every query falls through to Tier 3 (MRR plateau at 0.8077 through gap=1000). The current default disables the shortcut, which is net-positive on this corpus — graph expansion contributes +0.0794 MRR when allowed to run. `τ_confidence` stayed at 2.0 (inert on LoCoMo across 0.5–5.0). Full sweep data in `docs/bench/sweeps/2026-04-22-tau.md`; see `docs/plans/phase-9-4-8-retro.md` for the journey. Phase 11 may remove the τ comparison entirely as part of ladder simplification.
+
 **Query classifier:** 3-type—`factual | relational | temporal`. Rule-based, not LLM-based. Decides (a) whether Tier 3 fires at all for this query, and (b) which edge-type weights to use on graph expansion.
 
 ### 5.1 Tier 3 Detail (MAGMA-lite)
