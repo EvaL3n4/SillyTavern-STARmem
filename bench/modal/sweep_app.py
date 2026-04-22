@@ -20,16 +20,22 @@ volume = modal.Volume.from_name("starmem-bench-data", create_if_missing=True)
 
 @app.function(image=image, volumes={"/data": volume}, timeout=600, memory=4096)
 def hello():
+    import os
     import subprocess
-    result = subprocess.run(
-        ["node", "--version"],
-        cwd="/repo",
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    return result.stdout.strip()
+    corpus_exists = os.path.exists("/data/locomo10.json")
+    cache_exists = os.path.exists("/data/extractions")
+    return {
+        "nodeVersion": subprocess.run(
+            ["node", "--version"],
+            cwd="/repo",
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip(),
+        "corpusOnVolume": corpus_exists,
+        "cacheOnVolume": cache_exists,
+    }
 
 @app.local_entrypoint()
 def main():
-    print("Node version in container:", hello.remote())
+    print(json.dumps(hello.remote(), indent=2))
