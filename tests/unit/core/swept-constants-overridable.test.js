@@ -138,6 +138,25 @@ describe('setConstantOverrides / resetConstantOverrides', () => {
         expect(CONSOLIDATION.DEDUP_JACCARD_THRESHOLD).toBe(0.5);
     });
 
+    // 9.4.9: TIER3_SEEDS_K and BATCH_SIZE must be overridable for the
+    // graph + consolidation sweeps. Both were unregistered until this
+    // sub-phase; tests below catch regressions.
+    test('9.4.9: TIER3_SEEDS_K override lands on RETRIEVAL and restores', () => {
+        const before = RETRIEVAL.TIER3_SEEDS_K;
+        const restore = setConstantOverrides({ TIER3_SEEDS_K: 7 });
+        expect(RETRIEVAL.TIER3_SEEDS_K).toBe(7);
+        restore();
+        expect(RETRIEVAL.TIER3_SEEDS_K).toBe(before);
+    });
+
+    test('9.4.9: BATCH_SIZE override lands on CONSOLIDATION and restores', () => {
+        const before = CONSOLIDATION.BATCH_SIZE;
+        const restore = setConstantOverrides({ BATCH_SIZE: 10 });
+        expect(CONSOLIDATION.BATCH_SIZE).toBe(10);
+        restore();
+        expect(CONSOLIDATION.BATCH_SIZE).toBe(before);
+    });
+
     test('rejects unknown keys and undoes partial application', () => {
         const beforeBeam = RETRIEVAL.TIER3_BEAM_WIDTH;
         expect(() =>

@@ -43,10 +43,14 @@ import { createLogger } from '../core/logger.js';
 
 const log = createLogger({ debug: false }).scope('consolidation');
 
-const {
-    BATCH_SIZE,
-    PERSONA_REBUILD_SUGGESTION_THRESHOLD,
-} = CONSOLIDATION;
+// PERSONA_REBUILD_SUGGESTION_THRESHOLD is NOT swept — module-top destructure
+// is fine (snapshot at import matches production behavior).
+//
+// BATCH_SIZE IS swept (9.4.9) — must be read through CONSOLIDATION at call
+// time so setConstantOverrides() is observed. See:
+//   docs/plans/phase-9-4-9-graph-consolidation-sweeps.md Task 1
+//   tests/unit/core/swept-constants-overridable.test.js (destructure guard)
+const { PERSONA_REBUILD_SUGGESTION_THRESHOLD } = CONSOLIDATION;
 
 /**
  * @typedef {object} ConsolidateOptions
@@ -102,7 +106,7 @@ export async function consolidate(chatId, opts) {
 
         // Capture the batch *before* any mutation — if extract fails, we never
         // touch the buffer.
-        const r = Math.min(BATCH_SIZE, state.workingBuffer.length);
+        const r = Math.min(CONSOLIDATION.BATCH_SIZE, state.workingBuffer.length);
         const batchIds = state.workingBuffer.slice(0, r);
         /** @type {import('../core/schema.js').Entry[]} */
         const batchEntries = [];

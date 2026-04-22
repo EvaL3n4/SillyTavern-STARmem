@@ -189,6 +189,7 @@ export const _SWEPT_RETRIEVAL_KEYS = Object.freeze([
     'TIER3_LAMBDA_1',
     'TIER3_LAMBDA_2',
     'TIER3_MAX_HOPS',
+    'TIER3_SEEDS_K',
     'TIER3_BEAM_WIDTH',
     'EDGE_CAP_PER_ENTRY',
     'COOCCURRENCE_WEIGHT',
@@ -200,6 +201,7 @@ export const _SWEPT_RETRIEVAL_KEYS = Object.freeze([
 /** @type {ReadonlyArray<string>} Swept keys in CONSOLIDATION. */
 export const _SWEPT_CONSOLIDATION_KEYS = Object.freeze([
     'DEDUP_JACCARD_THRESHOLD',
+    'BATCH_SIZE',
 ]);
 
 /**
