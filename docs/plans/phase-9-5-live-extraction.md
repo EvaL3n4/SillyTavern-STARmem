@@ -863,14 +863,23 @@ modal run bench/modal/sweep_app.py --mode run-sweep --sweep-name tau --synthetic
 
 Expected: a 2-point synthetic τ sweep completes in ~1–2 min wall-clock. Report lands under `docs/bench/runs/YYYY-MM-DDThh-mm-ssZ-tau.{md,json}`. Verifies `_resolveExtractor` reads `STARMEM_BENCH_LIVE_EXTRACTOR=1` from the Secret and installs the live path without crashing.
 
-**Step 3: Modal smoke on 1 real LoCoMo conversation**
+**Step 3: Modal smoke on full LoCoMo (run-point)**
 
 ```bash
 modal run bench/modal/sweep_app.py --mode run-point --overrides-json '{}' \
     --local-out docs/bench/runs
 ```
 
-Expected: single warm-cache run on full LoCoMo (post-run_point default). Wall-clock dominated by Modal cold start (~30s) + single retrieval pass (~10s); no LLM calls if cache is intact.
+Expected: single warm-cache run on full LoCoMo. Wall-clock ~30s Modal cold start + ~1 min retrieval (1986 QA items × BM25 + graph traversal, Node single-threaded per container). Stdout returns a JSON payload `{"overrides": {}, "metrics": {...}}`.
+
+**Known gap — `--local-out` is ignored for `run-point` in current `sweep_app.py`:** the `local_out` branch in `@app.local_entrypoint()`'s `main()` only fires under `mode == "run-sweep"` (lines ~1311–1325), not `run-point`. Kept in the smoke command above on purpose: the convention "every Modal dispatch includes `--local-out docs/bench/runs`" should hold across all task invocations so an Azure hiccup or retry picks it up reflexively. Filed as a Phase 11 ergonomics bullet — see "Notes for Phase 11" in Task 11's retro. For Task 4, capture the stdout JSON manually into the smoke writeup.
+
+**Expected warm-cache baseline (from 9.4.8 post-retro numbers, reproducible):**
+- `n=1986, n_scored=1277, n_skipped=709` — identical to 9.4.8 → cache hit rate 100%
+- `precisionAt1 ≈ 0.68`, `mrr ≈ 0.81` — ladder top-1 healthy
+- `updateRate ≈ 0.01`, `dedupHitRate ≈ 0.007` — **rule-based-range** numbers, not in the Phase 6 target band [0.2, 0.4]. Preview finding: live Gemma doesn't produce enough near-duplicates on LoCoMo to stress dedup. Task 7's `DEDUP_JACCARD_THRESHOLD` round will likely fire Branch C again (same as 9.4.9); fold into Task 11 retro under "9.4.6/9.4.9/9.5 three-time reproduction of dedup flatness on LoCoMo — extractor choice isn't the bottleneck."
+
+Any deviation from these (especially `n_scored` drifting from 1277) means the message shape changed since 9.4.8 — stop before Tasks 5+ and diagnose.
 
 **Step 4: Verify cache intact on Volume after run**
 
@@ -878,19 +887,20 @@ Expected: single warm-cache run on full LoCoMo (post-run_point default). Wall-cl
 modal run bench/modal/upload_cache.py
 ```
 
-Expected: `cacheFiles: 1182` (unchanged). Any delta means the model/message/maxTokens shape drifted and new entries were written — check extraction cache keys via `modal volume ls starmem-bench-data /extractions/` and diff against 9.4.9's snapshot if needed.
+Expected: `cacheFiles: 1182` (unchanged). Any delta means extraction inputs drifted.
 
 **Step 5: Write smoke writeup**
 
-Append a verdict section to the auto-generated writeup (Modal's `--local-out` already produced the data):
+Capture the run-point JSON payload + cache re-verify numbers into a smoke artifact:
 
 ```markdown
 ## Live-extractor smoke verdict
 
-- ✅ Modal Volume cache intact at 1182 entries post-run.
-- ✅ Synthetic sweep completed without crashes.
-- ✅ run_point on LoCoMo-1 produced facts; stateHash differs from rule-based reference (capture from a prior 9.4.x run).
-- [If any check fails: blocker for Tasks 5–10. Report to controller.]
+- ✅ Modal Volume cache intact at 1182 entries pre- and post-run.
+- ✅ run_point on full LoCoMo produced {n_scored} / 1986 scored (expected 1277; actual <N>).
+- ✅ MRR {actual} matches 9.4.8 baseline (expected ~0.81).
+- ℹ️ Dedup preview: updateRate={actual} / dedupHitRate={actual} — rule-based-range, not in [0.2, 0.4] band. Expected repeat of 9.4.9 Branch C under Task 7.
+- [If n_scored deviates from 1277: blocker for Tasks 5–10. Report to controller.]
 ```
 
 **Step 6: No code commit at Task 4** — execution-only task. If Step 3 reveals a bug in Task 1/2/3, patch and commit separately.
@@ -1248,13 +1258,25 @@ Use `memory` or `hindsight_retain` to record:
 - Which knobs had signal under live extraction, which were flat.
 - Phase 11 follow-up filed (if applicable).
 
+---
+
+## Notes for Phase 11 (accumulated during 9.5 execution)
+
+Phase 11 candidates identified during 9.5 dispatch. Task 11's retro expands these with per-sweep findings.
+
+- **`--local-out` parity for `run-point` mode.** `bench/modal/sweep_app.py`'s `@app.local_entrypoint()` handles `--local-out` only under `mode == "run-sweep"` (lines ~1311–1325). Single-point diagnostic runs via `run-point` discard the JSON payload to stdout and don't mirror to `docs/bench/runs/`. ~8 LOC fix: extend the `run-point` branch to write `run-point-YYYY-MM-DDThh-mm-ssZ.json` when `local_out` is set. Keeps the "every Modal dispatch includes `--local-out`" convention durable against future Azure-hiccup retries. Field-surfaced 2026-04-22 during Task 4 smoke.
+- **Scorer-chain investigation** (conditional on Task 9 inversion — see Decision 8).
+- **Coverage-weighted retrieval metric** (inherited from 9.4.9; `recall@k × coverage` or similar to neutralize subset-selection bias on graph-structure knobs).
+- **Tier 2 gating demolition** (inherited from 9.4.8/9.4.9; `TIER2_TAU_GAP=10` effectively disables Tier 2; ladder could simplify to always-Tier-3-as-Tier-2-seed).
+- **LoCoMo dedup flatness** (9.4.6 + 9.4.9 + 9.5 three-time reproduction under rule-based and live extractors — extractor choice isn't the bottleneck; corpus structure is). Defer `DEDUP_JACCARD_THRESHOLD` tuning until multi-session corpora land.
+
 ## Done-when checklist
 
 - [x] Task 0: Plan file committed.
 - [x] Task 1: `llmExtractor.js` + tests green. *(Pre-shipped in 9.4.x; preflight URL fix landed as `b180bb6`.)*
 - [x] Task 2: `extractionCache.js` + tests green. *(Pre-shipped in 9.4.x as `0dbac98`.)*
 - [x] Task 3: Seeder env-gated switch + tests green; all prior tests still green. *(Pre-shipped in 9.4.x.)*
-- [ ] Task 4: Smoke writeup confirms cold/warm/rule-based comparison.
+- [x] Task 4: Smoke writeup confirms Modal warm-cache replay. *(Completed 2026-04-22; run-point on full LoCoMo returned n_scored=1277, cache intact at 1182 entries, `--local-out` gap filed for Phase 11.)*
 - [ ] Task 5: τ sweep live writeup produced, flat/elbow verdict recorded.
 - [ ] Task 6: Graph sweep (5 rounds) live writeup, per-round verdicts.
 - [ ] Task 7: Consolidation sweep + EXTRACT_MAX_TOKENS observation.
