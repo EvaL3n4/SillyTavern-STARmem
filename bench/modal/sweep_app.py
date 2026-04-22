@@ -500,7 +500,7 @@ def _cartesian_product(knobs):
 
 
 @app.function(image=image, volumes={"/data": volume}, secrets=[env_secret], timeout=1800, memory=4096)
-def run_sweep(sweep_name: str, synthetic: bool = False) -> str:
+def run_sweep(sweep_name: str, synthetic: bool = False) -> dict:
     """Run a full parameter sweep in parallel via Modal.
 
     Args:
@@ -510,7 +510,12 @@ def run_sweep(sweep_name: str, synthetic: bool = False) -> str:
             the knob grid, not the data.
 
     Returns:
-        Markdown report string.
+        Dict with keys:
+            - report (str): rendered Markdown for the sweep.
+            - result_json (str): JSON-serialized raw payload (schema v1)
+              with sweep_name, timestamp, points, elbow, corpus stats.
+            - run_dir (str): path inside the Modal Volume where both
+              `result.json` and `report.md` were persisted.
     """
     import os
     import subprocess
@@ -600,11 +605,52 @@ def run_sweep(sweep_name: str, synthetic: bool = False) -> str:
         tags_stats = None
 
     report = renderer(result, corpus_len, qa_count, tags_stats) if tags_stats else renderer(result, corpus_len, qa_count)
-    return report
+
+    # Persist raw + rendered outputs to the Modal Volume so nothing is lost
+    # if the calling session drops before the markdown is received. Schema
+    # version lets the reconstruction shim read older runs if we ever change
+    # the payload shape.
+    from datetime import datetime, timezone
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H-%M-%SZ")
+    run_dir = f"/data/runs/{ts}-{sweep_name}"
+    os.makedirs(run_dir, exist_ok=True)
+
+    payload = {
+        "_schema": 1,
+        "sweep_name": sweep_name,
+        "synthetic": synthetic,
+        "timestamp": ts,
+        "corpus_len": corpus_len,
+        "qa_count": qa_count,
+        "tags_stats": tags_stats,
+        "result": result,
+    }
+    result_json_str = json.dumps(payload, indent=2)
+
+    with open(os.path.join(run_dir, "result.json"), "w") as f:
+        f.write(result_json_str)
+    with open(os.path.join(run_dir, "report.md"), "w") as f:
+        f.write(report)
+
+    # commit() makes writes visible to subsequent containers and to
+    # `modal volume ls / get` on the host.
+    volume.commit()
+
+    return {
+        "report": report,
+        "result_json": result_json_str,
+        "run_dir": run_dir,
+    }
 
 
 @app.local_entrypoint()
-def main(mode: str = "hello", overrides_json: str = "{}", sweep_name: str = "tau", synthetic: bool = False):
+def main(
+    mode: str = "hello",
+    overrides_json: str = "{}",
+    sweep_name: str = "tau",
+    synthetic: bool = False,
+    local_out: str = "",
+):
     """Dispatch entrypoint for Modal bench functions.
 
     Usage:
@@ -619,13 +665,31 @@ def main(mode: str = "hello", overrides_json: str = "{}", sweep_name: str = "tau
 
         modal run bench/modal/sweep_app.py --mode run-sweep --sweep-name tau --synthetic
             → runs run_sweep() with synthetic corpus (2 points)
+
+        modal run bench/modal/sweep_app.py --mode run-sweep --sweep-name tau \\
+                --local-out docs/bench/runs
+            → also mirrors report.md + result.json to the host dir
+              (independent of the Modal Volume copy at /data/runs/<ts>-<sweep>/)
     """
     if mode == "hello":
         print(json.dumps(hello.remote(), indent=2))
     elif mode == "run-point":
         print(run_point.remote(overrides_json))
     elif mode == "run-sweep":
-        report = run_sweep.remote(sweep_name, synthetic)
+        sweep_out = run_sweep.remote(sweep_name, synthetic)
+        report = sweep_out["report"]
+        result_json_str = sweep_out["result_json"]
+        run_dir = sweep_out["run_dir"]
         print(report)
+        print(f"\n<!-- saved to Modal Volume: {run_dir} -->", file=__import__("sys").stderr)
+        if local_out:
+            import os as _os
+            from pathlib import Path as _Path
+            out = _Path(local_out).expanduser()
+            out.mkdir(parents=True, exist_ok=True)
+            stem = _os.path.basename(run_dir)  # e.g. 2026-04-22T15-23-45Z-tau
+            (out / f"{stem}.md").write_text(report)
+            (out / f"{stem}.json").write_text(result_json_str)
+            print(f"<!-- mirrored to host: {out / stem}.{{md,json}} -->", file=__import__("sys").stderr)
     else:
         print(f"Unknown mode: {mode!r}. Expected 'hello', 'run-point', or 'run-sweep'.")
