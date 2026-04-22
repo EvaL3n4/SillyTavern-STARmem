@@ -99,5 +99,22 @@ def run_point(overrides_json: str) -> str:
 
 
 @app.local_entrypoint()
-def main():
-    print(json.dumps(hello.remote(), indent=2))
+def main(mode: str = "hello", overrides_json: str = "{}"):
+    """Dispatch entrypoint for Modal bench functions.
+
+    Usage:
+        modal run bench/modal/sweep_app.py
+            → runs hello() and prints nodeVersion + volume mount check
+
+        modal run bench/modal/sweep_app.py --mode run-point --overrides-json '{}'
+            → runs run_point() with empty overrides
+
+        modal run bench/modal/sweep_app.py --mode run-point --overrides-json '{"TIER2_TAU_CONFIDENCE": 0.5}'
+            → runs run_point() with one override
+    """
+    if mode == "hello":
+        print(json.dumps(hello.remote(), indent=2))
+    elif mode == "run-point":
+        print(run_point.remote(overrides_json))
+    else:
+        print(f"Unknown mode: {mode!r}. Expected 'hello' or 'run-point'.")
