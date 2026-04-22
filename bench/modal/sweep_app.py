@@ -6,7 +6,7 @@ app = modal.App("starmem-bench")
 image = (
     modal.Image.debian_slim(python_version="3.11")
     .run_commands(
-        "apt-get update && apt-get install -y curl ca-certificates",
+        "apt-get update && apt-get install -y curl ca-certificates git",
         "curl -fsSL https://deb.nodesource.com/setup_20.x | bash -",
         "apt-get install -y nodejs",
     )
