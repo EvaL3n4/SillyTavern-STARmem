@@ -9,7 +9,6 @@
 
 import { RETRIEVAL } from '../core/constants.js';
 import { buildIndex, query as bm25Query } from './bm25.js';
-import { getScorer } from './scorer.js';
 import { recencyAt } from '../lifecycle/recency.js';
 import { maturityBoost } from '../lifecycle/maturity.js';
 
@@ -39,7 +38,10 @@ import { maturityBoost } from '../lifecycle/maturity.js';
  * @returns {Tier2Result}
  */
 export function tier2(state, queryStr, ctx) {
-    const { now, intent, k = 10, diagnostic = false } = ctx;
+    // `intent` in ctx is accepted for signature stability (ladder.js passes
+    // it) but not consumed here; Phase 11 may reintroduce an intent-aware
+    // scorer chain — see src/retrieval/scorer.js ScorerContext typedef.
+    const { now, k = 10, diagnostic = false } = ctx;
 
     /** @type {import('../core/schema.js').Entry[]} */
     const entries = [];
@@ -56,7 +58,12 @@ export function tier2(state, queryStr, ctx) {
         return { hit: false, scored: [] };
     }
 
-    const scorer = getScorer();
+    // NOTE: The scorer registry is bypassed here in favor of inline factor
+    // decomposition (9.4.7 Task 1). `getScorerId()` still labels traces in
+    // ladder.js, but Tier 2's ranking is deterministically the default
+    // scorer's formula. If Phase 11 reintroduces pluggable scorers on the
+    // ladder path, restore `getScorer()` here and accept that the
+    // `factors` diagnostic breakdown will match the default only.
     const scored = raw
         .map(r => {
             const importance = r.entry.lifecycle.importance;
