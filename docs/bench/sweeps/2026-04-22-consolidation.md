@@ -1,61 +1,35 @@
 # Consolidation sweep — 2026-04-22
 
 **Corpus:** 10 conversations, 1986 QA items
-**Primary metric:** mrr
-**Swept knob:** DEDUP_JACCARD_THRESHOLD
+**Primary metric:** mrr (retrieval) + updateRate (consolidation-internal band rule)
+**Baseline:** `TIER2_TAU_GAP=10` alone (MRR 0.8077, coverage ~64%)
+**Rounds:** 1 independent single-axis sweeps
 
-## Per-threshold aggregate table
+**Amendment criteria (9.4.9 hardened):** ΔMRR ≥ 0.02 AND coverage stays within 5pp of baseline. Either condition failing defers the amendment.
 
-| DEDUP_JACCARD_THRESHOLD | added | updated | drained | updateRate | dedupHitRate | recallAt5 | mrr | p50 | p95 |
-|---|---|---|---|---|---|---|---|---|---|
-| 0.5 | 2752 | 127 | 5805 | 0.0441 | 0.0219 | 0.0057 | 0.1118 | 1.99 | 4.37 |
-| 0.6 | 2811 | 68 | 5805 | 0.0236 | 0.0117 | 0.0056 | 0.1118 | 2.25 | 4.55 |
-| 0.7 | 2837 | 42 | 5805 | 0.0146 | 0.0072 | 0.0056 | 0.1118 | 2.25 | 4.61 |
-| 0.8 | 2848 | 31 | 5805 | 0.0108 | 0.0053 | 0.0056 | 0.1118 | 2.26 | 4.68 |
-| 0.9 | 2859 | 20 | 5805 | 0.0069 | 0.0034 | 0.0056 | 0.1119 | 2.12 | 4.34 |
+## Round — DEDUP_JACCARD_THRESHOLD
 
-## Recommended threshold
+**Swept knob:** `DEDUP_JACCARD_THRESHOLD`
 
-**Band rule (Phase 6 retro):** updateRate < 0.1 = too strict, > 0.5 = too lax.
-Target: updateRate ∈ [0.2, 0.4].
+| DEDUP_JACCARD_THRESHOLD | added | updated | drained | updateRate | dedupHitRate | n_scored | recallAt5 | mrr | ΔMRR vs gap=10 | p50 | p95 |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| 0.5 | 2773 | 131 | 5882 | 0.0451 | 0.0223 | 1271 | 0.9392 | 0.8089 | +0.0012 | 4.76 | 7.22 |
+| 0.6 | 2834 | 70 | 5882 | 0.0241 | 0.0119 | 1277 | 0.9370 | 0.8062 | -0.0015 | 3.28 | 5.56 |
+| 0.7 | 2862 | 42 | 5882 | 0.0145 | 0.0071 | 1277 | 0.9363 | 0.8057 | -0.0020 | 4.30 | 7.02 |
+| 0.8 | 2873 | 31 | 5882 | 0.0107 | 0.0053 | 1279 | 0.9357 | 0.8052 | -0.0025 | 4.66 | 14.17 |
+| 0.9 | 2884 | 20 | 5882 | 0.0069 | 0.0034 | 1284 | 0.9354 | 0.8043 | -0.0034 | 4.81 | 7.42 |
 
-**Recommendation:** No threshold stands out under rule-based extraction.
+**Branch C fires** — MRR range 0.0045 < 0.005. Knob inert on this corpus with rule-based extractor. Defer tuning to sub-phase 9.5 (live extraction regenerates cache on demand and should exercise realistic dedup pressure).
 
-> Rule-based seeder doesn't exercise realistic dedup pressure. Thresholds are under-stressed; revisit with live LLM consolidation in sub-phase 9.5.
+## Notes
 
-## EXTRACT_MAX_TOKENS inspection (read-only)
-
-factLengths distribution across all points (should be threshold-invariant
-since extraction happens before dedup):
-
-| min | p50 | p95 | max |
-|---|---|---|---|
-| 11 | 69 | 110 | 183 |
-
-Rule-based mock produces facts averaging 69 chars; at ~4 chars/token
-this implies median ~17 tokens. Real-LLM extraction (sub-phase 9.5)
-may differ. EXTRACT_MAX_TOKENS is defined in extractFacts.js (value redacted
-in display output); if p95 < 0.5×cap, room to reduce; if p95 ≈ cap, consider raising.
-
-## envSnapshot
-
-```json
-{
-  "n": 1986,
-  "n_scored": 1415,
-  "n_skipped": 571,
-  "precisionAtK": {
-    "1": 0.0007067137809187279,
-    "3": 0.001177856301531213,
-    "5": 0.0011307420494699645,
-    "10": 0.08676285826462392
-  },
-  "recallAtK": {
-    "1": 0.0007067137809187279,
-    "3": 0.0035335689045936395,
-    "5": 0.005653710247349823,
-    "10": 0.610777385159011
-  },
-  "mrr": 0.11184925002174932
-}
-```
+- Branch C is pre-registered per 9.4.6 consolidation retro finding: rule-based
+  seeder may under-stress dedup/consolidation machinery. Rounds with MRR range
+  <0.005 across all points defer tuning to 9.5 live extraction.
+- BATCH_SIZE round was dropped mid-flight — changing BATCH_SIZE invalidates the
+  warm extraction cache (cache key includes batch composition), causing Modal
+  function timeouts on live-LLM fallback. Filed as 9.5 candidate where live
+  extraction regenerates cache on demand. See plan decision 3 revision.
+- Band rule reminder: updateRate < 0.1 = too strict (dedup rarely fires),
+  updateRate > 0.5 = too lax (over-merges distinct facts). Target [0.2, 0.4]
+  closest to 0.3.
