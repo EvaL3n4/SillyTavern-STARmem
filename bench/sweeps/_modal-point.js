@@ -13,6 +13,13 @@ import { runHarness } from '../runner.js';
 import { loadLocomo } from '../loaders/index.js';
 import { performance } from 'node:perf_hooks';
 
+// Route all harness log output to stderr so stdout is reserved for the
+// single-line JSON payload that Modal's run_sweep will json.loads().
+// Without this, STARmem's internal loggers ([STARmem:triggers] ...) leak
+// into stdout and corrupt the payload for run_sweep's parser.
+const _origLog = console.log;
+console.log = (...args) => console.error(...args);
+
 async function main() {
     const overrides = JSON.parse(process.env.STARMEM_OVERRIDES || '{}');
     const corpus = await loadLocomo({ offline: true });
@@ -36,7 +43,8 @@ async function main() {
         runCount: result.runs.length,
         wallMs: Math.round(wallMs),
     };
-    console.log(JSON.stringify(output));
+    // Use the original console.log (straight to stdout) for the payload.
+    _origLog(JSON.stringify(output));
 }
 
 main().catch(err => {
