@@ -1,6 +1,6 @@
 {
   "asOf": "2026-04-22",
-  "gitSha": "10f7372",
+  "gitSha": "307b63c",
   "corpus": "locomo10-full (1986 QA items)",
   "nodeVersion": "v20.20.2",
   "scorerId": "default",
@@ -9,7 +9,8 @@
   "knownIssues": [
     "9.4.6 baseline.json claimed Tier 3 contributes 0.0001 MRR lift (well below 0.05 threshold). That measurement was on the broken ladder with residual-working-buffer contamination. Post-9.4.7 seeder idle-drain fix + 9.4.8 Modal sweeps show Tier 3 actually contributes +0.0794 MRR lift when TIER2_TAU_GAP allows queries to reach it. The graph expansion is genuinely valuable; 9.4.6 couldn't see it through the bench-state noise.",
     "Sweeps run via Modal per-knob-value parallelism (one container per grid point). Free-tier concurrency cap of 32 containers means 48-point sweeps run in two waves (~3-4 min wall-clock vs ~62 min serial per 9.4.6 retro).",
-    "Graph and consolidation sweeps remain deferred per 9.4.6 retro + 9.4.8 locked decision #6. With the ladder no longer structurally broken, these become meaningful follow-ups for a post-9.4.8 sub-phase (9.4.9 or Phase 11)."
+    "9.4.9 graph sweep surfaced a subset-selection-bias trap: TIER3_SEEDS_K, EDGE_CAP_PER_ENTRY, and COOCCURRENCE_WEIGHT all produce headline \u0394MRR \u2265 +0.10 at their 'winner' values, but coverage drops from baseline ~64% to 48-50%. The knobs narrow Tier 3 retrieval so fewer queries find matches at all, inflating MRR on the remainder. Mirror image of 9.4.6's vacuous-true trap. Hardened amendment criteria (\u0394MRR \u2265 0.02 AND coverage within 5pp of baseline) gate these out; renderer flags them with \u26a0\ufe0f and 'HOLD (subset-selection bias)'. Revisit in a phase that adds a coverage-weighted retrieval metric (candidate for v2.1 scope).",
+    "9.4.9 consolidation sweep Branch C fired on full grid: DEDUP_JACCARD_THRESHOLD MRR range 0.0045 across [0.5, 0.9] \u2014 below the 0.005 flatness threshold. Rule-based extractor under-stresses dedup (updateRate 0.007-0.045, well below band target [0.2, 0.4]). Deferred to sub-phase 9.5 live extraction where the LLM extractor should produce realistic dedup pressure. BATCH_SIZE round was dropped from 9.4.9 scope mid-flight \u2014 changing BATCH_SIZE invalidates the warm extraction cache (cache key includes batch composition), causing Modal function timeouts on live-LLM fallback. Also filed as 9.5 candidate."
   ],
   "tuned": {
     "TIER2_TAU_CONFIDENCE": {
@@ -35,6 +36,48 @@
       "measured": 2,
       "source": "sweeps/2026-04-22-bm25.md",
       "note": "INERT on LoCoMo-10. BM25 sweep showed <0.003 MRR variation across all values 1-4 (rounding noise). Keep at spec default."
+    },
+    "TIER3_LAMBDA_1": {
+      "specDefault": 1.0,
+      "measured": 1.0,
+      "source": "sweeps/2026-04-22-graph.md",
+      "note": "INERT on LoCoMo-10. 9.4.9 graph sweep: identical MRR (0.8057) across values [0.5, 0.75, 1.0, 1.25, 1.5] at fixed gap=10. The exp(\u03bb\u2081\u00b7edge + \u03bb\u2082\u00b7bm25) scoring rescales uniformly on LoCoMo's edge landscape \u2014 rank order is preserved. Keep at spec default."
+    },
+    "TIER3_LAMBDA_2": {
+      "specDefault": 0.3,
+      "measured": 0.3,
+      "source": "sweeps/2026-04-22-graph.md",
+      "note": "INERT on LoCoMo-10. Same result shape as TIER3_LAMBDA_1 \u2014 identical MRR across [0.1, 0.2, 0.3, 0.4, 0.5]. Keep at spec default."
+    },
+    "TIER3_BEAM_WIDTH": {
+      "specDefault": 5,
+      "measured": 5,
+      "source": "sweeps/2026-04-22-graph.md",
+      "note": "ADVISORY. 9.4.9 graph sweep: beam=3 is MRR-best (+0.0055 vs gap=10 baseline), monotonic decline at 5/8/10. Below 0.02 amendment threshold. Keep at spec default; candidate for a precision-weighted metric review in v2.1."
+    },
+    "TIER3_SEEDS_K": {
+      "specDefault": 3,
+      "measured": 3,
+      "source": "sweeps/2026-04-22-graph.md",
+      "note": "HELD (subset-selection bias). 9.4.9 graph sweep: K=1 \u2192 MRR 0.9228 (+0.1151) but coverage drops to 50% (\u26a0\ufe0f >5pp below baseline ~64%). K=3 sits at coverage-baseline; K=5/7 go ABOVE baseline coverage but MRR drops below gap=10. Spec default 3 is the knee. Amendment gated out by hardened criteria (\u0394MRR \u2265 0.02 AND coverage within 5pp). See knownIssues[2]."
+    },
+    "EDGE_CAP_PER_ENTRY": {
+      "specDefault": 20,
+      "measured": 20,
+      "source": "sweeps/2026-04-22-graph.md",
+      "note": "HELD (subset-selection bias). 9.4.9 graph sweep: cap=10 \u2192 MRR 0.9377 (+0.1300) but coverage 49% (\u26a0\ufe0f). Monotonic MRR decline as cap widens, but all points deviate from baseline coverage. Coverage-gated out. Spec default 20 holds."
+    },
+    "COOCCURRENCE_WEIGHT": {
+      "specDefault": 0.5,
+      "measured": 0.5,
+      "source": "sweeps/2026-04-22-graph.md",
+      "note": "INHERITED-HELD. 9.4.9 graph sweep: identical MRR (0.9377) across [0.25, 0.5, 0.75, 1.0] \u2014 pure inertness, not noise. Coverage warning inherited from pinned TIER3_SEEDS_K=1 and EDGE_CAP_PER_ENTRY=10 baseOverrides in this round. Spec default 0.5 holds."
+    },
+    "DEDUP_JACCARD_THRESHOLD": {
+      "specDefault": 0.7,
+      "measured": 0.7,
+      "source": "sweeps/2026-04-22-consolidation.md",
+      "note": "BRANCH C (deferred to 9.5). 9.4.9 consolidation sweep: MRR range 0.0045 across [0.5, 0.6, 0.7, 0.8, 0.9] \u2014 below 0.005 flatness threshold. updateRate 0.007-0.045 well below band target [0.2, 0.4]. Rule-based extractor under-stresses dedup. Defer tuning to 9.5 live extraction."
     }
   },
   "headlineMetrics": {
