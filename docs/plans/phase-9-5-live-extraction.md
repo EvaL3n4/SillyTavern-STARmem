@@ -2,27 +2,31 @@
 
 > **For Hermes:** Use `subagent-driven-development` skill to implement this plan task-by-task. Spec compliance review after each task, code quality review after spec passes. Proceed only when both reviews approve.
 
-**Goal:** Swap the rule-based fact extractor in `bench/harness/seeder.js` for a real LLM client (env-gated), re-run all four knob sweeps and the baseline comparison on full LoCoMo, populate `docs/bench/baseline.json` with measured values, and honestly report the results — elbows or flat.
+**Goal:** Swap the rule-based fact extractor in `bench/harness/seeder.js` for a real LLM client (env-gated), re-run all four knob sweeps on the 9.4.8/9.4.9 Modal substrate with the full grids restored, populate the new `TIER3_MAX_HOPS` / `EXPLICIT_RELATION_WEIGHT` sweeps (plus a `BATCH_SIZE` consolidation round deferred from 9.4.9), refresh `docs/bench/baseline.json` with live-extraction numbers, and honestly report the results — elbows, flat, or re-located.
 
-**Architecture:** Phase 9 shipped the entire bench infrastructure (runner, seeder, 4 sweep drivers, 3 baselines, CLI). The seeder installs `ruleBasedExtractor` via `_setLLMClientForTests`, producing regex-over-capitalized-word facts that don't differentiate knob values — hence flat sweep surfaces. 9.5 introduces a Node-native OpenAI-compatible HTTP client that plugs into the same `_setLLMClientForTests` seam, an on-disk deterministic cache, and env-gated activation (`STARMEM_BENCH_LIVE_EXTRACTOR=1`). CI stays on the rule-based path by default so the existing 734 tests remain untouched.
+**Architecture:** Phase 9 shipped the bench infrastructure; 9.4.8 shipped the Modal substrate (`bench/modal/sweep_app.py`, `SWEEP_CONFIGS` registry, Python renderers) and warmed an on-Volume extraction cache (`google/gemma-4-26b-a4b-it`, 1182 entries, 4.7 MB). 9.5 adds a Node-native OpenAI-compatible HTTP client that plugs into `_setLLMClientForTests`, an on-disk deterministic cache mirroring the Modal Volume layout, env-gated activation (`STARMEM_BENCH_LIVE_EXTRACTOR=1`), and new `SWEEP_CONFIGS` entries for the two uncovered knobs + a BATCH_SIZE round. CI stays on the rule-based path by default (determinism gate unset) so the existing 816 tests remain untouched.
+
+**Cache re-use:** The warm cache from 9.4.8 already holds every extraction for `google/gemma-4-26b-a4b-it` against full LoCoMo. As long as message shape and batch composition are preserved, Tasks 5/6/8/10 run on pure cache hits — zero new LLM calls. Task 7's new BATCH_SIZE round intentionally invalidates the cache (Pattern 2 per `sweep-cache-invalidation-audit`) and regenerates missing entries on demand via live Nano-GPT.
 
 **Tech Stack:** Node 25, ESM modules, vanilla `fetch`, `node:crypto` for cache keys, `node:fs/promises` for cache I/O. No runtime deps added.
 
 ---
 
-## Decisions locked before writing this plan (conversation 2026-04-21)
+## Decisions locked before writing this plan (conversation 2026-04-21, revised 2026-04-22 post-9.4.9)
 
 1. **Plan filename.** `docs/plans/phase-9-5-live-extraction.md`. Sub-phase in filename, not phase-10.
 2. **LLM transport.** Node-native OpenAI-compatible HTTP via `fetch`. Config via `STARMEM_BENCH_LLM_URL`, `STARMEM_BENCH_LLM_API_KEY`, `STARMEM_BENCH_LLM_MODEL`.
-3. **Extraction cache.** On by default, `--no-cache` flag to force live calls. Keyed by sha256 of `(modelId, messages, maxTokens, temperature)`.
-4. **Determinism gate.** `STARMEM_BENCH_LIVE_EXTRACTOR=1` opts in. Unset = rule-based (preserves all 734 tests).
-5. **Model choice.** Gemma 4 26B A4B via LiteLLM (Eva's calibration for speed+quality). Templated through env vars so any model works.
+3. **Extraction cache.** On by default, `--no-cache` flag to force live calls. Keyed by sha256 of `(modelId, messages, maxTokens)`. Temperature hard-locked at 0, so it's not in the key.
+4. **Determinism gate.** `STARMEM_BENCH_LIVE_EXTRACTOR=1` opts in. Unset = rule-based (preserves all 816 tests).
+5. **Model choice.** `google/gemma-4-26b-a4b-it` via **Nano-GPT** (OpenAI-compatible endpoint). Model string must match the warm-cache identifier verbatim — any drift (e.g. `gemma4-26b-a4b`) causes 100% cache misses and re-extracts ~$X of LLM calls. Templated through env vars so any model works in principle, but the 9.4.8 warm cache is pinned to this string.
 6. **Corpus.** Full LoCoMo (10 conversations) by default. `--conversations N` flag retained for dry runs.
 7. **Temperature.** `0.0` hard-locked in the HTTP client. Non-negotiable for reproducibility.
-8. **Baseline-comparison gate.** Structural invariant: `ladder_mrr ≥ bm25only_mrr − 0.02` on full LoCoMo. If inverted, 9.5 DOES NOT fix it — files Phase 11 follow-up and closes with honest retro.
-9. **New sweeps.** `TIER3_MAX_HOPS` + `EXPLICIT_RELATION_WEIGHT` added as Task 10 unconditionally (in `_SWEPT_RETRIEVAL_KEYS` but uncovered in Phase 9).
-10. **`EXTRACT_MAX_TOKENS` tuning.** Folded into Task 7 (consolidation sweep) — observes real token-output distributions per batch.
+8. **Baseline-comparison gate.** Structural invariant: `ladder_mrr ≥ bm25only_mrr − 0.02` on full LoCoMo. 9.4.8 already confirmed ladder cleanly beats bm25only on warm cache; 9.5 re-verifies under full sweep grids. If inverted, 9.5 DOES NOT fix it — files Phase 11 follow-up and closes with honest retro.
+9. **New sweeps.** `TIER3_MAX_HOPS` + `EXPLICIT_RELATION_WEIGHT` added as Task 10 unconditionally (both in `_SWEPT_RETRIEVAL_KEYS`, uncovered in Phase 9). Plus `BATCH_SIZE` consolidation round deferred from 9.4.9 (cache-key trap; live extraction regenerates on demand).
+10. **`EXTRACT_MAX_TOKENS` tuning.** Folded into Task 7 (consolidation sweep) — observes real token-output distributions per batch from the cache.
 11. **Retro framing.** If sweeps still show flat elbows on live LLM, 9.5 retro says so honestly and proposes Phase 11 (scorer chain, gold-match criterion, corpus expansion). No forcing elbows that aren't there.
+12. **Execution substrate: Modal.** All sweep execution (Tasks 5–10) goes through `bench/modal/sweep_app.py` via `modal run ... --mode run-sweep --sweep-name X`, not local `node bench/sweeps/*.js`. Rationale: 9.4.8/9.4.9 renderers already carry coverage-warning/HOLD/amendment-gating logic; Modal's 32-container parallelism saves wall-clock on 48-point τ and graph coordinate-descent rounds; Modal's egress to Nano-GPT is marginally faster than Eva's local I/O on any cache miss. Containers see the warm cache via the `starmem-bench-data` Volume symlinked into `bench/.cache/extractions` at function start; the Nano-GPT credentials plumb in via `modal.Secret.from_dotenv(filename=".env.bench")`.
+13. **Full sweep grids restored.** 9.4.8's `SWEEP_CONFIGS["tau"]` and `["bm25"]` were trimmed to 4-point validation configs after the amendments landed. 9.5 restores the original grids (τ: 8×6 = 48 points, bm25: 4×4 = 16 points) to detect whether elbows *relocate* under live extraction vs stay in the same corners. Graph coordinate-descent and 9.4.9's hardened amendment criteria (ΔMRR + 5pp coverage) stay intact.
 
 ---
 
@@ -146,9 +150,9 @@ describe('makeLLMExtractor', () => {
         });
 
         const ext = makeLLMExtractor({
-            url: 'http://litellm:8686/v1',
+            url: 'https://nano-gpt.com/api/v1',
             apiKey: 'sk-test',
-            model: 'gemma4-26b-a4b',
+            model: 'google/gemma-4-26b-a4b-it',
         });
 
         const result = await ext('profile-id', [
@@ -158,7 +162,7 @@ describe('makeLLMExtractor', () => {
 
         expect(result).toBe('{"entries":[]}');
         expect(global.fetch).toHaveBeenCalledWith(
-            'http://litellm:8686/v1/chat/completions',
+            'https://nano-gpt.com/api/v1/chat/completions',
             expect.objectContaining({
                 method: 'POST',
                 headers: expect.objectContaining({
@@ -170,7 +174,7 @@ describe('makeLLMExtractor', () => {
         );
 
         const body = JSON.parse(global.fetch.mock.calls[0][1].body);
-        expect(body.model).toBe('gemma4-26b-a4b');
+        expect(body.model).toBe('google/gemma-4-26b-a4b-it');
         expect(body.max_tokens).toBe(2048);
         expect(body.temperature).toBe(0);
         expect(body.messages).toHaveLength(2);
@@ -331,7 +335,7 @@ Expected: 6 passed.
 npm test
 ```
 
-Expected: 70 suites / 740 tests green (Phase 9 close 734 + 6 new).
+Expected: 75 suites / 822 tests green (9.4.9 close 816 + 6 new).
 
 **Step 6: Lint + typecheck**
 
@@ -588,7 +592,7 @@ Expected: 6 passed.
 npm test && npm run lint && npm run typecheck
 ```
 
-Expected: 71 suites / 746 tests green, lint/typecheck green.
+Expected: 76 suites / 828 tests green, lint/typecheck green.
 
 **Step 6: Commit**
 
@@ -643,9 +647,9 @@ describe('seeder live/rule-based switch', () => {
 
     test('set STARMEM_BENCH_LIVE_EXTRACTOR + full env installs live extractor', async () => {
         process.env.STARMEM_BENCH_LIVE_EXTRACTOR = '1';
-        process.env.STARMEM_BENCH_LLM_URL = 'http://litellm:8686/v1';
-        process.env.STARMEM_BENCH_LLM_API_KEY = 'sk-test';
-        process.env.STARMEM_BENCH_LLM_MODEL = 'gemma4-26b-a4b';
+        process.env.STARMEM_BENCH_LLM_URL = 'https://nano-gpt.com/api/v1';
+        process.env.STARMEM_BENCH_LLM_API_KEY='***';
+        process.env.STARMEM_BENCH_LLM_MODEL = 'google/gemma-4-26b-a4b-it';
 
         const mod = await import('../../../bench/harness/seeder.js');
         const ext = mod._resolveExtractor();
@@ -764,7 +768,7 @@ Expected: 4 passed.
 npm test
 ```
 
-Expected: 72 suites / 750 tests green. All existing seeder-calling tests continue on the rule-based path because env is unset.
+Expected: 77 suites / 832 tests green. All existing seeder-calling tests continue on the rule-based path because env is unset.
 
 **Step 6: Lint + typecheck**
 
@@ -783,37 +787,48 @@ git commit -m "feat(bench): env-gated live/rule-based extractor switch (Task 3)"
 
 ---
 
-## Task 4: Smoke verification on 1 conversation
+## Task 4: Smoke verification on 1 conversation (Modal, warm-cache round-trip)
 
-**Objective:** Run live extraction on a single LoCoMo conversation and confirm (a) the cache populates, (b) extracted facts differ structurally from rule-based, (c) no crashes. No metrics yet — just "live path works end-to-end."
+**Objective:** Confirm the live-extractor path runs end-to-end on Modal: the `starmem-bench-data` Volume's warm cache (from 9.4.8) serves extractions for `google/gemma-4-26b-a4b-it`, Nano-GPT fallback fires only if a cache miss occurs, `_resolveExtractor` installs the right client, state hashes differ from rule-based. No metrics yet — just "live path works end-to-end on the Modal substrate."
 
 **Files:**
-- Artifact (untracked): `docs/bench/sweeps/YYYY-MM-DD-smoke-live.md`
-- Optional modification: `.gitignore` adds `bench/.cache/` and `.env.bench`.
+- Artifact (untracked): `docs/bench/runs/YYYY-MM-DDThh-mm-ssZ-smoke-live.md` (Modal `--local-out` mirror)
+- Optional modification: `.gitignore` already ignores `bench/.cache/` and `docs/bench/runs/` per 9.4.9; verify.
 
 **Pre-flight:**
+
 ```bash
-# Confirm the LiteLLM endpoint is reachable and the target model is registered.
-curl -sS "$STARMEM_BENCH_LLM_URL/models" \
-  -H "Authorization: Bearer $STARMEM_BENCH_LLM_API_KEY" | jq '.data[] | .id' | head
+# Confirm Modal Volume has the warm cache and it's keyed on the canonical model string.
+modal run bench/modal/upload_cache.py
 ```
-Expected: list includes `gemma4-26b-a4b` (or whatever `STARMEM_BENCH_LLM_MODEL` is set to).
+Expected: `cacheFiles: 1182`, `cacheSizeBytes: ~4800000`. If `cacheFiles` is 0, the Volume lost the cache between 9.4.9 and 9.5 — re-upload via `modal volume put starmem-bench-data bench/.cache/extractions /extractions` before proceeding.
+
+```bash
+# Confirm Nano-GPT serves google/gemma-4-26b-a4b-it at the configured URL.
+# Eva runs this manually with her real .env.bench sourced.
+curl -sS "$STARMEM_BENCH_LLM_URL/models" \
+  -H "Authorization: Bearer $STARMEM_BENCH_LLM_API_KEY" | jq -r '.data[].id' | grep -F google/gemma-4-26b-a4b-it
+```
+Expected: one line match. If absent, Nano-GPT renamed the model; pause and update `.env.bench` + re-upload cache keyed on the new name.
 
 **Step 1: Gitignore + env file**
 
 ```bash
 grep -qxF "bench/.cache/" .gitignore || echo "bench/.cache/" >> .gitignore
 grep -qxF ".env.bench" .gitignore || echo ".env.bench" >> .gitignore
+grep -qxF "docs/bench/runs/" .gitignore || echo "docs/bench/runs/" >> .gitignore
 
 cat > .env.bench << 'ENV_EOF'
+# Sourced locally AND loaded by modal.Secret.from_dotenv inside containers.
+# Model string MUST match 9.4.8 warm-cache identifier or every call misses.
 export STARMEM_BENCH_LIVE_EXTRACTOR=1
-export STARMEM_BENCH_LLM_URL=http://litellm:8686/v1
-export STARMEM_BENCH_LLM_API_KEY=sk-YOUR-KEY
-export STARMEM_BENCH_LLM_MODEL=gemma4-26b-a4b
+export STARMEM_BENCH_LLM_URL=https://nano-gpt.com/api/v1
+export STARMEM_BENCH_LLM_API_KEY=<paste-nano-gpt-key>
+export STARMEM_BENCH_LLM_MODEL=google/gemma-4-26b-a4b-it
 ENV_EOF
 ```
 
-(Edit `.env.bench` with the real API key before sourcing. Do not commit.)
+(Edit `.env.bench` with the real API key before running Modal. Do not commit.)
 
 If `.gitignore` changed, commit:
 ```bash
@@ -821,187 +836,195 @@ git add .gitignore
 git commit -m "chore(bench): gitignore .env.bench and extraction cache"
 ```
 
-**Step 2: Rule-based reference run**
+**Step 2: Modal smoke on synthetic (cold-path sanity)**
 
 ```bash
-unset STARMEM_BENCH_LIVE_EXTRACTOR
-npm run bench:smoke 2>&1 | tee /tmp/smoke-rulebased.log
+modal run bench/modal/sweep_app.py --mode run-sweep --sweep-name tau --synthetic \
+    --local-out docs/bench/runs
 ```
 
-Capture `factCount`, `stateHash` from the CLI output for comparison.
+Expected: a 2-point synthetic τ sweep completes in ~1–2 min wall-clock. Report lands under `docs/bench/runs/YYYY-MM-DDThh-mm-ssZ-tau.{md,json}`. Verifies `_resolveExtractor` reads `STARMEM_BENCH_LIVE_EXTRACTOR=1` from the Secret and installs the live path without crashing.
 
-**Step 3: Live run (cold cache)**
+**Step 3: Modal smoke on 1 real LoCoMo conversation**
 
 ```bash
-source .env.bench
-npm run bench:smoke 2>&1 | tee /tmp/smoke-live.log
+modal run bench/modal/sweep_app.py --mode run-point --overrides-json '{}' \
+    --local-out docs/bench/runs
 ```
 
-Expected: non-zero `factCount`, `stateHash` differs from rule-based, wall time a few minutes per conversation.
+Expected: single warm-cache run on full LoCoMo (post-run_point default). Wall-clock dominated by Modal cold start (~30s) + single retrieval pass (~10s); no LLM calls if cache is intact.
 
-**Step 4: Verify cache populated**
+**Step 4: Verify cache intact on Volume after run**
 
 ```bash
-ls bench/.cache/extractions/ | wc -l
+modal run bench/modal/upload_cache.py
 ```
 
-Expected: >0 JSON files. Each file ~2KB.
+Expected: `cacheFiles: 1182` (unchanged). Any delta means the model/message/maxTokens shape drifted and new entries were written — check extraction cache keys via `modal volume ls starmem-bench-data /extractions/` and diff against 9.4.9's snapshot if needed.
 
-**Step 5: Second live run — cache hit**
+**Step 5: Write smoke writeup**
 
-```bash
-time npm run bench:smoke 2>&1 | tee /tmp/smoke-live-cached.log
-```
-
-Expected: wall time ≤10% of Step 3 (cache hit on every call). `factCount` + `stateHash` identical to Step 3.
-
-**Step 6: Write smoke writeup**
-
-Create `docs/bench/sweeps/YYYY-MM-DD-smoke-live.md` (substitute today's date):
+Append a verdict section to the auto-generated writeup (Modal's `--local-out` already produced the data):
 
 ```markdown
-# Live-extractor smoke — YYYY-MM-DD
+## Live-extractor smoke verdict
 
-**Corpus:** LoCoMo conv 1 only (1 conversation, ~N QA items)
-**Model:** gemma4-26b-a4b @ LiteLLM
-**Purpose:** End-to-end sanity check; no metrics claims.
-
-## Rule-based baseline (reference)
-- factCount: R
-- stateHash (first 12 chars): XXXXXXXXXXXX
-- Wall time: T_r seconds
-
-## Live run (cold)
-- factCount: L
-- stateHash (first 12 chars): YYYYYYYYYYYY
-- Wall time: T_l_cold seconds
-- Cache files written: N
-
-## Live run (warm)
-- factCount: L (identical)
-- stateHash: YYYYYYYYYYYY (identical)
-- Wall time: T_l_warm seconds
-- Cache hit rate: 100%
-
-## Sample extracted facts (live, first 5)
-1. ...
-
-## Sample extracted facts (rule-based, first 5) for contrast
-1. ...
-
-## Verdict
-- ✅ Live extraction runs end-to-end without crashes.
-- ✅ Cache produces deterministic replay.
-- ✅ Live facts are structurally distinct from rule-based (narrative vs pronoun-matches).
+- ✅ Modal Volume cache intact at 1182 entries post-run.
+- ✅ Synthetic sweep completed without crashes.
+- ✅ run_point on LoCoMo-1 produced facts; stateHash differs from rule-based reference (capture from a prior 9.4.x run).
 - [If any check fails: blocker for Tasks 5–10. Report to controller.]
 ```
 
-**Step 7: Leave artifact untracked**
-
-Phase 9 convention: smoke + sweep writeups stay untracked for controller review before the Task 11 batch-commit.
-
-```bash
-git status --short docs/bench/sweeps/
-```
-
-Expected: `?? docs/bench/sweeps/YYYY-MM-DD-smoke-live.md`.
-
-**No code commit at Task 4** — execution-only task. If Step 5 reveals a bug in Task 1/2/3, patch and commit separately.
+**Step 6: No code commit at Task 4** — execution-only task. If Step 3 reveals a bug in Task 1/2/3, patch and commit separately.
 
 ---
 
-## Task 5: Full-LoCoMo τ sweep (re-run)
+## Tasks 5–10: shared Modal sweep protocol
 
-**Objective:** Re-run the τ sweep (TIER2_TAU_CONFIDENCE × TIER2_TAU_GAP) on full LoCoMo with live extraction. Produce `docs/bench/sweeps/YYYY-MM-DD-tau-live.md`.
+Every sweep in Tasks 5–10 runs through the Modal substrate, not `node bench/sweeps/*.js` directly. The shared protocol:
+
+1. **Prereq:** `.env.bench` exists and Eva's Nano-GPT key is populated. `modal run bench/modal/upload_cache.py` shows `cacheFiles ≥ 1182`.
+2. **Dispatch:** `modal run bench/modal/sweep_app.py --mode run-sweep --sweep-name <name> --local-out docs/bench/runs`
+3. **Artifact:** Modal's `--local-out` writes `docs/bench/runs/YYYY-MM-DDThh-mm-ssZ-<name>.{md,json}` to the host and mirrors to `/data/runs/<ts>-<name>/` on the Volume (durable per 9.4.9 Task 7's `persist-serverless-compute-results` pattern).
+4. **Post-process:** rename to canonical `docs/bench/sweeps/YYYY-MM-DD-<name>-live.md` at Task 11 batch-commit time. Until then, the run timestamps stay in `docs/bench/runs/` (gitignored per 9.4.9).
+5. **Cache budget:** every sweep's synthetic smoke should complete in <3 min wall-clock; if it times out, the swept knob invalidates the cache (see `sweep-cache-invalidation-audit`). Only Task 7's BATCH_SIZE round is expected to trigger Nano-GPT live calls.
+
+**SWEEP_CONFIGS edits needed before Tasks 5/8/10 run:**
+
+Tasks 5 and 8 restore full grids; Task 10 adds two new entries. Land all three edits as a single commit at the start of Task 5 via a subagent patch to `bench/modal/sweep_app.py`:
+
+```python
+SWEEP_CONFIGS = {
+    "tau": {
+        # 9.5: restored to Phase 9 Task 4 grid shape. 9.4.8 trimmed this
+        # to a 4-knob validation point after amending gap=10; 9.5 re-sweeps
+        # under live extraction to detect whether the gap=10 plateau holds
+        # or the elbow shifts.
+        "knobs": [
+            {"name": "TIER2_TAU_CONFIDENCE", "values": [0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 4.0, 5.0]},
+            {"name": "TIER2_TAU_GAP",        "values": [0.1, 0.3, 0.5, 1.0, 3.0, 10.0]},
+        ],
+        "primary_metric": "recallAt5",
+        "renderer": render_tau_report,
+    },
+    "bm25": {
+        # 9.5: restored from 9.4.8's 2-knob validation point to the full
+        # 4×4 grid so the renderer can surface a heatmap.
+        "knobs": [
+            {"name": "TAG_BOOST",     "values": [1, 2, 3, 4]},
+            {"name": "SUBJECT_BOOST", "values": [1, 2, 3, 4]},
+        ],
+        "primary_metric": "mrr",
+        "renderer": render_bm25_report,
+    },
+    "hops": {  # NEW in 9.5
+        "knobs": [
+            {"name": "TIER3_MAX_HOPS", "values": [1, 2, 3, 4]},
+        ],
+        "primary_metric": "mrr",
+        "renderer": render_tau_report,  # reuse tabular renderer; single-axis
+        "base_overrides": GRAPH_BASE_OVERRIDES,  # gap=10
+    },
+    "relw": {  # NEW in 9.5
+        "knobs": [
+            {"name": "EXPLICIT_RELATION_WEIGHT", "values": [0.5, 1.0, 1.5, 2.0, 3.0]},
+        ],
+        "primary_metric": "mrr",
+        "renderer": render_tau_report,
+        "base_overrides": GRAPH_BASE_OVERRIDES,
+    },
+}
+```
+
+The `graph` and `consolidation` sweep paths already exist as `run_graph_sweep`/`run_consolidation_sweep` functions (not in `SWEEP_CONFIGS`); Task 6 and Task 7 dispatch those directly via their own CLI modes (already wired in 9.4.9). Task 7 additionally needs a new `BATCH_SIZE` round appended to the consolidation sweep's round list (see Task 7 body).
+
+**Subagent hand-off note:** the subagent executing this preamble should open `bench/modal/sweep_app.py`, locate the existing `SWEEP_CONFIGS` dict (~line 459) and the `GRAPH_BASE_OVERRIDES` constant (~line 506), apply the edits above, and verify by running `modal run bench/modal/sweep_app.py --mode run-sweep --sweep-name hops --synthetic` to confirm the new entry dispatches cleanly. Commit: `feat(bench): restore full τ/bm25 grids + add hops/relw sweep configs (9.5 prep)`.
+
+---
+
+## Task 5: Full-LoCoMo τ sweep (live extraction, Modal)
+
+**Objective:** Run the full 48-point τ grid (`TIER2_TAU_CONFIDENCE × TIER2_TAU_GAP`) on full LoCoMo via Modal with the warm cache + live-extractor gate. Detect whether the gap=10 plateau holds or the elbow relocates under live extraction.
 
 **Pre-flight:**
 ```bash
-grep -n "TIER2_TAU_CONFIDENCE" bench/sweeps/tau.js
+modal run bench/modal/upload_cache.py
+grep -A 10 "\"tau\":" bench/modal/sweep_app.py | head -12
 ```
-Expected: sweep grid present (6 × 8 = 48 points from Phase 9).
+Expected: 1182 cache entries; 8×6 = 48-point tau grid restored.
 
-**Step 1: Source env**
-
+**Step 1:**
 ```bash
-source .env.bench
-echo "STARMEM_BENCH_LIVE_EXTRACTOR=$STARMEM_BENCH_LIVE_EXTRACTOR (should be 1)"
+modal run bench/modal/sweep_app.py --mode run-sweep --sweep-name tau --local-out docs/bench/runs
 ```
 
-**Step 2: Run the sweep on full LoCoMo**
+Cache is warm from 9.4.8 for all 48 points (retrieval knobs don't flow into the extraction cache key). Wall-clock: ~3–4 min (two 32-container waves under free-tier cap).
 
-```bash
-node bench/sweeps/tau.js --conversations 10 2>&1 | tee /tmp/tau-live.log
-```
+**Step 2: Inspect elbow**
 
-Wall time: extraction runs once per `(conv, batch)` cache-miss then replays for every τ point. First conversation dominates; subsequent sweeps reuse cache.
-
-**Step 3: Inspect results for elbow**
-
-```bash
-head -60 docs/bench/sweeps/YYYY-MM-DD-tau-live.md
-```
-
+Modal prints the rendered report to stdout and `.md`/`.json` land in `docs/bench/runs/`. The renderer flags:
 - `max(mrr) − min(mrr) > 0.05` → elbow exists; recommend (τ_conf, τ_gap) corner.
-- Surface still flat → report for retro; specDefaults hold.
+- Surface flat → report for retro; specDefault holds (gap=10 amendment from 9.4.8 stays).
 
-**Step 4: Leave artifact untracked, summarize to controller**
-
-Report:
-- Total points, cache-hit rate after Task 4's warm-up.
-- Elbow location (if any) or "flat surface" verdict.
-- Any crashes, OOMs, extreme latencies.
+**Step 3: Leave artifact in `docs/bench/runs/` for Task 11 batch-rename and commit.**
 
 ---
 
-## Task 6: Full-LoCoMo graph sweep (re-run)
+## Task 6: Full-LoCoMo graph sweep (live extraction, Modal)
 
-**Objective:** Re-run the graph sweep (5 rounds: TIER3_LAMBDA_1, TIER3_LAMBDA_2, TIER3_BEAM_WIDTH, EDGE_CAP_PER_ENTRY, COOCCURRENCE_WEIGHT) on full LoCoMo. Produce `docs/bench/sweeps/YYYY-MM-DD-graph-live.md`.
+**Objective:** Re-run the 9.4.9 graph coordinate descent (6 rounds: `TIER3_LAMBDA_1`, `TIER3_LAMBDA_2`, `TIER3_BEAM_WIDTH`, `TIER3_SEEDS_K`, `EDGE_CAP_PER_ENTRY`, `COOCCURRENCE_WEIGHT`) under live extraction. The 9.4.9 retro found three rounds' winners were coverage-bias artifacts (`n_scored` dropped 12–16pp); live extraction may resolve or re-produce that. Renderer already enforces the hardened amendment criteria (ΔMRR ≥ 0.02 AND coverage within 5pp of baseline).
 
 **Pre-flight:**
 ```bash
-grep -n "TIER3_LAMBDA_1\|BEAM_WIDTH\|EDGE_CAP" bench/sweeps/graph.js | head
+grep -n "GRAPH_ROUNDS\s*=\s*\[" bench/modal/sweep_app.py
 ```
-Expected: all 5 round configurations present.
+Expected: list of 6 rounds present (9.4.9 shipped these).
 
-**Step 1: Run**
-
+**Step 1:**
 ```bash
-source .env.bench
-node bench/sweeps/graph.js --conversations 10 2>&1 | tee /tmp/graph-live.log
+modal run bench/modal/sweep_app.py --mode run-graph-sweep --local-out docs/bench/runs
 ```
 
-Cache is warm from Task 5 — extraction keys don't depend on retrieval knobs, so every Task-5 miss becomes a Task-6 hit.
+Cache warm from Task 5; 22 points × 6 rounds, coordinate descent. Wall-clock: ~8 min (one wave per round under the 32-cap).
 
-**Step 2: Inspect per-round elbows**
+**Step 2: Per-round verdicts**
 
-For each of the 5 knobs, check Δmrr vs round baseline:
-- Δmrr ≥ 0.05 on any value → knob has signal; recommend value.
-- Δmrr < 0.05 everywhere → round is flat; specDefault holds.
+Renderer stamps ⚠️ on any row where `n_scored` deviates >5pp from baseline coverage. HOLD (subset-selection bias) verdicts print per-round. Read the final amendment summary section — if any round fires AMEND, pass the knob+value to Task 11's baseline.json update.
 
-**Step 3: Report + leave untracked**
+**Step 3: Leave artifact in `docs/bench/runs/`.**
 
 ---
 
-## Task 7: Full-LoCoMo consolidation sweep + EXTRACT_MAX_TOKENS observation
+## Task 7: Full-LoCoMo consolidation sweep + BATCH_SIZE + EXTRACT_MAX_TOKENS
 
-**Objective:** Re-run DEDUP_JACCARD_THRESHOLD sweep on full LoCoMo. Additionally, measure real token-output distributions per batch to inform `EXTRACT_MAX_TOKENS`. Produce `docs/bench/sweeps/YYYY-MM-DD-consolidation-live.md`.
+**Objective:** Re-run `DEDUP_JACCARD_THRESHOLD` on live extraction (Branch C fired on rule-based per 9.4.9); add the `BATCH_SIZE` round deferred from 9.4.9 (cache-key trap, dissolved under live extraction that regenerates on demand); observe real token distributions from the cache to inform `EXTRACT_MAX_TOKENS`.
 
 **Pre-flight:**
 ```bash
-grep -n "DEDUP_JACCARD_THRESHOLD\|factLengths" bench/sweeps/consolidation.js bench/harness/seeder.js
+grep -n "CONSOLIDATION_ROUNDS\|run_consolidation_sweep" bench/modal/sweep_app.py | head
 ```
-Expected: threshold sweep grid + `factLengths` collection in seeder already present from Phase 9 Task 6.
+Expected: `run_consolidation_sweep` function present (9.4.9 shipped this).
 
-**Step 1: Run the sweep**
+**Step 1: Edit `bench/modal/sweep_app.py` to add BATCH_SIZE round**
+
+Locate the consolidation round list (near `DEDUP_JACCARD_THRESHOLD`). Append:
+
+```python
+{"name": "batch_size", "knob": "BATCH_SIZE", "values": [8, 16, 24, 32, 48]},
+```
+
+Grid from 9.4.9 retro's deferred handoff. Commit: `feat(bench): add BATCH_SIZE round to consolidation sweep (9.5 Task 7)`.
+
+**Step 2: Dispatch the consolidation sweep**
 
 ```bash
-source .env.bench
-node bench/sweeps/consolidation.js --conversations 10 2>&1 | tee /tmp/consolidation-live.log
+modal run bench/modal/sweep_app.py --mode run-consolidation-sweep --local-out docs/bench/runs
 ```
 
-**Step 2: Post-process cache for token observation**
+`DEDUP_JACCARD_THRESHOLD`: 5 points, warm cache → ~90s wall-clock.
+`BATCH_SIZE`: 5 points, cache-key invalidation → ~2.5 min wall-clock for live regeneration (~500 Nano-GPT calls per 9.4.9 retro's budget estimate).
 
-After the sweep, examine cached responses for a token-proxy distribution:
+**Step 3: EXTRACT_MAX_TOKENS observation (host-side, after Modal completes)**
 
 ```bash
 node -e "
@@ -1022,54 +1045,48 @@ console.log('Current EXTRACT_MAX_TOKENS: 2048. Recommend:', advise);
 " 2>&1 | tee /tmp/extract-tokens-observation.log
 ```
 
-Append the result as an "EXTRACT_MAX_TOKENS observation" section to `docs/bench/sweeps/YYYY-MM-DD-consolidation-live.md`.
+Append the result as an "EXTRACT_MAX_TOKENS observation" section to the consolidation writeup.
 
-**Note on token truth-source:** `chars/4` is a rough proxy. If the LLM's raw response body carries `usage.completion_tokens` (OpenAI format), extend `extractionCache.js` in a follow-up to persist it and rerun this step for truth numbers. For Task 7, char-proxy is sufficient — the aim is an order-of-magnitude decision (raise/hold/lower), not a precise value.
+**Note on token truth-source:** `chars/4` is a rough proxy. If `usage.completion_tokens` is available in Nano-GPT responses, extend `extractionCache.js` in a follow-up to persist it. For Task 7, char-proxy is sufficient — aim is raise/hold/lower, not precision.
 
-**Step 3: Inspect update-rate band**
+**Step 4: Inspect update-rate band (BATCH_SIZE + DEDUP rounds jointly)**
 
-Phase 6 retro band rule: `updateRate ∈ [0.2, 0.4]` is healthy. Outside = flag (not fix). `updateRate ≈ 0` = extractor still too thin; `updateRate > 0.5` = dedup too lax.
+Phase 6 band rule: `updateRate ∈ [0.2, 0.4]` is healthy. 9.4.9 rule-based hit 0.007–0.045 on DEDUP (Branch C). Under live extraction, expect `updateRate` to climb into the band — if it doesn't, the extractor is still too conservative and Phase 11 inherits "live extractor under-stresses dedup" as a new finding.
 
-**Step 4: Report + leave untracked**
-
-Recommendations to surface:
-- `DEDUP_JACCARD_THRESHOLD` action (raise/lower/hold specDefault 0.7).
-- `EXTRACT_MAX_TOKENS` action (raise/lower/hold specDefault 2048) with p95 observed.
+**Step 5: Leave artifact in `docs/bench/runs/`.**
 
 ---
 
-## Task 8: Full-LoCoMo bm25 sweep (re-run)
+## Task 8: Full-LoCoMo bm25 sweep (live extraction, Modal)
 
-**Objective:** Re-run TAG_BOOST × SUBJECT_BOOST sweep on full LoCoMo. Produce `docs/bench/sweeps/YYYY-MM-DD-bm25-live.md`.
-
-**Key expectation:** Phase 9 reported `tags-populated-rate = 0%` because rule-based emitted `tags: []` on short content. Live extractor should populate tags (system prompt demands them). If tags-rate stays <5%, the sweep remains structurally blind — flag.
+**Objective:** Run the restored 4×4 `TAG_BOOST × SUBJECT_BOOST` grid on live extraction. Phase 9 flagged `tags-populated-rate = 0%` under rule-based; live extractor should populate tags per the system prompt.
 
 **Pre-flight:**
 ```bash
-grep -n "TAG_BOOST\|tags-populated" bench/sweeps/bm25.js
+grep -A 10 "\"bm25\":" bench/modal/sweep_app.py | head -12
 ```
-Expected: TAG × SUBJECT grid + tags-populated-rate reporting present from Phase 9 Task 7.
+Expected: 4×4 grid restored by the preamble commit.
 
-**Step 1: Run**
-
+**Step 1:**
 ```bash
-source .env.bench
-node bench/sweeps/bm25.js --conversations 10 2>&1 | tee /tmp/bm25-live.log
+modal run bench/modal/sweep_app.py --mode run-sweep --sweep-name bm25 --local-out docs/bench/runs
 ```
 
-**Step 2: Inspect heatmap**
+Warm cache; ~2 min wall-clock.
 
-- `max(mrr) − min(mrr) > 0.05` → real signal; recommend (TAG_BOOST, SUBJECT_BOOST) corner.
-- Flat + tags-populated-rate > 50% → scorer genuinely doesn't care on this corpus.
-- Flat + tags-populated-rate < 5% → extractor still not tagging; inspect sample extractions and file Phase 11 item.
+**Step 2: Inspect heatmap + tags-populated-rate**
 
-**Step 3: Report + leave untracked**
+- `max(mrr) − min(mrr) > 0.05` → signal; recommend corner.
+- Flat + tags-populated-rate > 50% → scorer genuinely indifferent; hold specDefault.
+- Flat + tags-populated-rate < 5% → extractor still not tagging; file Phase 11.
+
+**Step 3: Leave artifact in `docs/bench/runs/`.**
 
 ---
 
 ## Task 9: Full-LoCoMo baseline comparison
 
-**Objective:** Run the 4-retriever baseline on full LoCoMo. Enforce the structural invariant (decision 8): `ladder_mrr ≥ bm25only_mrr − 0.02`. If inverted, do NOT investigate here — file Phase 11.
+**Objective:** Run the 4-retriever baseline (ladder, bm25only, recency, random) on full LoCoMo with live extraction. Enforce Decision 8's structural invariant. Do NOT investigate inversions here — file Phase 11.
 
 **Pre-flight:**
 ```bash
@@ -1077,242 +1094,86 @@ grep -n "ladderVsBm25Only\|structuralInvariants" bench/baselines.js
 ```
 Expected: invariant-check logic present from Phase 9 Task 8.
 
-**Step 1: Run**
+**Step 1:** Baselines don't currently route through Modal `SWEEP_CONFIGS` (9.4.8/9.4.9 kept them local because Modal only parallelizes sweep points, and the 4-baseline run is a single pass). Run locally with `.env.bench` sourced:
 
 ```bash
 source .env.bench
 npm run bench:baselines -- --conversations 10 2>&1 | tee /tmp/baselines-live.log
 ```
 
-**Step 2: Inspect the structural verdict**
+The `--local-out`-equivalent is already wired: `bench/baselines.js` writes to `docs/bench/runs/` per 9.4.9.
 
-`bench/baselines.js` lines 221–228 emit one of four verdicts:
-- ✅ `ladder > bm25only > recency > random` → structural signal; scorer chain earns its keep.
-- ⚠️ `ladder ≈ bm25only` (|Δmrr| ≤ 0.02) → scorer chain not earning its keep. DO NOT investigate; file Phase 11 in Task 11 retro.
-- ❌ `ladder ≈ random` → structural bug. STOP; escalate to controller.
-- ⚠️ Mixed signal → review corpus size + extraction quality, file Phase 11.
+**Step 2: Invariant verdict**
 
-**Step 3: Record verdict for retro**
+`bench/baselines.js` emits one of four verdicts:
+- ✅ `ladder > bm25only > recency > random` → scorer chain earns its keep.
+- ⚠️ `ladder ≈ bm25only` (|Δmrr| ≤ 0.02) → scorer chain not earning; file Phase 11 in Task 11.
+- ❌ `ladder ≈ random` → structural bug. STOP; escalate.
+- ⚠️ Mixed → review corpus size + extraction quality, file Phase 11.
 
-Feeds directly into Task 11's retro narrative.
+**Step 3: Record verdict for Task 11 retro narrative.**
 
-**Step 4: Leave artifact untracked, report to controller**
+**Step 4: Leave artifact in `docs/bench/runs/`.**
 
 ---
 
-## Task 10: New sweeps — TIER3_MAX_HOPS and EXPLICIT_RELATION_WEIGHT
+## Task 10: New sweeps — `hops` and `relw` (Modal)
 
-**Objective:** Sweep the two remaining keys in `_SWEPT_RETRIEVAL_KEYS` that Phase 9 didn't cover. Produce two writeups under `docs/bench/sweeps/`.
-
-**Files:**
-- Create: `bench/sweeps/hops.js`
-- Create: `bench/sweeps/relw.js`
-- Modify: `package.json` (add `bench:sweep:hops` and `bench:sweep:relw` scripts)
-- Artifacts: `docs/bench/sweeps/YYYY-MM-DD-hops-live.md`, `docs/bench/sweeps/YYYY-MM-DD-relw-live.md`
+**Objective:** Execute the two new `SWEEP_CONFIGS` entries added in the Task 5 preamble. Both sweep single axes with `GRAPH_BASE_OVERRIDES` (gap=10 baseOverride).
 
 **Pre-flight:**
 ```bash
-# Confirm both keys are in _SWEPT_RETRIEVAL_KEYS and readable via RETRIEVAL.*
-grep -A 15 "_SWEPT_RETRIEVAL_KEYS = Object.freeze" src/core/constants.js
-grep -n "TIER3_MAX_HOPS\|EXPLICIT_RELATION_WEIGHT" src/core/constants.js
+grep -A 4 "\"hops\":\|\"relw\":" bench/modal/sweep_app.py
 ```
-Expected: both keys listed; specDefaults present (check values before drafting the sweep grid).
+Expected: both entries from preamble commit; `base_overrides: GRAPH_BASE_OVERRIDES` threaded through.
 
-**Step 1: Read the existing tau.js sweep as template**
+**Step 1: Dispatch both sweeps**
 
 ```bash
-sed -n '1,80p' bench/sweeps/tau.js
+modal run bench/modal/sweep_app.py --mode run-sweep --sweep-name hops --local-out docs/bench/runs
+modal run bench/modal/sweep_app.py --mode run-sweep --sweep-name relw --local-out docs/bench/runs
 ```
 
-`hops.js` and `relw.js` are thin clones of `tau.js` — same `parseArgs`, same `synthesizeSyntheticCorpus`, same `_driver.sweep` call, different `knobs`.
+Warm cache (same extraction keys as Tasks 5–9); each sweep: ~1 min.
 
-**Step 2: Create `bench/sweeps/hops.js`**
+**Step 2: Inspect elbows**
 
-Full file (copy-paste — substitute the `knobs` block):
+Same rule as Tasks 5/8: `max(mrr) − min(mrr) > 0.05` = signal; flat = specDefault holds (`TIER3_MAX_HOPS=2`, `EXPLICIT_RELATION_WEIGHT=1.0`).
 
-```javascript
-#!/usr/bin/env node
-/**
- * TIER3_MAX_HOPS sweep.
- *
- * Usage:
- *   node bench/sweeps/hops.js [--conversations N] [--primary NAME] [--synthetic]
- *
- * @see docs/plans/phase-9-5-live-extraction.md Task 10
- */
-
-import { mkdir, writeFile } from 'node:fs/promises';
-import path from 'node:path';
-import { sweep, METRIC_ACCESSORS } from './_driver.js';
-import { loadLocomo } from '../loaders/index.js';
-import { _resetLLMClientForTests } from '../../src/consolidation/llmClient.js';
-
-function parseArgs() {
-    const args = process.argv.slice(2);
-    const opts = {};
-    for (let i = 0; i < args.length; i++) {
-        const arg = args[i];
-        if (arg.startsWith('--')) {
-            const key = arg.slice(2);
-            const next = args[i + 1];
-            if (next && !next.startsWith('--')) { opts[key] = next; i++; }
-            else { opts[key] = 'true'; }
-        }
-    }
-    return opts;
-}
-
-async function main() {
-    const args = parseArgs();
-    const primary = args.primary || 'mrr';
-    const useSynthetic = args.synthetic === 'true';
-
-    const corpus = useSynthetic
-        ? (await import('./tau.js')).synthesizeSyntheticCorpus?.() ?? []
-        : await loadLocomo({ maxConversations: args.conversations ? Number(args.conversations) : undefined });
-
-    const knobs = {
-        TIER3_MAX_HOPS: [1, 2, 3, 4],
-    };
-
-    const result = await sweep({
-        corpus,
-        knobs,
-        primaryMetric: primary,
-        metricAccessor: METRIC_ACCESSORS[primary],
-        sweepName: 'hops',
-    });
-
-    _resetLLMClientForTests();
-
-    const dir = path.resolve('docs/bench/sweeps');
-    await mkdir(dir, { recursive: true });
-    const date = new Date().toISOString().slice(0, 10);
-    const out = path.join(dir, `${date}-hops-live.md`);
-    await writeFile(out, result.writeup, 'utf8');
-    console.log(`\nWriteup: ${out}`);
-}
-
-main().catch(err => {
-    console.error(err);
-    process.exitCode = 1;
-});
-```
-
-**Step 3: Create `bench/sweeps/relw.js`**
-
-Identical structure; change only the `knobs` block and the sweepName/filename:
-
-```javascript
-    const knobs = {
-        EXPLICIT_RELATION_WEIGHT: [0.5, 1.0, 1.5, 2.0, 3.0],
-    };
-    // ...
-    sweepName: 'relw',
-    // ...
-    const out = path.join(dir, `${date}-relw-live.md`);
-```
-
-**Step 4: Add package.json scripts**
-
-Use `patch` to add two entries to the `"scripts"` block in `package.json`:
-
-```json
-"bench:sweep:hops": "node bench/sweeps/hops.js",
-"bench:sweep:relw": "node bench/sweeps/relw.js",
-```
-
-(Place after the existing `"bench:sweep:bm25"` line, comma-separated.)
-
-**Step 5: Smoke-test the drivers on synthetic**
-
-Before full LoCoMo runs, smoke each on synthetic to confirm they don't crash:
-
-```bash
-unset STARMEM_BENCH_LIVE_EXTRACTOR
-node bench/sweeps/hops.js --synthetic --conversations 2 2>&1 | tail -30
-node bench/sweeps/relw.js --synthetic --conversations 2 2>&1 | tail -30
-```
-
-Expected: each completes without error and emits a writeup file (flat metrics are fine at this stage — we're checking the driver wires up).
-
-**Step 6: Lint + typecheck**
-
-```bash
-npm run lint && npm run typecheck
-```
-
-Expected: green.
-
-**Step 7: Commit the drivers (code only — writeups follow in Step 8)**
-
-```bash
-git add bench/sweeps/hops.js bench/sweeps/relw.js package.json
-git commit -m "feat(bench): TIER3_MAX_HOPS and EXPLICIT_RELATION_WEIGHT sweep drivers (Task 10)"
-```
-
-**Step 8: Run the live sweeps**
-
-```bash
-source .env.bench
-node bench/sweeps/hops.js --conversations 10 2>&1 | tee /tmp/hops-live.log
-node bench/sweeps/relw.js --conversations 10 2>&1 | tee /tmp/relw-live.log
-```
-
-Cache is warm from Tasks 5–9; both sweeps should run entirely on cache hits (zero LLM calls).
-
-**Step 9: Inspect elbows**
-
-Same rule as Tasks 5, 7, 8: `max(mrr) − min(mrr) > 0.05` = signal; flat = specDefault holds.
-
-**Step 10: Leave artifacts untracked**
-
-Both `hops-live.md` and `relw-live.md` join the untracked artifact pile for Task 11's batch commit.
-
-**Step 11: Report to controller**
-
-Per-knob recommendation (raise/lower/hold) for `TIER3_MAX_HOPS` and `EXPLICIT_RELATION_WEIGHT`.
+**Step 3: Leave artifacts in `docs/bench/runs/`.**
 
 ---
 
+
 ## Task 11: Populate baseline.json + write retro
 
-**Objective:** Update `docs/bench/baseline.json` with all measured values from Tasks 5–10, transitioning `status` from `"deferred"` to `"measured"`. Write `docs/plans/phase-9-5-retro.md` with an honest narrative: what moved, what didn't, what we're filing to Phase 11. Batch-commit all sweep/baseline writeups alongside.
+**Objective:** Refresh `docs/bench/baseline.json` with live-extraction re-measurements from Tasks 5–10 (the artifact is already `status: "measured"` post-9.4.8/9.4.9; 9.5 supersedes the rule-based numbers). Write `docs/plans/phase-9-5-retro.md` with an honest narrative: what moved, what didn't, what we're filing to Phase 11. Batch-rename `docs/bench/runs/*` to canonical `docs/bench/sweeps/*-live.md` and commit.
 
 **Files:**
 - Modify: `docs/bench/baseline.json`
 - Create: `docs/plans/phase-9-5-retro.md`
-- Commit (all at once): every untracked file under `docs/bench/sweeps/*-live.md` and `docs/bench/baselines/*-live.md`
+- Rename + commit: every `docs/bench/runs/YYYY-MM-DDThh-mm-ssZ-<name>.{md,json}` from Tasks 4–10 → `docs/bench/sweeps/YYYY-MM-DD-<name>-live.md` (drop the JSON from the canonical path; keep in `docs/bench/runs/` per gitignore for provenance).
 
 **Pre-flight:**
 ```bash
-git status --short docs/bench/
+ls docs/bench/runs/*.md | wc -l
 ```
-Expected: one `?? *-smoke-live.md`, four `?? *-{tau,graph,consolidation,bm25}-live.md`, one `?? *-comparison-live.md`, two `?? *-{hops,relw}-live.md` — 8 untracked writeups. Confirm before editing `baseline.json`.
+Expected: ≥8 artifacts (smoke + τ + graph + consolidation + bm25 + baselines + hops + relw). Confirm before editing `baseline.json`.
 
 **Step 1: Update baseline.json**
 
-For each of the 10 tuned keys (and the new 2 from Task 10, added to the `"tuned"` object), replace:
+For each of the 10 existing `tuned` entries plus the new 2 from Task 10, replace the `source` and `note` with the 9.5 live-extraction sweep writeups. Keep `specDefault` constant. Update `measured` if Tasks 5–10 produced an amendment-candidate that cleared both thresholds (ΔMRR ≥ 0.02 AND coverage within 5pp of baseline per 9.4.9's hardened criteria).
 
-```json
-{ "specDefault": X, "measured": null, "source": "sweeps/2026-04-21-*.md", "note": "..." }
-```
-
-with:
-
-```json
-{ "specDefault": X, "measured": Y, "source": "sweeps/YYYY-MM-DD-*-live.md", "note": "<elbow | flat; recommendation>" }
-```
-
-If a sweep was flat, `measured` stays equal to `specDefault` and the note records "flat surface on full LoCoMo with live extractor — specDefault retained".
+If a sweep was flat or HOLD, `measured` stays at the 9.4.8/9.4.9 value and the note records "flat surface under live extraction on full LoCoMo — 9.4.8/9.4.9 value retained".
 
 Top-level fields to update:
 - `"asOf"`: today's date
 - `"gitSha"`: current HEAD (record after the Task 11 commit)
-- `"corpus"`: `"locomo10-full"`
-- `"status"`: `"measured"`
-- `"statusReason"`: e.g. `"All 4 Phase 9 sweeps + 2 new sweeps (hops, relw) re-run with live Gemma 4 26B A4B extractor on full LoCoMo. [N] elbows found, [N] knobs flat. See per-sweep notes and phase-9-5-retro.md."`
-- `"headlineMetrics"`: replace synthetic-corpus row with full-LoCoMo numbers from Task 9's comparison writeup. Include the new `"corpus"` subfield: `"locomo10-full (10 convs, ~2000 QA items)"`.
+- `"corpus"`: `"locomo10-full (1986 QA items, live extraction)"`
+- `"status"`: stays `"measured"`
+- `"statusReason"`: new narrative — "Sub-phase 9.5 re-measured all sweeps on the 9.4.8 Modal substrate with live extraction (google/gemma-4-26b-a4b-it via Nano-GPT, temperature=0, warm cache from 9.4.8). Added `TIER3_MAX_HOPS` and `EXPLICIT_RELATION_WEIGHT` sweeps and the BATCH_SIZE consolidation round deferred from 9.4.9. [N] amendments landed; [N] knobs held under live data. Supersedes the rule-based-extractor baseline numbers from 9.4.6–9.4.9 for any knob where live extraction shifted the elbow."
+- `"knownIssues"`: append a 9.5 entry for any Phase 11 follow-up surfaced by Task 9's invariant check.
+- `"headlineMetrics"`: update with Task 9's full-LoCoMo live-extraction ladder/bm25only/recency/random values.
 - `"structuralInvariants.ladderVsBm25Only"`: update `measuredMrrDelta` and `status` from Task 9 verdict.
 
 **Step 2: Run the baseline-json schema validator**
@@ -1321,76 +1182,11 @@ Top-level fields to update:
 npm test -- tests/integration/bench/baseline-json.test.js
 ```
 
-Expected: green. The Phase 9 Task 9 validator asserts the JSON schema (top-level fields, per-knob shape). If it fails, the edit broke the schema.
+Expected: green. The Phase 9 Task 9 validator asserts the JSON schema (top-level fields, per-knob shape).
 
 **Step 3: Write `docs/plans/phase-9-5-retro.md`**
 
-Template (follow Phase 9 retro's shape — Objective, Decisions Held/Revised table, Surprises, Notes for Phase 10/11):
-
-```markdown
-# Sub-phase 9.5 Retro
-
-**Plan:** docs/plans/phase-9-5-live-extraction.md
-**Shipped:** YYYY-MM-DD at commit XXXXXXX
-**Corpus:** LoCoMo 10 conversations (~2000 QA items)
-**Extractor:** gemma4-26b-a4b via LiteLLM, temperature=0, cached
-
-## 1. What shipped
-
-- Node-native LLM extractor (`bench/harness/llmExtractor.js`) with temperature=0.
-- On-disk sha256-keyed extraction cache (`bench/harness/extractionCache.js`).
-- Env-gated live/rule-based switch in the seeder.
-- Two new sweep drivers (hops, relw).
-- 7 full-LoCoMo sweep writeups + 1 baseline comparison.
-- Measured `baseline.json` (status: measured).
-
-**Test counts:**
-- Phase 9 close: 70 suites / 734 tests.
-- Sub-phase 9.5 close: [N] suites / [N] tests (+M from Tasks 1-3 + smoke).
-
-## 2. Decisions held / revised
-
-| Decision (from plan header) | Verdict | Rationale |
-|---|---|---|
-| 1. Plan filename | Held | ... |
-| 2. LLM transport (OpenAI-compatible) | Held | ... |
-| 3. Extraction cache on by default | Held | ... |
-| ... (all 11) ... |
-
-## 3. What the sweeps found
-
-Per-knob summary (one line each):
-- `TIER2_TAU_CONFIDENCE`: [elbow at X | flat — held 2.0]
-- `TIER2_TAU_GAP`: ...
-- `TIER3_LAMBDA_1` ... 2 ... MAX_HOPS ... BEAM_WIDTH ... EDGE_CAP_PER_ENTRY ... COOCCURRENCE_WEIGHT ... EXPLICIT_RELATION_WEIGHT: ...
-- `DEDUP_JACCARD_THRESHOLD`: ...
-- `TAG_BOOST` / `SUBJECT_BOOST`: ...
-- `EXTRACT_MAX_TOKENS`: char-proxy p95 = [N]; recommend [raise/lower/hold].
-
-Structural invariant (ladder vs bm25only MRR): [PASS: ladder ≥ bm25only − 0.02 | FLAG: ladder < bm25only − 0.02 on full LoCoMo].
-
-## 4. Surprises
-
-1. ...
-
-## 5. Notes for Phase 10 (Playwright harness) and Phase 11 (scorer-chain investigation)
-
-### Phase 11 scope (conditional on Task 9 verdict)
-
-[If ladder < bm25only]: File scorer-chain investigation. Candidate hypotheses: importance × recency × maturity multiplicative chain introduces small perturbations that dominate the BM25 signal on corpora where extraction is clean (tags populated, subjects sharp). Approaches: (a) fusion scorer (RRF) instead of multiplicative; (b) tune weight per factor; (c) skip scorer chain for tier-2 returns when Tier 2 MRR > threshold.
-
-### Phase 10 scope (unchanged)
-
-- Playwright smoke harness (live ST integration end-to-end).
-- UX polish (deferred from Phase 8).
-- External memory-system baselines (Zep, Mem0) per Phase 9 Decision 5 footnote.
-
-### Token-usage truth source (follow-up)
-
-If Task 7's char-proxy EXTRACT_MAX_TOKENS recommendation is ambiguous, extend `extractionCache.js` to persist `usage.completion_tokens` from the OpenAI response body; re-run the post-process script for true token counts.
-```
-
-Fill in the table, narrative, and bullet lists with actual Task 5–10 results.
+Follow the Phase 9 retro's shape — see `docs/plans/phase-9-retro.md` (138 lines) and `docs/plans/phase-9-4-9-retro.md` (149 lines) for structure. Sections: What shipped, Decisions held/revised (table across 13 decisions), What the sweeps found (per-knob one-liners), Surprises, Notes for Phase 10 / Phase 11 / skill library. Extractor line: `google/gemma-4-26b-a4b-it via Nano-GPT, temperature=0, warm cache from 9.4.8`.
 
 **Step 4: Verify no plan-redaction residue**
 
@@ -1399,15 +1195,25 @@ grep -n '=\s*\*\*\*\|=\*\*\*' docs/plans/phase-9-5-retro.md docs/plans/phase-9-5
 ```
 Expected: empty (writing-plans skill's secrets-guard trap check).
 
-**Step 5: Batch-commit all untracked artifacts + baseline.json + retro**
+**Step 5: Batch-rename runs/ to sweeps/ + commit**
 
 ```bash
+for f in docs/bench/runs/*-smoke-live.md docs/bench/runs/*-tau.md docs/bench/runs/*-graph.md docs/bench/runs/*-consolidation.md docs/bench/runs/*-bm25.md docs/bench/runs/*-baselines-*.md docs/bench/runs/*-hops.md docs/bench/runs/*-relw.md; do
+  [ -f "$f" ] || continue
+  base=$(basename "$f" .md)
+  # Extract date from timestamp prefix YYYY-MM-DDThh-mm-ssZ-<name>
+  date=$(echo "$base" | sed -E 's/T.*$//')
+  name=$(echo "$base" | sed -E 's/^[^-]+-[^-]+-[^-]+T[^-]+-[^-]+-[^-]+Z-//')
+  cp "$f" "docs/bench/sweeps/${date}-${name}-live.md"
+done
+
 git add docs/bench/sweeps/*-live.md \
-        docs/bench/baselines/*-live.md \
         docs/bench/baseline.json \
         docs/plans/phase-9-5-retro.md
-git commit -m "docs(bench): sub-phase 9.5 measured baseline + retro (Task 11)"
+git commit -m "docs(bench): sub-phase 9.5 live-extraction baseline + retro (Task 11)"
 ```
+
+(The `docs/bench/runs/` originals stay in place as provenance, gitignored.)
 
 **Step 6: Final suite + lint + typecheck**
 
@@ -1421,10 +1227,8 @@ Expected: all green. No regressions from 9.5 code.
 
 Use `memory` or `hindsight_retain` to record:
 - Sub-phase 9.5 shipped at commit [sha] with [N] tests across [N] suites.
-- Which knobs had signal, which were flat.
+- Which knobs had signal under live extraction, which were flat.
 - Phase 11 follow-up filed (if applicable).
-
----
 
 ## Done-when checklist
 
@@ -1440,6 +1244,6 @@ Use `memory` or `hindsight_retain` to record:
 - [ ] Task 9: Baseline comparison with structural invariant verdict.
 - [ ] Task 10: New hops + relw sweep drivers + writeups.
 - [ ] Task 11: `baseline.json` status=measured, retro written, all artifacts committed.
-- [ ] No tests regress from Phase 9 close (734 tests green minimum).
+- [ ] No tests regress from 9.4.9 close (816 tests green minimum).
 - [ ] No secrets-guard redactions in plan or retro.
 - [ ] Phase 11 scope documented if scorer-chain investigation is warranted.
