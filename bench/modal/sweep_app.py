@@ -531,7 +531,13 @@ def render_graph_report_stub(payload):
     # Gap=10-alone baseline MRR (from docs/bench/baseline.json measured at
     # commit 10f7372, validation sweep confirmed at cb30323).
     BASELINE_GAP10_MRR = 0.8077
+    # Post-9.4.8 baseline coverage: gap=10 produces n_scored=1277 on
+    # LoCoMo-10, = 64.3%. This is DIFFERENT from baseline.json's
+    # "~71% of QAs" which was measured pre-amendment at gap=0.5.
+    # The coverage warning fires on deviations >5pp from this.
+    BASELINE_COVERAGE_PCT = 64.3
     AMENDMENT_THRESHOLD = 0.02  # per plan decision 5
+    COVERAGE_FLOOR_DELTA_PCT = 5.0
 
     # Per-round sections
     round_sections = []
@@ -560,12 +566,13 @@ def render_graph_report_stub(payload):
             lift_str = f"{lift:+.4f}"
             p50 = f"{p['latencyMs']['p50']:.2f}"
             p95 = f"{p['latencyMs']['p95']:.2f}"
-            # Coverage: flag if n_scored < 60% of n_total (baseline ~71%).
-            # Below 60% means the winning knob traded coverage for precision,
-            # and the MRR is computed over a smaller, possibly-easier subset.
+            # Coverage: flag if deviation > COVERAGE_FLOOR_DELTA_PCT from
+            # post-9.4.8 baseline. Below BASELINE - 5pp means the knob
+            # traded coverage for precision, and the MRR is computed
+            # over a smaller, possibly-easier subset.
             coverage_pct = (n_scored / n_total * 100) if isinstance(n_scored, int) and n_total else None
             n_scored_cell = f"{n_scored}"
-            if coverage_pct is not None and coverage_pct < 60:
+            if coverage_pct is not None and abs(coverage_pct - BASELINE_COVERAGE_PCT) > COVERAGE_FLOOR_DELTA_PCT:
                 n_scored_cell = f"⚠️ {n_scored}"
                 has_coverage_drop = True
             # Bold the winner row
@@ -584,10 +591,11 @@ def render_graph_report_stub(payload):
         coverage_warning = ""
         if has_coverage_drop:
             coverage_warning = (
-                "\n\n> **⚠️ Coverage warning:** at least one point in this round scored "
-                "under 60% of the QA corpus (baseline coverage is ~71%). MRR gains may "
-                "reflect subset-selection bias — the knob traded coverage for per-query "
-                "precision. Verify against recall@5 on the full corpus before amending."
+                "\n\n> **⚠️ Coverage warning:** at least one point in this round deviates "
+                f">{COVERAGE_FLOOR_DELTA_PCT}pp from post-9.4.8 baseline coverage "
+                f"(~{BASELINE_COVERAGE_PCT:.0f}%). MRR gains may reflect subset-selection bias — "
+                "the knob traded coverage for per-query precision. Verify against recall@5 on "
+                "the full corpus before amending."
             )
 
         prev_overrides_json = json.dumps(prev_overrides)
@@ -803,50 +811,189 @@ CONSOLIDATION_FLAT_MRR_THRESHOLD = 0.005
 
 
 def render_consolidation_report_stub(payload):
-    """Minimal stub renderer — Task 6 replaces with the full port.
+    """9.4.9 — full consolidation sweep renderer.
 
-    Produces a usable-but-terse Markdown listing each round's points
-    with aggStats counters when available, and the flat/elbow verdict.
-    Full renderer with updateRate band-rule recommendation lands in
-    Task 6.
+    Replaces the Task 3 stub. Per-round tables surface aggStats counters
+    (added/updated/drained/updateRate/dedupHitRate) alongside retrieval
+    metrics. Per-round recommendation follows the Phase 6 retro band
+    rule (target updateRate ∈ [0.2, 0.4], closest to 0.3).
+
+    Hardened amendment criteria (9.4.9 Task 5b preflight — coverage bias
+    finding on graph sweep):
+      - ΔMRR ≥ 0.02 absolute vs spec default, AND
+      - Coverage (n_scored / n_total) stays within 5 percentage points
+        of the baseline coverage (~71% on post-9.4.7 LoCoMo)
+
+    Without the coverage floor, a knob that narrows retrieval to only
+    the easy subset would produce headline MRR gains that don't reflect
+    real improvement — same shape as the seeds_k=1 coverage-bias finding
+    in the graph sweep.
+
+    Branch C fires when MRR range < CONSOLIDATION_FLAT_MRR_THRESHOLD
+    across a round's points — per the 9.4.6 finding that rule-based
+    seeder under-stresses dedup. Flat rounds defer to 9.5.
+
+    Name kept as `_stub` for backward compat.
     """
     from datetime import datetime
     today = datetime.now().isoformat()[:10]
-    lines = [
-        f"# Consolidation sweep — {today} (STUB renderer, Task 6 ships full)",
-        "",
-        f"**Corpus:** {payload['corpus_len']} conversations, {payload['qa_count']} QA items",
-        f"**Rounds:** {len(payload['rounds'])}",
-        "",
-    ]
-    for r in payload["rounds"]:
-        lines.append(f"## Round {r['name']}  (`{r['knob']}`)")
-        lines.append("")
-        lines.append("| value | mrr | recallAt5 | updateRate | dedupHitRate |")
-        lines.append("|---|---|---|---|---|")
+    rounds = payload["rounds"]
+
+    # Baseline MRR for ΔMRR comparisons (gap=10 alone, consistent with
+    # the graph renderer). Consolidation runs offline — knobs affect
+    # storage, not retrieval directly — but we still compare against
+    # the same retrieval baseline.
+    BASELINE_GAP10_MRR = 0.8077
+    BASELINE_COVERAGE_PCT = 64.3  # post-9.4.8 baseline — see graph renderer for rationale
+    AMENDMENT_THRESHOLD = 0.02
+    COVERAGE_FLOOR_DELTA_PCT = 5.0  # coverage must stay within 5pp of baseline
+
+    round_sections = []
+    for r in rounds:
+        knob = r["knob"]
+        header = (
+            f"| {knob} | added | updated | drained | updateRate | dedupHitRate | "
+            f"n_scored | recallAt5 | mrr | ΔMRR vs gap=10 | p50 | p95 |"
+        )
+        separator = "|---|---|---|---|---|---|---|---|---|---|---|---|"
+        rows = []
+        has_coverage_drop = False
         for p in r["points"]:
-            v = p["overrides"][r["knob"]]
-            mrr = f"{p['metrics']['mrr']:.4f}"
-            r5 = f"{p['metrics']['recallAtK']['5']:.4f}"
+            v = p["overrides"][knob]
             agg = p.get("aggStats") or {}
-            ur = f"{agg['updateRate']:.4f}" if "updateRate" in agg else "—"
-            dhr = f"{agg['dedupHitRate']:.4f}" if "dedupHitRate" in agg else "—"
-            lines.append(f"| {v} | {mrr} | {r5} | {ur} | {dhr} |")
-        lines.append("")
+            added = agg.get("added", "—")
+            updated = agg.get("updated", "—")
+            drained = agg.get("drained", "—")
+            ur_raw = agg.get("updateRate")
+            dhr_raw = agg.get("dedupHitRate")
+            ur = f"{ur_raw:.4f}" if ur_raw is not None else "—"
+            dhr = f"{dhr_raw:.4f}" if dhr_raw is not None else "—"
+            m = p["metrics"]
+            n_scored = m.get("n_scored", "—")
+            n_total = m.get("n", 1986)
+            r5 = f"{m['recallAtK']['5']:.4f}"
+            mrr = m["mrr"]
+            mrr_str = f"{mrr:.4f}"
+            lift = mrr - BASELINE_GAP10_MRR
+            lift_str = f"{lift:+.4f}"
+            p50 = f"{p['latencyMs']['p50']:.2f}"
+            p95 = f"{p['latencyMs']['p95']:.2f}"
+
+            coverage_pct = (n_scored / n_total * 100) if isinstance(n_scored, int) and n_total else None
+            n_scored_cell = f"{n_scored}"
+            if coverage_pct is not None and abs(coverage_pct - BASELINE_COVERAGE_PCT) > COVERAGE_FLOOR_DELTA_PCT:
+                n_scored_cell = f"⚠️ {n_scored}"
+                has_coverage_drop = True
+
+            # Bold the winner / band-rule-best row
+            is_winner = (not r["elbow"]["flat"]) and v == r["elbow"]["value"]
+            v_cell = f"**{v}**" if is_winner else str(v)
+
+            rows.append(
+                f"| {v_cell} | {added} | {updated} | {drained} | {ur} | {dhr} | "
+                f"{n_scored_cell} | {r5} | {mrr_str} | {lift_str} | {p50} | {p95} |"
+            )
+        rows_joined = "\n".join(rows)
+
+        # Branch + band-rule recommendation
         if r["elbow"]["flat"]:
-            lines.append(
-                f"**Branch C fires** — MRR range {r['mrr_range']:.4f} < "
-                f"{CONSOLIDATION_FLAT_MRR_THRESHOLD}. Knob inert on this corpus "
-                f"with rule-based extractor; defer tuning to sub-phase 9.5."
+            recommendation = (
+                f"**Branch C fires** — MRR range {r['mrr_range']:.4f} "
+                f"< {CONSOLIDATION_FLAT_MRR_THRESHOLD}. Knob inert on this "
+                f"corpus with rule-based extractor. Defer tuning to "
+                f"sub-phase 9.5 (live extraction regenerates cache on "
+                f"demand and should exercise realistic dedup pressure)."
             )
         else:
-            lines.append(
-                f"**Round winner:** `{r['knob']}={r['elbow']['value']}` "
-                f"(mrr={r['elbow']['mrr']:.4f}, range={r['mrr_range']:.4f})"
+            # Find best point by band rule: prefer updateRate ∈ [0.2, 0.4]
+            # closest to 0.3, tie-break by highest MRR.
+            def band_distance(p):
+                ur = (p.get("aggStats") or {}).get("updateRate")
+                return abs(ur - 0.3) if ur is not None else float("inf")
+            best_band = min(r["points"], key=band_distance)
+            best_ur = (best_band.get("aggStats") or {}).get("updateRate")
+            best_mrr = best_band["metrics"]["mrr"]
+            best_val = best_band["overrides"][knob]
+            mrr_best = max(r["points"], key=lambda p: p["metrics"]["mrr"])
+
+            # Hardened amendment check
+            winner_mrr = r["elbow"]["mrr"]
+            winner_lift = winner_mrr - BASELINE_GAP10_MRR
+            winner_coverage = None
+            winner_point = next(
+                (p for p in r["points"] if p["overrides"][knob] == r["elbow"]["value"]),
+                None,
             )
-        lines.append("")
-    lines.append("_Stub output; Task 6 ships `render_consolidation_report` with updateRate band-rule recommendation per Phase 6 retro._")
-    return "\n".join(lines)
+            if winner_point:
+                wn_scored = winner_point["metrics"].get("n_scored")
+                wn_total = winner_point["metrics"].get("n", 1986)
+                if isinstance(wn_scored, int) and wn_total:
+                    winner_coverage = wn_scored / wn_total * 100
+
+            coverage_ok = (
+                winner_coverage is None
+                or abs(winner_coverage - BASELINE_COVERAGE_PCT) <= COVERAGE_FLOOR_DELTA_PCT
+            )
+            amendment_verdict = (
+                "AMEND candidate (ΔMRR ≥ 0.02 AND coverage within 5pp of baseline)"
+                if winner_lift >= AMENDMENT_THRESHOLD and coverage_ok
+                else "hold at spec default"
+            )
+            if winner_lift >= AMENDMENT_THRESHOLD and not coverage_ok:
+                amendment_verdict += " — ΔMRR clears threshold but coverage drops >5pp, subset-selection bias suspected"
+
+            best_ur_str = f"{best_ur:.4f}" if best_ur is not None else "n/a"
+            recommendation = (
+                f"**Band-rule best:** `{knob} = {best_val}` "
+                f"(updateRate={best_ur_str}, closest to target 0.3; MRR={best_mrr:.4f})\n\n"
+                f"**MRR-best:** `{knob} = {mrr_best['overrides'][knob]}` "
+                f"(MRR={mrr_best['metrics']['mrr']:.4f})\n\n"
+                f"**Amendment verdict:** {amendment_verdict} "
+                f"(ΔMRR vs gap=10 baseline = {winner_lift:+.4f})"
+            )
+
+        coverage_warning = ""
+        if has_coverage_drop:
+            coverage_warning = (
+                "\n\n> **⚠️ Coverage warning:** at least one point in this round "
+                f"deviates >{COVERAGE_FLOOR_DELTA_PCT}pp from baseline coverage "
+                f"(~{BASELINE_COVERAGE_PCT:.0f}%). Consolidation knobs shouldn't "
+                "affect retrieval coverage — investigate whether the override "
+                "is interacting with the ladder unexpectedly."
+            )
+
+        round_sections.append(
+            f"## Round — {knob}\n\n**Swept knob:** `{knob}`\n\n"
+            f"{header}\n{separator}\n{rows_joined}\n\n{recommendation}{coverage_warning}"
+        )
+
+    rounds_joined = "\n\n".join(round_sections)
+
+    report = f"""# Consolidation sweep — {today}
+
+**Corpus:** {payload['corpus_len']} conversations, {payload['qa_count']} QA items
+**Primary metric:** mrr (retrieval) + updateRate (consolidation-internal band rule)
+**Baseline:** `TIER2_TAU_GAP=10` alone (MRR {BASELINE_GAP10_MRR:.4f}, coverage ~{BASELINE_COVERAGE_PCT:.0f}%)
+**Rounds:** {len(rounds)} independent single-axis sweeps
+
+**Amendment criteria (9.4.9 hardened):** ΔMRR ≥ {AMENDMENT_THRESHOLD:.2f} AND coverage stays within {COVERAGE_FLOOR_DELTA_PCT:.0f}pp of baseline. Either condition failing defers the amendment.
+
+{rounds_joined}
+
+## Notes
+
+- Branch C is pre-registered per 9.4.6 consolidation retro finding: rule-based
+  seeder may under-stress dedup/consolidation machinery. Rounds with MRR range
+  <{CONSOLIDATION_FLAT_MRR_THRESHOLD} across all points defer tuning to 9.5 live extraction.
+- BATCH_SIZE round was dropped mid-flight — changing BATCH_SIZE invalidates the
+  warm extraction cache (cache key includes batch composition), causing Modal
+  function timeouts on live-LLM fallback. Filed as 9.5 candidate where live
+  extraction regenerates cache on demand. See plan decision 3 revision.
+- Band rule reminder: updateRate < 0.1 = too strict (dedup rarely fires),
+  updateRate > 0.5 = too lax (over-merges distinct facts). Target [0.2, 0.4]
+  closest to 0.3.
+"""
+    return report
 
 
 def run_consolidation_sweep(synthetic: bool = False) -> dict:
