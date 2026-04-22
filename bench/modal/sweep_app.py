@@ -18,6 +18,15 @@ image = (
 
 volume = modal.Volume.from_name("starmem-bench-data", create_if_missing=True)
 
+# Inject .env.bench into the container at function runtime.
+# The extraction cache is keyed by (model, messages, maxTokens), so
+# STARMEM_BENCH_LLM_MODEL must match what the cache was generated with
+# — otherwise every lookup misses and the runner falls through to
+# rule-based extraction, producing systematically fewer episodic facts.
+# .env.bench is read from the host's cwd (repo root) at `modal run` time.
+env_secret = modal.Secret.from_dotenv(filename=".env.bench")
+
+
 @app.function(image=image, volumes={"/data": volume}, timeout=600, memory=4096)
 def hello():
     import os
@@ -36,7 +45,13 @@ def hello():
         "cacheOnVolume": cache_exists,
     }
 
-@app.function(image=image, volumes={"/data": volume}, timeout=600, memory=4096)
+@app.function(
+    image=image,
+    volumes={"/data": volume},
+    secrets=[env_secret],
+    timeout=600,
+    memory=4096,
+)
 def run_point(overrides_json: str) -> str:
     """Run a single sweep point.
 
