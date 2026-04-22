@@ -41,7 +41,7 @@ Per the `writing-plans` skill's "Insert an N.M.5 Sub-Phase When Smoke Reveals a 
 
 - `bench/metrics/retrieval.js` exports `matchGold`, `precisionAtK`, `recallAtK`, `mrr`, `computeMetrics`, `DEFAULT_GOLD_THRESHOLD`, `STANDARD_K`. Post-9.4.6 adds `matchGoldByEvidence`. `matchGold` deprecated.
 - `bench/runner.js` exports `runHarness({ corpus, scorerId, overrides, chatIdPrefix, onProgress, retriever })` returning `{ runs, metrics, envSnapshot }`. Post-9.4.6: `runs[].retrieved[]` carries `sourceMessages: number[]`.
-- `bench/loaders/locomo.js` QAItem shape already includes `evidenceTurns: number[]` (verified in 9.5 prep). No loader change needed.
+- `bench/loaders/locomo.js` QAItem shape already includes `evidenceTurns: number[]`, **but 9.4.6 Task 2 discovered it was always empty under the current v10 corpus** — `parseEvidence()` regex matches `S<session>:T<index>` but actual evidence is `D<day>:<turn>`. Task 2 patches the mapping.
 - `src/memory/entry.js` Entry shape includes `provenance.sourceMessages: number[]` (per spec §3.1). Set during `createEntry` from `provenance.sourceMessages` field, carried through consolidation + retrieval.
 - `src/retrieval/ladder.js` `retrieve()` returns `{ entries: Entry[], ... }`. The `Entry` shape preserves `provenance.sourceMessages`. Verified.
 
@@ -53,11 +53,12 @@ Per the `writing-plans` skill's "Insert an N.M.5 Sub-Phase When Smoke Reveals a 
 |---|---|---|---|
 | 0 | `docs/plans/phase-9-4-6-honest-metrics.md` | Plan file commit | — |
 | 1 | `docs/bench/audits/2026-04-22-vacuous-metrics-audit.md` (new) | Confirm scope: enumerate every caller and every vacuous-case test | artifact |
-| 2 | `bench/runner.js` | Pass `sourceMessages` through retrieved-entry projection | ~5 delta |
-| 3 | `bench/metrics/retrieval.js`, `tests/unit/bench/metrics/retrieval.test.js` | `matchGoldByEvidence` + NaN semantics + nanmean aggregation; rewrite impacted tests | ~200 delta + 250 test delta |
-| 4 | `docs/bench/sweeps/2026-04-22-*.md`, `docs/bench/baselines/2026-04-22-comparison.md` | Re-run 4 sweeps + 3 baselines + ladder on warm cache; write honest artifacts | artifacts |
-| 5 | `docs/bench/baseline.json` | Replace `"deferred"` stub with measured values from Task 4 | ~80 delta |
-| 6 | `docs/plans/phase-9-4-6-retro.md` (new) | Retro + Phase 9 shadow acknowledgement + 9.5 Tasks 6–10 handoff | artifact |
+| 2 | `bench/loaders/locomo.js`, `tests/unit/bench/loaders/locomo.test.js` | Fix `parseEvidence` to accept `D<day>:<turn>` format (currently 0% coverage on v10 corpus) | ~40 delta |
+| 3 | `bench/runner.js` | Pass `sourceMessages` through retrieved-entry projection | ~5 delta |
+| 4 | `bench/metrics/retrieval.js`, `tests/unit/bench/metrics/retrieval.test.js` | `matchGoldByEvidence` + NaN semantics + nanmean aggregation; rewrite impacted tests | ~200 delta + 250 test delta |
+| 5 | `docs/bench/sweeps/2026-04-22-*.md`, `docs/bench/baselines/2026-04-22-comparison.md` | Re-run 4 sweeps + 3 baselines + ladder on warm cache; write honest artifacts | artifacts |
+| 6 | `docs/bench/baseline.json` | Replace `"deferred"` stub with measured values from Task 5 | ~80 delta |
+| 7 | `docs/plans/phase-9-4-6-retro.md` (new) | Retro + Phase 9 shadow acknowledgement + 9.5 Tasks 6–10 handoff | artifact |
 
 Plan size target: ~700 lines.
 
@@ -78,7 +79,7 @@ grep -c "^## Task " docs/plans/phase-9-4-6-honest-metrics.md
 grep -n '=\s*\*\*\*\|=\*\*\*' docs/plans/phase-9-4-6-honest-metrics.md || echo "(clean)"
 ```
 
-Expected: ~700 lines, exactly 7 task headings (0–6), no secrets-guard redactions.
+Expected: ~1400 lines, exactly 8 task headings (0–7), no secrets-guard redactions.
 
 **Step 2: Commit**
 
@@ -178,7 +179,265 @@ git commit -m "docs(bench): vacuous-metrics audit — scope the 9.4.6 fix"
 
 ---
 
-## Task 2: Runner plumbing — pass sourceMessages through
+## Task 2: LoCoMo evidence-loader fix (D<day>:<turn> → flat turnIndex)
+
+**Objective:** `bench/loaders/locomo.js` `parseEvidence()` currently looks for `/S(\d+):T(\d+)/` but LoCoMo's actual evidence format is `"D<day>:<turn>"` (e.g. `"D1:3"`, `"D11:14"`). Result: `evidenceTurns` is empty `[]` on every one of 1986 QA items. Under 9.4.6's evidence-turn matcher this would produce `n_skipped === 1986` — the bench would remain useless. Fix the loader to accept `D<day>:<turn>` by building a `D<n>:T<m>` → flat turnIndex map from the `dia_id` field already present on every turn.
+
+**Files:**
+- Modify: `bench/loaders/locomo.js`
+- Add tests: `tests/unit/bench/loaders/locomo.test.js` (or wherever loader tests live)
+
+**Context: evidence-key reality**
+
+Raw LoCoMo format (verified against `bench/.cache/locomo10.json` on 2026-04-22):
+
+- Each turn inside `session_<n>` carries `dia_id: "D<day>:<turn>"`. The `D<day>` equals `<n>` (so session_1 contains D1:1, D1:2, …; session_11 contains D11:1, D11:2, …). `<turn>` is 1-indexed within the day/session.
+- QA `evidence` arrays contain matching `D<day>:<turn>` strings, e.g. `["D10:3", "D11:14"]`.
+- Of 650 unique evidence values across 10 conversations / 1986 QAs, **zero** match the loader's current `/S(\d+):T(\d+)/` regex.
+
+**Pre-flight:**
+
+```bash
+jq -r '[.[] | .qa[] | .evidence // [] | .[]] | unique | length' bench/.cache/locomo10.json
+# Expect: 650 unique evidence strings
+
+jq -r '[.[] | .qa[] | .evidence // [] | .[]] | unique | map(select(test("^D\\d+:\\d+$"))) | length' bench/.cache/locomo10.json
+# Expect: ~650 (all or nearly all match D<day>:<turn>)
+
+jq -r '.[0].conversation.session_1[0] | {speaker, dia_id}' bench/.cache/locomo10.json
+# Expect: { speaker, dia_id: "D1:1" }
+```
+
+**Step 1: Write failing test**
+
+Check what tests exist already for the loader:
+
+```bash
+find tests -name "locomo*" -type f
+grep -rn "parseEvidence\|loadLocomo" tests/ --include='*.js'
+```
+
+If a test file exists, add cases; otherwise create `tests/unit/bench/loaders/locomo.test.js`:
+
+```javascript
+import { describe, test, expect } from '@jest/globals';
+import { loadLocomo } from '../../../../bench/loaders/locomo.js';
+
+describe('loadLocomo evidenceTurns', () => {
+    test('maps D<day>:<turn> evidence to flat turnIndex', async () => {
+        const corpus = await loadLocomo({ maxConversations: 1, offline: true });
+        expect(corpus.length).toBe(1);
+        const conv = corpus[0];
+
+        // At least 95% of QAs should have non-empty evidenceTurns after
+        // the loader normalizes the D<day>:<turn> format. Raw LoCoMo
+        // gives ~99.8% of QAs (1982 of 1986) a non-empty evidence array;
+        // the fix must carry that through.
+        const withEv = conv.qa.filter(q => q.evidenceTurns.length > 0).length;
+        expect(withEv / conv.qa.length).toBeGreaterThan(0.95);
+    });
+
+    test('evidenceTurns are integer indices into turns[]', async () => {
+        const corpus = await loadLocomo({ maxConversations: 1, offline: true });
+        const conv = corpus[0];
+        for (const q of conv.qa) {
+            for (const ev of q.evidenceTurns) {
+                expect(Number.isInteger(ev)).toBe(true);
+                expect(ev).toBeGreaterThanOrEqual(0);
+                expect(ev).toBeLessThan(conv.turns.length);
+            }
+        }
+    });
+
+    test('first sample: evidence "D1:1" maps to turnIndex 0', async () => {
+        const corpus = await loadLocomo({ maxConversations: 1, offline: true });
+        const conv = corpus[0];
+        // The first turn in session_1 should be at flat index 0
+        expect(conv.turns[0].sessionId).toBe(1);
+    });
+});
+```
+
+**Step 2: Run — expect fail**
+
+```bash
+npm test -- tests/unit/bench/loaders/locomo.test.js 2>&1 | tail -20
+```
+
+Expected: the "95% coverage" test FAILS (it'll report near-0% coverage under the current regex).
+
+**Step 3: Patch the loader**
+
+In `bench/loaders/locomo.js`, locate the turn-ingestion loop (around lines 113–128). Update to capture `dia_id` when present, and build a second evidence-key map:
+
+Find:
+
+```javascript
+        for (const sKey of sessionKeys) {
+            const sessionId = parseInt(sKey.slice(8), 10);
+            const sessionTurns = sample.conversation[sKey] || [];
+            for (let i = 0; i < sessionTurns.length; i++) {
+                const t = sessionTurns[i];
+                const turnIndex = turns.length;
+                turns.push({
+                    speaker: t.speaker ?? 'unknown',
+                    text: t.text ?? t.content ?? '',
+                    sessionId,
+                    turnIndex,
+                });
+                // Map LoCoMo evidence key "D<sampleOrd>:S<session>:T<index>"
+                // to flat turnIndex. D is constant per-sample so we ignore it.
+                turnByEvidenceKey.set(`S${sessionId}:T${i}`, turnIndex);
+            }
+        }
+```
+
+Replace with:
+
+```javascript
+        for (const sKey of sessionKeys) {
+            const sessionId = parseInt(sKey.slice(8), 10);
+            const sessionTurns = sample.conversation[sKey] || [];
+            for (let i = 0; i < sessionTurns.length; i++) {
+                const t = sessionTurns[i];
+                const turnIndex = turns.length;
+                turns.push({
+                    speaker: t.speaker ?? 'unknown',
+                    text: t.text ?? t.content ?? '',
+                    sessionId,
+                    turnIndex,
+                });
+                // Two evidence-key shapes observed in LoCoMo:
+                //   "S<session>:T<index>" — legacy placeholder, never observed
+                //     in the actual v10 cache but kept for forward compat.
+                //   "D<day>:<turn>"       — actual v10 shape. <day> equals
+                //     <session> (sessions are named session_<n> and turns
+                //     carry dia_id="D<n>:<m>" where <n>===sessionId).
+                //     <turn> is 1-indexed within the session.
+                turnByEvidenceKey.set(`S${sessionId}:T${i}`, turnIndex);
+                turnByEvidenceKey.set(`D${sessionId}:${i + 1}`, turnIndex);
+                // Also index by dia_id verbatim if present — belt-and-suspenders
+                // in case any future sample uses a different D<day> mapping.
+                if (typeof t.dia_id === 'string') {
+                    turnByEvidenceKey.set(t.dia_id, turnIndex);
+                }
+            }
+        }
+```
+
+Then update `parseEvidence()` to try both key shapes:
+
+Find:
+
+```javascript
+function parseEvidence(evidence, turnByEvidenceKey) {
+    if (!Array.isArray(evidence)) return [];
+    const out = [];
+    for (const ref of evidence) {
+        const m = String(ref).match(/S(\d+):T(\d+)/);
+        if (!m) continue;
+        const key = `S${m[1]}:T${m[2]}`;
+        const idx = turnByEvidenceKey.get(key);
+        if (idx != null) out.push(idx);
+    }
+    return out;
+}
+```
+
+Replace with:
+
+```javascript
+function parseEvidence(evidence, turnByEvidenceKey) {
+    if (!Array.isArray(evidence)) return [];
+    const out = [];
+    for (const ref of evidence) {
+        const s = String(ref);
+
+        // Try direct lookup first (handles D<day>:<turn> and any raw dia_id).
+        const direct = turnByEvidenceKey.get(s);
+        if (direct != null) {
+            out.push(direct);
+            continue;
+        }
+
+        // Legacy "S<session>:T<index>" shape.
+        const mLegacy = s.match(/S(\d+):T(\d+)/);
+        if (mLegacy) {
+            const idx = turnByEvidenceKey.get(`S${mLegacy[1]}:T${mLegacy[2]}`);
+            if (idx != null) out.push(idx);
+            continue;
+        }
+
+        // "D<day>:<turn>" shape (LoCoMo v10 actual).
+        const mDay = s.match(/^D(\d+):(\d+)$/);
+        if (mDay) {
+            const idx = turnByEvidenceKey.get(`D${mDay[1]}:${mDay[2]}`);
+            if (idx != null) out.push(idx);
+            continue;
+        }
+
+        // Unmatched refs are silently dropped — same behavior as before,
+        // kept for tolerance of malformed entries like the bare "D" observed
+        // in ~4 items across the v10 corpus.
+    }
+    return out;
+}
+```
+
+**Step 4: Run tests — expect pass**
+
+```bash
+npm test -- tests/unit/bench/loaders/locomo.test.js
+```
+
+Expected: 3/3 green.
+
+**Step 5: Coverage sanity check**
+
+```bash
+node -e "import('./bench/loaders/locomo.js').then(async m => {
+    const c = await m.loadLocomo({ maxConversations: 10, offline: true });
+    const total = c.reduce((s, x) => s + x.qa.length, 0);
+    const withEv = c.reduce((s, x) => s + x.qa.filter(q => q.evidenceTurns.length > 0).length, 0);
+    const avgSize = c.reduce((s, x) => s + x.qa.reduce((t, q) => t + q.evidenceTurns.length, 0), 0) / withEv;
+    console.log('total QAs:', total, 'withEv:', withEv, 'coverage:', (withEv/total*100).toFixed(1)+'%', 'avg evidence size:', avgSize.toFixed(2));
+})"
+```
+
+Expected: ≥95% coverage (raw corpus has 1982/1986 = 99.8% with non-empty evidence arrays; the few "D" bare values drop).
+
+**Step 6: Full suite + lint + typecheck**
+
+```bash
+npm test
+npm run lint && npm run typecheck
+```
+
+Expected: all green.
+
+**Step 7: Commit**
+
+```bash
+git add bench/loaders/locomo.js tests/unit/bench/loaders/locomo.test.js
+git commit -m "fix(bench): LoCoMo evidence-key mapping supports D<day>:<turn> format (9.4.6 Task 2)
+
+Phase 9's parseEvidence() regex only matched S<session>:T<index>, but
+the actual LoCoMo v10 corpus uses D<day>:<turn> (verified via dia_id on
+every turn). Result: evidenceTurns was [] on all 1986 QAs, which
+combined with the vacuous text-Jaccard matcher to produce 'recall=1.0
+everywhere' in Phase 9's sweep reports.
+
+Fix builds the evidence-key map from dia_id alongside the legacy
+S<session>:T<index> shape, and parseEvidence tries direct lookup first
+then falls back through both regex shapes.
+
+Coverage on full LoCoMo 10: 99.8% of QAs now carry non-empty
+evidenceTurns (up from 0%). Unblocks Task 4's evidence-turn matcher."
+```
+
+---
+
+## Task 3: Runner plumbing — pass sourceMessages through
 
 **Objective:** Carry `entry.provenance.sourceMessages` into `run.retrieved[].sourceMessages`. One-line delta in the projection, plus a test that the field survives.
 
@@ -263,7 +522,7 @@ git commit -m "feat(bench): pass provenance.sourceMessages through runner projec
 
 ---
 
-## Task 3: Evidence-turn matcher + NaN semantics + nanmean aggregation
+## Task 4: Evidence-turn matcher + NaN semantics + nanmean aggregation
 
 **Objective:** Add `matchGoldByEvidence`, rewrite `precisionAtK` / `recallAtK` / `mrr` to return NaN on empty `matchedIds`, rewrite `computeMetrics` to nanmean and surface `n_scored` / `n_skipped`. Deprecate `matchGold`. Rewrite the impacted unit tests.
 
@@ -836,7 +1095,7 @@ for historical provenance."
 
 ---
 
-## Task 4: Re-run all Phase 9 sweeps + baselines on warm cache
+## Task 5: Re-run all Phase 9 sweeps + baselines on warm cache
 
 **Objective:** Produce honest sweep artifacts (τ, graph, consolidation, bm25), re-run the three baselines (bm25only, recency, random) plus the default ladder retriever, and land all results under `docs/bench/sweeps/2026-04-22-*.md` and `docs/bench/baselines/2026-04-22-*.md`.
 
@@ -975,7 +1234,7 @@ provenance; not referenced by baseline.json going forward."
 
 ---
 
-## Task 5: Populate baseline.json
+## Task 6: Populate baseline.json
 
 **Objective:** Replace `docs/bench/baseline.json`'s `"deferred"` stub with measured values from Task 4.
 
@@ -1043,7 +1302,7 @@ with honest NaN-aware aggregation."
 
 ---
 
-## Task 6: Retro + 9.5 handoff + Phase 9 shadow acknowledgement
+## Task 7: Retro + 9.5 handoff + Phase 9 shadow acknowledgement
 
 **Objective:** Document the finding, the fix, the shadow over Phase 9's published numbers, and the handoff back to 9.5 Tasks 6–10.
 
