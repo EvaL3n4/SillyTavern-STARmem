@@ -1010,10 +1010,10 @@ Expected: list of 6 rounds present (9.4.9 shipped these).
 
 **Step 1:**
 ```bash
-modal run bench/modal/sweep_app.py --mode run-graph-sweep --local-out docs/bench/runs
+modal run bench/modal/sweep_app.py --mode run-sweep --sweep-name graph --local-out docs/bench/runs
 ```
 
-Cache warm from Task 5; 22 points × 6 rounds, coordinate descent. Wall-clock: ~8 min (one wave per round under the 32-cap).
+Cache warm from Task 5; 22 points × 6 rounds, coordinate descent. Wall-clock: ~8 min (one wave per round under the 32-cap). (The `run_sweep` dispatcher routes `--sweep-name graph` to the specialized `run_graph_sweep()` helper — no separate `--mode` needed.)
 
 **Step 2: Per-round verdicts**
 
@@ -1046,11 +1046,11 @@ Grid from 9.4.9 retro's deferred handoff. Commit: `feat(bench): add BATCH_SIZE r
 **Step 2: Dispatch the consolidation sweep**
 
 ```bash
-modal run bench/modal/sweep_app.py --mode run-consolidation-sweep --local-out docs/bench/runs
+modal run bench/modal/sweep_app.py --mode run-sweep --sweep-name consolidation --local-out docs/bench/runs
 ```
 
 `DEDUP_JACCARD_THRESHOLD`: 5 points, warm cache → ~90s wall-clock.
-`BATCH_SIZE`: 5 points, cache-key invalidation → ~2.5 min wall-clock for live regeneration (~500 Nano-GPT calls per 9.4.9 retro's budget estimate).
+`BATCH_SIZE`: 5 points, cache-key invalidation → ~2.5 min wall-clock for live regeneration (~500 Nano-GPT calls per 9.4.9 retro's budget estimate). (The `run_sweep` dispatcher routes `--sweep-name consolidation` to the specialized `run_consolidation_sweep()` helper.)
 
 **Step 3: EXTRACT_MAX_TOKENS observation (host-side, after Modal completes)**
 
@@ -1260,6 +1260,27 @@ Use `memory` or `hindsight_retain` to record:
 
 ---
 
+## Task 5/6 observations (captured 2026-04-22)
+
+**Hops smoke (pre-flight for the SWEEP_CONFIGS restore commit):**
+- `TIER3_MAX_HOPS=2` (spec default): MRR 0.8057, n_scored 1277, recall@5 0.9363
+- `TIER3_MAX_HOPS=3`: MRR 0.8024 (−0.0032), n_scored 1283 (+6), recall@5 0.9287
+- Interpretation: extra hops broaden retrieval (+6 scored queries) but degrade rank quality on the enlarged set. Not subset-selection bias (coverage went up, not down). Preview confirms hops=2 is the ceiling on LoCoMo.
+
+**Task 5 — full τ sweep (48 points) — complete. Three findings:**
+
+1. **`TIER2_TAU_CONFIDENCE` re-confirmed inert under live Gemma.** Metrics identical to 4 decimal places across all 8 sampled values (0.5–5.0). This is the second-time reproduction of the 9.4.8 inertness finding. Rank-1 Tier-2 BM25 scores clear any confidence threshold in the tested range. Baseline should hold at spec 2.0. Inertness source is corpus-structural, not extractor-dependent — candidate for removal from future sweeps.
+
+2. **`TIER2_TAU_GAP` plateau reproduces cleanly.** MRR climbs monotonically from 0.7303 (gap=0.1) to 0.8057 (gap=10), swing of +0.0754 absolute. Matches 9.4.8's `measured: 10, MRR 0.8077` within +/- 0.002 noise. Baseline holds at 10.
+
+3. **🚨 Elbow detector false-positive — Phase 11 bullet added.** Renderer proposed amending `TIER2_TAU_CONFIDENCE: 2.0 → 0.5` because the grid has ties at the confidence axis's corner, and 0.5 sorts first. The rationale block self-admits `Δmetric/Δknob = 0.000000 ≤ 0.1×maxΔ = 0.000000` — i.e. the axis has zero variance. Any amendment is a vacuous no-op. **Do NOT ship this to `baseline.json` in Task 11.** Filed below as a Phase 11 hardening.
+
+### Phase 11 candidate: elbow-detector zero-axis-Δ guard
+
+`_detect_elbow` in `bench/modal/sweep_app.py` proposes amendments when `Δmetric/Δknob` drops to zero AND the metric at the corner is the max, treating the sort order as the tiebreaker. For an axis where max Δ across all points is zero (inert knob), this produces a confident-wrong amendment proposal. Guard: when `maxΔ == 0` on any axis, suppress the elbow recommendation on that axis and fall back to "held at spec — knob is inert." Field-surfaced 2026-04-22 during Task 5 on `TIER2_TAU_CONFIDENCE`. ~6 LOC fix.
+
+---
+
 ## Notes for Phase 11 (accumulated during 9.5 execution)
 
 Phase 11 candidates identified during 9.5 dispatch. Task 11's retro expands these with per-sweep findings.
@@ -1277,7 +1298,7 @@ Phase 11 candidates identified during 9.5 dispatch. Task 11's retro expands thes
 - [x] Task 2: `extractionCache.js` + tests green. *(Pre-shipped in 9.4.x as `0dbac98`.)*
 - [x] Task 3: Seeder env-gated switch + tests green; all prior tests still green. *(Pre-shipped in 9.4.x.)*
 - [x] Task 4: Smoke writeup confirms Modal warm-cache replay. *(Completed 2026-04-22; run-point on full LoCoMo returned n_scored=1277, cache intact at 1182 entries, `--local-out` gap filed for Phase 11.)*
-- [ ] Task 5: τ sweep live writeup produced, flat/elbow verdict recorded.
+- [x] Task 5: τ sweep live writeup produced, flat/elbow verdict recorded. *(48 points, 2026-04-22T19-06-35Z. `TIER2_TAU_CONFIDENCE` inert re-confirmed, `TIER2_TAU_GAP=10` plateau reproduces. Detector false-positive filed for Phase 11.)*
 - [ ] Task 6: Graph sweep (5 rounds) live writeup, per-round verdicts.
 - [ ] Task 7: Consolidation sweep + EXTRACT_MAX_TOKENS observation.
 - [ ] Task 8: BM25 sweep with tags-populated-rate reported.
