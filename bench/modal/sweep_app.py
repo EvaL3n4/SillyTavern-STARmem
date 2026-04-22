@@ -518,10 +518,21 @@ def run_sweep(sweep_name: str, synthetic: bool = False) -> str:
         os.symlink("/data/extractions", cache_link)
 
     if synthetic:
-        # Override corpus with synthetic data by setting env var
-        # The _modal-point.js will need to respect this; for now we run
-        # a local synthetic point directly.
-        grid = [{}, {"TIER2_TAU_CONFIDENCE": 0.5}] if sweep_name == "tau" else [{}, {"TAG_BOOST": 2}]
+        # Tiny 2-point grid for smoke testing. Both points must populate
+        # EVERY knob the renderer reads — otherwise render_tau_report's
+        # p["overrides"]["TIER2_TAU_GAP"] (and equivalents) will KeyError.
+        # Use spec defaults for one knob, a deviation for the other, so
+        # the elbow detector has two distinguishable points per axis.
+        if sweep_name == "tau":
+            grid = [
+                {"TIER2_TAU_CONFIDENCE": 2.0, "TIER2_TAU_GAP": 0.5},  # spec defaults
+                {"TIER2_TAU_CONFIDENCE": 0.5, "TIER2_TAU_GAP": 0.5},  # low-confidence variant
+            ]
+        else:  # bm25
+            grid = [
+                {"TAG_BOOST": 2, "SUBJECT_BOOST": 2},  # spec defaults
+                {"TAG_BOOST": 3, "SUBJECT_BOOST": 2},  # +tag variant
+            ]
     else:
         grid = _cartesian_product(knobs)
 
