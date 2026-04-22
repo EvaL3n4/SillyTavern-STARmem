@@ -20,6 +20,43 @@ import { performance } from 'node:perf_hooks';
 const _origLog = console.log;
 console.log = (...args) => console.error(...args);
 
+/**
+ * Aggregate per-run consolidation stats across a harness result.
+ *
+ * Dedups by conversationId — runHarness emits one run per QA item,
+ * many sharing a conversation, and each conversation's consolidationStats
+ * should only be counted once (the seeder produced the same consolidation
+ * trace regardless of which QA we're scoring on that conversation).
+ *
+ * Matches bench/sweeps/consolidation.js:137-158 precisely so the Modal
+ * path and local path produce identical aggStats.
+ *
+ * @param {Array<{conversationId: string, consolidationStats?: object}>} runs
+ * @returns {object | null} null when runs lack consolidationStats
+ *   (tau/bm25 paths don't surface it); object with totals + derived
+ *   rates when present (consolidation sweep path).
+ */
+function aggregateConsolidationStats(runs) {
+    if (!runs || runs.length === 0) return null;
+    // Sample first run's shape to decide whether to aggregate at all.
+    if (!runs[0]?.consolidationStats) return null;
+
+    const seen = new Set();
+    const totals = { added: 0, updated: 0, drained: 0, batches: 0 };
+    for (const run of runs) {
+        if (seen.has(run.conversationId)) continue;
+        seen.add(run.conversationId);
+        const cs = run.consolidationStats || {};
+        totals.added   += cs.added   || 0;
+        totals.updated += cs.updated || 0;
+        totals.drained += cs.drained || 0;
+        totals.batches += cs.batches || 0;
+    }
+    const updateRate   = totals.updated / Math.max(1, totals.added + totals.updated);
+    const dedupHitRate = totals.updated / Math.max(1, totals.drained);
+    return { ...totals, updateRate, dedupHitRate };
+}
+
 async function main() {
     const overrides = JSON.parse(process.env.STARMEM_OVERRIDES || '{}');
     const corpus = await loadLocomo({ offline: true });
@@ -42,6 +79,10 @@ async function main() {
         latencyMs,
         runCount: result.runs.length,
         wallMs: Math.round(wallMs),
+        // 9.4.9 — aggStats is null for tau/bm25 paths (runs lack
+        // consolidationStats); populated for consolidation sweep.
+        // render_consolidation_report_stub tolerates both shapes.
+        aggStats: aggregateConsolidationStats(result.runs),
     };
     // Use the original console.log (straight to stdout) for the payload.
     _origLog(JSON.stringify(output));
