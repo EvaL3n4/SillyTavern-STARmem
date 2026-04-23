@@ -72,6 +72,7 @@ describe('makeLLMExtractor', () => {
 
         const ext = makeLLMExtractor({
             url: 'http://x', apiKey: 'k', model: 'm',
+            maxRetries: 0,  // disable retry for this test — assert surface only
         });
 
         await expect(ext('p', [{ role: 'user', content: 'x' }], 100))
@@ -108,5 +109,69 @@ describe('makeLLMExtractor', () => {
 
         const body = JSON.parse(/** @type {any} */ (global.fetch).mock.calls[0][1].body);
         expect(body.temperature).toBe(0);
+    });
+
+    test('retries transient 5xx and succeeds on a later attempt', async () => {
+        /** @type {any} */ (global.fetch)
+            .mockResolvedValueOnce({
+                ok: false, status: 503, text: async () => 'upstream blip',
+            })
+            .mockResolvedValueOnce({
+                ok: true,
+                json: async () => ({ choices: [{ message: { content: 'ok' } }] }),
+            });
+
+        const ext = makeLLMExtractor({
+            url: 'http://x', apiKey: 'k', model: 'm', maxRetries: 2,
+        });
+
+        const result = await ext('p', [{ role: 'user', content: 'x' }], 100);
+        expect(result).toBe('ok');
+        expect(/** @type {any} */ (global.fetch)).toHaveBeenCalledTimes(2);
+    });
+
+    test('retry 5xx exhausts and reports attempt count', async () => {
+        /** @type {any} */ (global.fetch).mockResolvedValue({
+            ok: false, status: 503, text: async () => 'still down',
+        });
+
+        const ext = makeLLMExtractor({
+            url: 'http://x', apiKey: 'k', model: 'm', maxRetries: 2,
+        });
+
+        await expect(ext('p', [{ role: 'user', content: 'x' }], 100))
+            .rejects.toThrow(/failed after 3 attempts/);
+        expect(/** @type {any} */ (global.fetch)).toHaveBeenCalledTimes(3);
+    });
+
+    test('4xx fails fast — no retry on auth/quota errors', async () => {
+        /** @type {any} */ (global.fetch).mockResolvedValue({
+            ok: false, status: 401, text: async () => 'unauthorized',
+        });
+
+        const ext = makeLLMExtractor({
+            url: 'http://x', apiKey: 'k', model: 'm', maxRetries: 3,
+        });
+
+        await expect(ext('p', [{ role: 'user', content: 'x' }], 100))
+            .rejects.toThrow(/401/);
+        expect(/** @type {any} */ (global.fetch)).toHaveBeenCalledTimes(1);
+    });
+
+    test('retries network-level fetch errors (ECONNRESET etc.)', async () => {
+        /** @type {any} */ (global.fetch)
+            .mockRejectedValueOnce(new Error('ECONNRESET'))
+            .mockResolvedValueOnce({
+                ok: true,
+                json: async () => ({ choices: [{ message: { content: 'ok' } }] }),
+            });
+
+        const ext = makeLLMExtractor({
+            url: 'http://x', apiKey: 'k', model: 'm', maxRetries: 2,
+        });
+
+        const result = await ext('p', [{ role: 'user', content: 'x' }], 100);
+        expect(result).toBe('ok');
+        expect(/** @type {any} */ (global.fetch)).toHaveBeenCalledTimes(2);
     });
 });
