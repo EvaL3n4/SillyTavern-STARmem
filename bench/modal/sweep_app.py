@@ -1946,10 +1946,11 @@ def main(
         print(report)
         print(f"\n<!-- saved to Modal Volume: {run_dir} -->", file=__import__("sys").stderr)
         if local_out:
+            import os as _os
             from pathlib import Path as _Path
             out = _Path(local_out).expanduser()
             out.mkdir(parents=True, exist_ok=True)
-            stem = os.path.basename(run_dir)
+            stem = _os.path.basename(run_dir)
             (out / f"{stem}.md").write_text(report)
             (out / f"{stem}.json").write_text(result_json_str)
             print(f"<!-- mirrored to host: {out / stem}.{{md,json}} -->", file=__import__("sys").stderr)
