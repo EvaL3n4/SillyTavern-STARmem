@@ -182,7 +182,64 @@ def run_baseline_point(retriever_id: str) -> str:
     return result.stdout.strip()
 
 
+@app.function(
+    image=image,
+    volumes={"/data": volume},
+    secrets=[env_secret],
+    timeout=600,
+    memory=4096,
+)
+def run_batchsize_point(conv_idx: int, batch_size: int) -> str:
+    """Run one (conversation, BATCH_SIZE) cell.
+
+    Args:
+        conv_idx: 0-indexed conversation slot in LoCoMo-10.
+        batch_size: BATCH_SIZE override to apply.
+
+    Returns:
+        JSON string with { convIdx, batchSize, metrics, consolidationStats,
+        latencyMs, wallMs }.
+    """
+    import os
+    import subprocess
+
+    repo_cache = "/repo/bench/.cache"
+    os.makedirs(repo_cache, exist_ok=True)
+    corpus_link = os.path.join(repo_cache, "locomo10.json")
+    cache_link = os.path.join(repo_cache, "extractions")
+    if not os.path.exists(corpus_link):
+        os.symlink("/data/locomo10.json", corpus_link)
+    if not os.path.exists(cache_link):
+        os.symlink("/data/extractions", cache_link)
+
+    env = os.environ.copy()
+    env["STARMEM_CONV_IDX"] = str(conv_idx)
+    env["STARMEM_BATCH_SIZE"] = str(batch_size)
+
+    result = subprocess.run(
+        ["node", "bench/sweeps/_modal-batchsize-point.js"],
+        cwd="/repo",
+        capture_output=True,
+        text=True,
+        check=False,
+        env=env,
+    )
+    if result.returncode != 0:
+        import json as _json
+        return _json.dumps({
+            "error": "node subprocess failed",
+            "convIdx": conv_idx,
+            "batchSize": batch_size,
+            "returncode": result.returncode,
+            "stderr": result.stderr,
+            "stdout_tail": result.stdout[-2000:] if result.stdout else "",
+        }, indent=2)
+    return result.stdout.strip()
+
+
 BASELINE_IDS = ["ladder", "bm25only", "recency", "random"]
+BATCHSIZE_VALUES = [3, 5, 7, 10, 15]
+BATCHSIZE_CONV_INDICES = [0, 1, 2, 3, 4]
 
 
 @app.function(
@@ -1405,6 +1462,156 @@ def render_consolidation_report_stub(payload):
     return report
 
 
+@app.function(
+    image=image,
+    volumes={"/data": volume},
+    secrets=[env_secret],
+    timeout=1800,
+    memory=4096,
+)
+def run_consolidation_batchsize_sweep() -> dict:
+    """Conversation-level-split BATCH_SIZE sweep (Phase 11 Task 6).
+
+    25 cells (5 values × 5 convs) fanned out to parallel containers,
+    then aggregated into one MetricsResult per BATCH_SIZE value.
+
+    Returns:
+        Dict with keys { report, result_json, run_dir }.
+    """
+    import json
+    import math
+    import os
+    from datetime import datetime
+
+    pairs = [(ci, bs) for bs in BATCHSIZE_VALUES for ci in BATCHSIZE_CONV_INDICES]
+
+    cell_results = list(run_batchsize_point.map(
+        [p[0] for p in pairs],
+        [p[1] for p in pairs],
+    ))
+    cells = [json.loads(cr) for cr in cell_results]
+
+    by_bs = {}
+    for cell in cells:
+        bs = cell.get("batchSize")
+        by_bs.setdefault(bs, []).append(cell)
+
+    def _is_nan(x):
+        try:
+            return math.isnan(x)
+        except (TypeError, ValueError):
+            return x is None
+
+    points = []
+    for bs in BATCHSIZE_VALUES:
+        cells_for_bs = by_bs.get(bs, [])
+        if not cells_for_bs:
+            continue
+        total_n = sum(c.get("metrics", {}).get("n", 0) for c in cells_for_bs)
+        total_n_scored = sum(c.get("metrics", {}).get("n_scored", 0) for c in cells_for_bs)
+        total_n_skipped = sum(c.get("metrics", {}).get("n_skipped", 0) for c in cells_for_bs)
+
+        # Weighted MRR: sum(mrr * n_scored) / sum(n_scored), skipping NaN.
+        mrr_num = 0.0
+        mrr_den = 0
+        for c in cells_for_bs:
+            m = c.get("metrics", {})
+            if m.get("n_scored", 0) > 0 and not _is_nan(m.get("mrr")):
+                mrr_num += m["mrr"] * m["n_scored"]
+                mrr_den += m["n_scored"]
+        mrr_agg = (mrr_num / mrr_den) if mrr_den > 0 else float("nan")
+
+        # Aggregate updateRate from consolidationStats
+        total_updated = sum(
+            (c.get("consolidationStats") or {}).get("updated", 0)
+            for c in cells_for_bs
+        )
+        total_added = sum(
+            (c.get("consolidationStats") or {}).get("added", 0)
+            for c in cells_for_bs
+        )
+        update_rate = (
+            total_updated / (total_updated + total_added)
+            if (total_updated + total_added) > 0
+            else 0.0
+        )
+
+        points.append({
+            "overrides": {"BATCH_SIZE": bs},
+            "metrics": {
+                "n": total_n,
+                "n_scored": total_n_scored,
+                "n_skipped": total_n_skipped,
+                "coverage": (total_n_scored / total_n) if total_n > 0 else float("nan"),
+                "mrr": mrr_agg,
+                "updateRate": update_rate,
+            },
+            "cells": cells_for_bs,
+        })
+
+    ts = datetime.utcnow().strftime("%Y-%m-%dT%H-%M-%SZ")
+    run_dir = f"/data/runs/{ts}-batchsize"
+    os.makedirs(run_dir, exist_ok=True)
+
+    knobs = [{"name": "BATCH_SIZE", "values": BATCHSIZE_VALUES}]
+    elbow = _detect_elbow(points, knobs, "mrr") if len(points) >= 2 else None
+
+    result_payload = {
+        "name": "batchsize",
+        "timestamp": ts,
+        "points": points,
+        "elbow": elbow,
+        "convs_sampled": BATCHSIZE_CONV_INDICES,
+    }
+    result_json_str = json.dumps(result_payload, indent=2)
+    with open(f"{run_dir}/result.json", "w") as f:
+        f.write(result_json_str)
+
+    report = render_batchsize_report(result_payload)
+    with open(f"{run_dir}/report.md", "w") as f:
+        f.write(report)
+
+    volume.commit()
+    return {"report": report, "result_json": result_json_str, "run_dir": run_dir}
+
+
+def render_batchsize_report(payload):
+    lines = []
+    lines.append(f"# BATCH_SIZE sweep — {payload['timestamp']}")
+    lines.append("")
+    lines.append(f"**Convs sampled:** indices {payload['convs_sampled']}")
+    lines.append("")
+    lines.append("| BATCH_SIZE | MRR | Coverage | Update rate | n (QA) |")
+    lines.append("|---|---|---|---|---|")
+    for pt in payload["points"]:
+        bs = pt["overrides"]["BATCH_SIZE"]
+        m = pt["metrics"]
+        lines.append(
+            f"| {bs} | {m['mrr']:.4f} | {m['coverage']:.4f} | {m.get('updateRate', 0):.4f} | {m['n']} |"
+        )
+    lines.append("")
+    # Amendment verdict (Task 4 rule)
+    if len(payload["points"]) >= 2:
+        baseline_pt = next(
+            (p for p in payload["points"] if p["overrides"]["BATCH_SIZE"] == 10),
+            payload["points"][0],
+        )
+        if payload.get("elbow", {}).get("overrides"):
+            chosen_bs = payload["elbow"]["overrides"].get("BATCH_SIZE")
+            candidate_pt = next(
+                (p for p in payload["points"] if p["overrides"]["BATCH_SIZE"] == chosen_bs),
+                None,
+            )
+            if candidate_pt and candidate_pt is not baseline_pt:
+                verdict = _should_amend(baseline_pt["metrics"], candidate_pt["metrics"])
+                lines.append("### Amendment verdict")
+                lines.append("")
+                lines.append(f"{'**Amend**' if verdict['amend'] else '**Held at spec**'} — {verdict['reason']}")
+                lines.append("")
+    lines.append(f"**Elbow rationale:** {payload.get('elbow', {}).get('rationale', '—') if payload.get('elbow') else '—'}")
+    return "\n".join(lines)
+
+
 def run_consolidation_sweep(synthetic: bool = False) -> dict:
     """Run two independent consolidation knob sweeps.
 
@@ -1528,6 +1735,8 @@ def run_sweep(sweep_name: str, synthetic: bool = False) -> dict:
 
     # 9.4.9 dispatch — multi-round sweeps run in specialized helpers
     # that manage their own persistence + rendering.
+    if sweep_name == "batchsize":
+        return run_consolidation_batchsize_sweep()
     if sweep_name == "graph":
         return run_graph_sweep(synthetic)
     if sweep_name == "consolidation":
@@ -1698,6 +1907,9 @@ def main(
                 --overrides-json '{"TIER2_TAU_GAP": 10}' --local-out docs/bench/runs
             → run_point() with override + mirrors {ts}-point.json to host dir
               (stem convention matches run-sweep)
+
+        modal run bench/modal/sweep_app.py --mode run-sweep --sweep-name batchsize
+            → 25-cell (5 BATCH_SIZE × 5 convs) split sweep, ~3min parallel
 
         modal run bench/modal/sweep_app.py --mode run-sweep --sweep-name tau --synthetic
             → runs run_sweep() with synthetic corpus (2 points)
