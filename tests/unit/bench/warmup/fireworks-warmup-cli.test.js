@@ -1,4 +1,4 @@
-import { parseArgv, nextState } from '../../../../bench/harness/fireworks-warmup.js';
+import { parseArgv, nextState, normalizeJobState } from '../../../../bench/harness/fireworks-warmup.js';
 
 describe('fireworks-warmup CLI', () => {
     describe('parseArgv', () => {
@@ -77,6 +77,29 @@ describe('fireworks-warmup CLI', () => {
         });
         test('throws on unknown state', () => {
             expect(() => nextState('bogus')).toThrow();
+        });
+    });
+
+    describe('normalizeJobState', () => {
+        test('strips JOB_STATE_ prefix when present', () => {
+            expect(normalizeJobState('JOB_STATE_COMPLETED')).toBe('COMPLETED');
+            expect(normalizeJobState('JOB_STATE_RUNNING')).toBe('RUNNING');
+            expect(normalizeJobState('JOB_STATE_EXPIRED')).toBe('EXPIRED');
+            expect(normalizeJobState('JOB_STATE_FAILED')).toBe('FAILED');
+            expect(normalizeJobState('JOB_STATE_PENDING')).toBe('PENDING');
+            expect(normalizeJobState('JOB_STATE_VALIDATING')).toBe('VALIDATING');
+        });
+
+        test('passes bare state through unchanged', () => {
+            expect(normalizeJobState('COMPLETED')).toBe('COMPLETED');
+            expect(normalizeJobState('RUNNING')).toBe('RUNNING');
+        });
+
+        test('returns UNKNOWN for missing / empty / non-string input', () => {
+            expect(normalizeJobState(undefined)).toBe('UNKNOWN');
+            expect(normalizeJobState(null)).toBe('UNKNOWN');
+            expect(normalizeJobState('')).toBe('UNKNOWN');
+            expect(normalizeJobState(42)).toBe('UNKNOWN');
         });
     });
 });

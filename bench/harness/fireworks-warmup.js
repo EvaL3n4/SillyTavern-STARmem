@@ -94,6 +94,27 @@ export function parseArgv(argv) {
  * @param {{jobState?: string}} [extras]
  * @returns {string}
  */
+/**
+ * Normalize Fireworks' job state to the bare form nextState() expects.
+ *
+ * Fireworks' batch jobs API returns proto enum strings in the
+ * `JOB_STATE_COMPLETED` / `JOB_STATE_RUNNING` form (proto3 convention:
+ * enum values include the enum type name as a prefix). The OpenAPI docs
+ * render them bare (`COMPLETED`), matching the spec's state-machine
+ * documentation. We accept both forms so we're robust regardless of
+ * which the gateway returns in any given response.
+ *
+ * Observed on 2026-04-24: poll response had `"state": "JOB_STATE_COMPLETED"`;
+ * our poll loop was comparing against `"COMPLETED"` and never transitioned.
+ *
+ * @param {string | undefined | null} raw
+ * @returns {string}
+ */
+export function normalizeJobState(raw) {
+    if (typeof raw !== 'string' || raw.length === 0) return 'UNKNOWN';
+    return raw.startsWith('JOB_STATE_') ? raw.slice('JOB_STATE_'.length) : raw;
+}
+
 export function nextState(state, extras = {}) {
     switch (state) {
         case 'enumerated':
@@ -422,7 +443,7 @@ async function enterPollLoop(auth, manifest) {
     // eslint-disable-next-line no-constant-condition
     while (true) {
         const job = await getJob(auth, activeJob.jobId);
-        const jobState = job.state || 'UNKNOWN';
+        const jobState = normalizeJobState(job.state);
         const elapsedMs = Date.now() - t0;
         const elapsedStr = formatElapsed(elapsedMs);
 
