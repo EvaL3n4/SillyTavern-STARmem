@@ -1498,6 +1498,11 @@ def main(
         modal run bench/modal/sweep_app.py --mode run-point --overrides-json '{"TIER2_TAU_CONFIDENCE": 0.5}'
             → runs run_point() with one override
 
+        modal run bench/modal/sweep_app.py --mode run-point \\
+                --overrides-json '{"TIER2_TAU_GAP": 10}' --local-out docs/bench/runs
+            → run_point() with override + mirrors {ts}-point.json to host dir
+              (stem convention matches run-sweep)
+
         modal run bench/modal/sweep_app.py --mode run-sweep --sweep-name tau --synthetic
             → runs run_sweep() with synthetic corpus (2 points)
 
@@ -1509,7 +1514,20 @@ def main(
     if mode == "hello":
         print(json.dumps(hello.remote(), indent=2))
     elif mode == "run-point":
-        print(run_point.remote(overrides_json))
+        result_str = run_point.remote(overrides_json)
+        print(result_str)
+        if local_out:
+            from datetime import datetime as _dt
+            from pathlib import Path as _Path
+            out = _Path(local_out).expanduser()
+            out.mkdir(parents=True, exist_ok=True)
+            # Stem mirrors run-sweep's convention: ISO-ish timestamp + 'point'.
+            stem = _dt.utcnow().strftime("%Y-%m-%dT%H-%M-%SZ") + "-point"
+            (out / f"{stem}.json").write_text(result_str)
+            print(
+                f"<!-- mirrored to host: {out / stem}.json -->",
+                file=__import__("sys").stderr,
+            )
     elif mode == "run-sweep":
         sweep_out = run_sweep.remote(sweep_name, synthetic)
         report = sweep_out["report"]
