@@ -7,7 +7,8 @@
 
 // Adapter registrations happen at import time via module-load side effect.
 import './locomo.js';
-// import './longmemeval.js'; // uncomment when Task 3 lands
+import './longmemeval.js';  // Uncommented in Phase 12 Task 3
 
 export { getAdapter, listAdapters, registerAdapter } from './adapter.js';
-export { locomoAdapter, loadLocomo, CANONICAL_URL } from './locomo.js';
+export { locomoAdapter, loadLocomo, CANONICAL_URL as LOCOMO_URL } from './locomo.js';
+export { longmemevalSAdapter, loadLongMemEvalS, CANONICAL_URL as LONGMEMEVAL_S_URL } from './longmemeval.js';
