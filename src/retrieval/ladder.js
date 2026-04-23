@@ -190,34 +190,12 @@ export function retrieve(state, queryStr, opts = {}) {
     }
 
     // --- Tier 2 ---
+    // Phase 12 Task 1: Tier 2 demolished as a resolver. The t2.hit shortcut
+    // is gone; Tier 2 is now exclusively a BM25 candidate provider for Tier 3
+    // seeding. TIER2_TAU_CONFIDENCE / TIER2_TAU_GAP constants retained in
+    // src/core/constants.js for replayability of pre-demolition sweep
+    // artifacts (Phase 13 removal candidate). See docs/plans/phase-12-retro.md.
     const t2 = tier2(state, queryStr, { now, intent: classifier, k: 10 });
-    if (t2.hit) {
-        const topK = t2.scored.slice(0, k);
-        const entriesOnly = topK.map(r => r.entry);
-        let cached = recordTier0(state, queryStr, entriesOnly);
-        cached = recordTier1(cached, queryStr, entriesOnly);
-        const final = applyAccessEventsToReturned(cached, entriesOnly);
-        const prepended = prependWorking(topK, working, now);
-        const trace = buildTrace({
-            timestamp: now.toISOString(),
-            query: queryStr,
-            classifier,
-            tierResolved: 2,
-            perTier: {
-                '2': topK.map(r => ({ id: r.entry.id, bm25: r.bm25, score: r.score })),
-                '3': null,
-            },
-            finalRanking: prepended.map(r => r.entry.id),
-            scorerId,
-        });
-        const nextState = logTrace(final.state, trace);
-        return {
-            entries: prepended.map(r => r.entry).slice(0, cap),
-            tierResolved: 2,
-            trace,
-            state: nextState,
-        };
-    }
 
     // --- Tier 3: intent-routed graph expansion ---
     if (t2.scored.length > 0) {

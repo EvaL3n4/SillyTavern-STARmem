@@ -42,7 +42,7 @@ describe('retrieve (ladder integration)', () => {
         expect(r.entries).toHaveLength(1);
     });
 
-    test('novel query hits Tier 2 or Tier 3 (depending on exit condition)', () => {
+    test('novel query hits Tier 3 (Tier 2 feeds seeds, never returns as resolver post-Phase 12)', () => {
         registerScorer('wide', (entry) => entry.id === 'a' ? 10.0 : 0.5);
         setScorer('wide');
         const s = seed([
@@ -50,7 +50,7 @@ describe('retrieve (ladder integration)', () => {
             ep('b', 'bob lives in paris', 'bob', ['location']),
         ]);
         const r = retrieve(s, 'alice marseille', { now });
-        expect([2, 3]).toContain(r.tierResolved);
+        expect(r.tierResolved).toBe(3);
         expect(r.entries[0].id).toBe('a');
     });
 
@@ -116,7 +116,7 @@ describe('retrieve (ladder integration)', () => {
         }
     });
 
-    test('Tier 3 stub: when Tier 2 misses exit condition but has results, ladder resolves at Tier 3', () => {
+    test('Tier 3 stub: when Tier 2 has candidates, ladder resolves at Tier 3 (Phase 12 demolition invariant)', () => {
         registerScorer('flat', () => 1.0);
         setScorer('flat');
         const s = seed([
@@ -126,6 +126,44 @@ describe('retrieve (ladder integration)', () => {
         const r = retrieve(s, 'alice', { now });
         expect(r.tierResolved).toBe(3);
         expect(r.entries.length).toBeGreaterThan(0);
+    });
+});
+
+describe('retrieve — Tier 2 demolition (Phase 12 Task 1)', () => {
+    afterEach(() => _resetScorerForTests());
+
+    test('retrieve() never returns tierResolved: 2 — Tier 2 always feeds Tier 3', () => {
+        // Seed a state that would previously have satisfied the Tier 2
+        // tau-confidence + tau-gap shortcut (one strong BM25 hit, one weak,
+        // large margin). Post-demolition, the ladder must proceed to Tier 3
+        // regardless of the gap and return tierResolved: 3 (or 'floor' if
+        // Tier 3 also produces nothing).
+        registerScorer('sharp', (entry) => entry.id === 'a' ? 100.0 : 0.1);
+        setScorer('sharp');
+        const s = seed([
+            ep('a', 'alice lives in marseille', 'alice', ['location']),
+            ep('b', 'bob lives in paris', 'bob', ['location']),
+        ]);
+        const r = retrieve(s, 'alice marseille', { now });
+        expect(r.tierResolved).not.toBe(2);
+        expect([3, 'floor']).toContain(r.tierResolved);
+    });
+
+    test('Tier 2 BM25 candidates still flow through to Tier 3 seeds (trace.perTier["2"] retained)', () => {
+        // Post-demolition, Tier 3 resolution still populates perTier['2']
+        // with the BM25 candidates that seeded it. This pins the
+        // "Tier 2 is the seed provider" invariant.
+        registerScorer('flat', () => 1.0);
+        setScorer('flat');
+        const s = seed([
+            ep('a', 'alice marseille'),
+            ep('b', 'alice paris'),
+        ]);
+        const r = retrieve(s, 'alice', { now });
+        expect(r.tierResolved).toBe(3);
+        expect(r.trace.perTier['2']).toBeDefined();
+        expect(Array.isArray(r.trace.perTier['2'])).toBe(true);
+        expect(r.trace.perTier['2'].length).toBeGreaterThan(0);
     });
 });
 
