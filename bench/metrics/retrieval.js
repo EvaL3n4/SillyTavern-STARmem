@@ -226,12 +226,20 @@ export function mrr(matchedIds, rankedIds) {
  * non-NaN contributions. Reports n_scored / n_skipped alongside
  * values for honesty — the caller sees the real denominator.
  *
+ * Phase 12: excludes abstention runs from scoring. When any run carries
+ * `taskType`, emits a `byTaskType` slice with per-type metrics. When any
+ * run carries `abstention`, emits `abstentionCount`. LoCoMo-shaped runs
+ * (no taskType, no abstention) produce exactly the Phase 11 schema.
+ *
  * @param {Run[]} runs
- * @param {{ kValues?: number[] }} [opts]
- * @returns {MetricsResult}
+ * @param {{ kValues?: number[], _suppressByTaskType?: boolean }} [opts]
+ * @returns {MetricsResult & { byTaskType?: Record<string, { mrr: number, coverage: number, n_scored: number, n_skipped: number }>, abstentionCount?: number }}
  */
 export function computeMetrics(runs, opts = {}) {
     const kValues = opts.kValues ?? STANDARD_K;
+
+    // Phase 12: exclude abstention runs from scoring per Decision 10
+    const scorableRuns = runs.filter(r => r.qa?.abstention !== true);
 
     /** @type {Record<number, number>} */
     const precisionSums = {};
@@ -254,7 +262,7 @@ export function computeMetrics(runs, opts = {}) {
     let n_scored = 0;
     let n_skipped = 0;
 
-    for (const run of runs) {
+    for (const run of scorableRuns) {
         const evidenceTurns = run.qa?.evidenceTurns ?? [];
         const { matchedIds } = matchGoldByEvidence(run.retrieved, evidenceTurns);
         const rankedIds = run.retrieved.map(r => r.id);
@@ -297,13 +305,45 @@ export function computeMetrics(runs, opts = {}) {
             : NaN;
     }
 
-    return {
-        n: runs.length,
+    const result = {
+        n: scorableRuns.length,
         n_scored,
         n_skipped,
-        coverage: runs.length > 0 ? n_scored / runs.length : NaN,
+        coverage: scorableRuns.length > 0 ? n_scored / scorableRuns.length : NaN,
         precisionAtK: precisionResult,
         recallAtK: recallResult,
         mrr: mrrCount > 0 ? mrrSum / mrrCount : NaN,
     };
+
+    // Phase 12: per-task-type slice (only when at least one run has taskType)
+    const hasTaskType = scorableRuns.some(r => typeof r.qa?.taskType === 'string');
+    if (hasTaskType && !opts._suppressByTaskType) {
+        const byType = new Map();
+        for (const run of scorableRuns) {
+            const tt = run.qa?.taskType || '__untyped__';
+            if (!byType.has(tt)) byType.set(tt, []);
+            byType.get(tt).push(run);
+        }
+        /** @type {Record<string, { mrr: number, coverage: number, n_scored: number, n_skipped: number }>} */
+        const byTaskType = {};
+        for (const [tt, bucket] of byType) {
+            if (tt === '__untyped__') continue;
+            const sliceMetrics = computeMetrics(bucket, { ...opts, _suppressByTaskType: true });
+            byTaskType[tt] = {
+                mrr: sliceMetrics.mrr,
+                coverage: sliceMetrics.coverage,
+                n_scored: sliceMetrics.n_scored,
+                n_skipped: sliceMetrics.n_skipped,
+            };
+        }
+        Object.assign(result, { byTaskType });
+    }
+
+    // Phase 12: abstention count (only when at least one abstention run exists)
+    const abstentionRuns = runs.filter(r => r.qa?.abstention === true);
+    if (abstentionRuns.length > 0) {
+        Object.assign(result, { abstentionCount: abstentionRuns.length });
+    }
+
+    return result;
 }

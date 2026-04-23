@@ -300,4 +300,50 @@ describe('computeMetrics with NaN aggregation', () => {
         expect(result.n_scored).toBe(0);
         expect(result.n_skipped).toBe(1);
     });
+
+    test('emits byTaskType when any run has taskType', () => {
+        const runs = [
+            // 3 single-session-user runs (2 perfect, 1 miss)
+            { conversationId: 'x', qa: { question: 'q1', answer: 'a1', evidenceTurns: [0], category: 'x', taskType: 'single-session-user' },
+              retrieved: [{ id: 'e0', content: '', sourceMessages: [0], score: 0, tier: 3 }] },
+            { conversationId: 'x', qa: { question: 'q2', answer: 'a2', evidenceTurns: [1], category: 'x', taskType: 'single-session-user' },
+              retrieved: [{ id: 'e1', content: '', sourceMessages: [1], score: 0, tier: 3 }] },
+            { conversationId: 'x', qa: { question: 'q3', answer: 'a3', evidenceTurns: [2], category: 'x', taskType: 'single-session-user' },
+              retrieved: [{ id: 'e9', content: '', sourceMessages: [99], score: 0, tier: 3 }] },
+            // 2 multi-session runs (both hit)
+            { conversationId: 'x', qa: { question: 'q4', answer: 'a4', evidenceTurns: [3], category: 'x', taskType: 'multi-session' },
+              retrieved: [{ id: 'e3', content: '', sourceMessages: [3], score: 0, tier: 3 }] },
+            { conversationId: 'x', qa: { question: 'q5', answer: 'a5', evidenceTurns: [4], category: 'x', taskType: 'multi-session' },
+              retrieved: [{ id: 'e4', content: '', sourceMessages: [4], score: 0, tier: 3 }] },
+        ];
+        const metrics = computeMetrics(runs);
+        expect(metrics.byTaskType).toBeDefined();
+        expect(metrics.byTaskType['single-session-user']).toBeDefined();
+        expect(metrics.byTaskType['single-session-user'].n_scored).toBe(2);   // only 2 of 3 have matching sourceMessages → gold
+        expect(metrics.byTaskType['single-session-user'].n_skipped).toBe(1);
+        expect(metrics.byTaskType['multi-session']).toBeDefined();
+        expect(metrics.byTaskType['multi-session'].n_scored).toBe(2);
+        expect(metrics.byTaskType['multi-session'].mrr).toBeCloseTo(1.0, 4);
+    });
+
+    test('does not emit byTaskType when no runs have taskType (LoCoMo-shaped)', () => {
+        const runs = [
+            { conversationId: 'x', qa: { question: 'q1', answer: 'a1', evidenceTurns: [0], category: 'x' },
+              retrieved: [{ id: 'e0', content: '', sourceMessages: [0], score: 0, tier: 3 }] },
+        ];
+        const metrics = computeMetrics(runs);
+        expect(metrics.byTaskType).toBeUndefined();
+    });
+
+    test('excludes abstention runs from scoring, reports count separately', () => {
+        const runs = [
+            { conversationId: 'x', qa: { question: 'q1', answer: 'a1', evidenceTurns: [0], category: 'x', taskType: 'single-session-user' },
+              retrieved: [{ id: 'e0', content: '', sourceMessages: [0], score: 0, tier: 3 }] },
+            { conversationId: 'x', qa: { question: 'q2_abs', answer: '', evidenceTurns: [], category: 'x', taskType: 'single-session-user', abstention: true },
+              retrieved: [{ id: 'e9', content: '', sourceMessages: [99], score: 0, tier: 3 }] },
+        ];
+        const metrics = computeMetrics(runs);
+        expect(metrics.abstentionCount).toBe(1);
+        expect(metrics.byTaskType['single-session-user'].n_scored).toBe(1);
+    });
 });
