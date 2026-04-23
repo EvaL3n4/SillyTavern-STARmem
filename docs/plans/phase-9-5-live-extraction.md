@@ -1260,6 +1260,16 @@ Use `memory` or `hindsight_retain` to record:
 
 ---
 
+**Task 8 — full bm25 sweep (16 points) — complete. Three findings:**
+
+1. **Tags populated at 100% under live Gemma** (up from 0% under rule-based). Tags-populated-rate probe confirms 227/227 episodic entries carry non-empty tags. `TAG_BOOST` is no longer structurally blind — the scorer has something to score against. If the knob is flat, it's because ranking genuinely doesn't care, not because there's nothing to rank.
+
+2. **`TAG_BOOST` × `SUBJECT_BOOST` grid is Branch-C flat under live extraction.** MRR range across 16 cells: 0.8051 (3,4) → 0.8116 (1,4) = spread 0.0065. Well below the 0.02 amendment threshold. This *disconfirms* 9.4.8's borderline "+0.0098 MRR" reading as corpus-noise, not micro-signal. Both knobs hold at spec (2, 2).
+
+3. **Elbow detector false-positive reproduces — same bug as Task 5.** Renderer proposed `TAG_BOOST: 2 → 1, SUBJECT_BOOST: 2 → 4` despite the whole grid being flat. Same root cause: corner-of-grid sort-first pick when Δ across axes is below noise. **Do NOT ship this amendment.** Phase 11 "zero-axis-Δ guard" priority upgraded from speculative to confirmed-recurring.
+
+---
+
 **Task 6 — full graph coordinate descent (6 rounds) — complete. Four findings:**
 
 1. **`TIER3_LAMBDA_1` / `TIER3_LAMBDA_2` inert under live Gemma — third-time reproduction.** Both rounds produce identical metrics across 5 values each (MRR 0.8057 flat to 4 decimals, ΔMRR -0.0020 vs gap=10 baseline). 9.4.9 framed this as edge-landscape homogeneity; live extraction did not change it. Evidence the inertness is corpus-structural, not extractor-dependent. **Hold both at spec.** Candidate for removal from future sweeps.
@@ -1287,9 +1297,9 @@ Use `memory` or `hindsight_retain` to record:
 
 3. **🚨 Elbow detector false-positive — Phase 11 bullet added.** Renderer proposed amending `TIER2_TAU_CONFIDENCE: 2.0 → 0.5` because the grid has ties at the confidence axis's corner, and 0.5 sorts first. The rationale block self-admits `Δmetric/Δknob = 0.000000 ≤ 0.1×maxΔ = 0.000000` — i.e. the axis has zero variance. Any amendment is a vacuous no-op. **Do NOT ship this to `baseline.json` in Task 11.** Filed below as a Phase 11 hardening.
 
-### Phase 11 candidate: elbow-detector zero-axis-Δ guard
+### Phase 11 candidate: elbow-detector zero-axis-Δ guard **(confirmed recurring)**
 
-`_detect_elbow` in `bench/modal/sweep_app.py` proposes amendments when `Δmetric/Δknob` drops to zero AND the metric at the corner is the max, treating the sort order as the tiebreaker. For an axis where max Δ across all points is zero (inert knob), this produces a confident-wrong amendment proposal. Guard: when `maxΔ == 0` on any axis, suppress the elbow recommendation on that axis and fall back to "held at spec — knob is inert." Field-surfaced 2026-04-22 during Task 5 on `TIER2_TAU_CONFIDENCE`. ~6 LOC fix.
+`_detect_elbow` in `bench/modal/sweep_app.py` proposes amendments when `Δmetric/Δknob` drops to zero AND the metric at the corner is the max, treating the sort order as the tiebreaker. For any axis where max Δ across all points is below the amendment threshold (inert knob OR Branch-C-flat grid), this produces a confident-wrong amendment proposal. Guard: when `maxΔ` on any axis is below the configured amendment threshold, suppress the elbow recommendation and emit "held at spec — knob flat/inert on this corpus." Field-surfaced 2026-04-22 during Task 5 (`TIER2_TAU_CONFIDENCE` inert) AND Task 8 (`TAG_BOOST`/`SUBJECT_BOOST` Branch-C flat). Two reproductions in 9.5 alone; pattern will recur on any future flat sweep. ~6 LOC fix but shipping it alongside amendment-threshold-reading logic in the renderer (not just the detector) is cleaner.
 
 ---
 
@@ -1315,7 +1325,7 @@ Phase 11 candidates identified during 9.5 dispatch. Task 11's retro expands thes
 - [x] Task 5: τ sweep live writeup produced, flat/elbow verdict recorded. *(48 points, 2026-04-22T19-06-35Z. `TIER2_TAU_CONFIDENCE` inert re-confirmed, `TIER2_TAU_GAP=10` plateau reproduces. Detector false-positive filed for Phase 11.)*
 - [x] Task 6: Graph sweep (6 rounds) live writeup, per-round verdicts. *(27 points across 6 rounds, 2026-04-22T19-35-03Z. λ1/λ2 inert third-time repro. beam=3 borderline clean. seeds_k/edge_cap/cooccurrence all coverage-bias HOLD'd. Zero amendments shipped — coverage guard did its job.)*
 - [x] Task 7: Consolidation sweep + EXTRACT_MAX_TOKENS observation. *(DEDUP round 2026-04-22T19-46-24Z — Branch C fires fourth-time, updateRate 0.007-0.045 across thresholds. BATCH_SIZE round deferred to Phase 11 after Branch D fired twice. EXTRACT_MAX_TOKENS observation pending — can be done from warm cache.)*
-- [ ] Task 8: BM25 sweep with tags-populated-rate reported.
+- [x] Task 8: BM25 sweep with tags-populated-rate reported. *(16 points, 2026-04-23T04-27-08Z. Tags 100% populated under live Gemma. Grid Branch-C flat (MRR spread 0.0065 < 0.02). Elbow detector false-positive reproduces — bug filed for Phase 11.)*
 - [ ] Task 9: Baseline comparison with structural invariant verdict.
 - [ ] Task 10: New hops + relw sweep drivers + writeups.
 - [ ] Task 11: `baseline.json` status=measured, retro written, all artifacts committed.
