@@ -129,10 +129,13 @@ export async function createDataset(auth, datasetId, opts = {}) {
     /** @type {Record<string, unknown>} */
     const body = { datasetId, dataset };
     if (exampleCount !== undefined) {
-        // Fireworks wants exampleCount at the TOP LEVEL of the request body
-        // (mirrors gatewayDataset.exampleCount in the OpenAPI schema);
-        // transmitted as a stringified int64 per proto convention.
-        body.exampleCount = String(exampleCount);
+        // Fireworks' gateway runs gRPC-JSON transcoding that preserves proto
+        // field names (snake_case), despite the OpenAPI docs showing
+        // camelCase. `exampleCount` is rejected with
+        // `proto: (line 1:73): unknown field "exampleCount"`; `example_count`
+        // is the real wire name. Transmitted as a stringified int64 per proto
+        // convention for int64-typed fields.
+        body.example_count = String(exampleCount);
     }
     return _request(auth, `/accounts/${auth.accountId}/datasets`, {
         method: 'POST',
