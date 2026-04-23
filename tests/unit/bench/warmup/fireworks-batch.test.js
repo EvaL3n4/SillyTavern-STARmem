@@ -17,6 +17,9 @@ describe('fireworks-batch client', () => {
 
     afterEach(() => {
         global.fetch = originalFetch;
+        // Always restore real timers in case a test called useFakeTimers()
+        // and an assertion failed before the test body's useRealTimers() ran.
+        jest.useRealTimers();
     });
 
     test('createDataset sends POST to correct URL with correct body', async () => {
@@ -239,16 +242,14 @@ describe('fireworks-batch client', () => {
     });
 
     test('network-error retry budget exhaustion names maxRetries + 1 attempts', async () => {
+        jest.useFakeTimers();
         global.fetch = jest.fn(async () => {
             throw new Error('ECONNRESET');
         });
 
-        let caught;
-        try {
-            await createDataset(AUTH, 'ds-netfail');
-        } catch (err) {
-            caught = err;
-        }
+        const p = createDataset(AUTH, 'ds-netfail').catch(err => err);
+        await jest.runAllTimersAsync();
+        const caught = await p;
 
         expect(caught).toBeTruthy();
         expect(caught.message).toMatch(/failed after 4 attempts/);
