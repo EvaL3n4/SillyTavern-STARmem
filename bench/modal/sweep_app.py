@@ -27,6 +27,32 @@ volume = modal.Volume.from_name("starmem-bench-data", create_if_missing=True)
 env_secret = modal.Secret.from_dotenv(filename=".env.bench")
 
 
+def _install_volume_symlink(link_path: str, target_path: str) -> None:
+    """Install link_path -> target_path, evicting a real file/dir if one was
+    copied in by add_local_dir. (Modal's add_local_dir ignores .gitignore by
+    default, so bench/.cache/* gets copied into every container as a real
+    directory. Without eviction, writes to link_path land on the container's
+    ephemeral filesystem instead of the Volume, and volume.commit() commits
+    nothing. Caught 2026-04-23 on Phase 12 Task 6 warmup smoke: 110 live
+    Nano-GPT calls wrote 110 cache files, all ephemeral, cacheFilesDelta=0.)
+
+    Idempotent: a correct pre-existing symlink is left alone. A real file
+    or directory at link_path is removed first, then the symlink installs.
+    """
+    import os
+    import shutil
+
+    if os.path.islink(link_path):
+        # Already a symlink — trust it. If it points somewhere wrong,
+        # the caller will notice via write failures or missing reads.
+        return
+    if os.path.isdir(link_path):
+        shutil.rmtree(link_path)
+    elif os.path.exists(link_path):
+        os.remove(link_path)
+    os.symlink(target_path, link_path)
+
+
 @app.function(image=image, volumes={"/data": volume}, timeout=600, memory=4096)
 def hello():
     import os
@@ -73,14 +99,11 @@ def run_point(overrides_json: str, corpus: str = "locomo") -> str:
     os.makedirs(repo_cache, exist_ok=True)
     corpus_link = os.path.join(repo_cache, "locomo10.json")
     cache_link = os.path.join(repo_cache, "extractions")
-    if not os.path.exists(corpus_link):
-        os.symlink("/data/locomo10.json", corpus_link)
-    if not os.path.exists(cache_link):
-        os.symlink("/data/extractions", cache_link)
+    _install_volume_symlink(corpus_link, "/data/locomo10.json")
+    _install_volume_symlink(cache_link, "/data/extractions")
     if corpus == "longmemeval-s":
         longmemeval_link = os.path.join(repo_cache, "longmemeval_s_cleaned.json")
-        if not os.path.exists(longmemeval_link):
-            os.symlink("/data/longmemeval_s_cleaned.json", longmemeval_link)
+        _install_volume_symlink(longmemeval_link, "/data/longmemeval_s_cleaned.json")
 
     # Diagnostic: collect filesystem state before running Node.
     diag = {
@@ -165,14 +188,11 @@ def run_baseline_point(retriever_id: str, corpus: str = "locomo", extractor_mode
     os.makedirs(repo_cache, exist_ok=True)
     corpus_link = os.path.join(repo_cache, "locomo10.json")
     cache_link = os.path.join(repo_cache, "extractions")
-    if not os.path.exists(corpus_link):
-        os.symlink("/data/locomo10.json", corpus_link)
-    if not os.path.exists(cache_link):
-        os.symlink("/data/extractions", cache_link)
+    _install_volume_symlink(corpus_link, "/data/locomo10.json")
+    _install_volume_symlink(cache_link, "/data/extractions")
     if corpus == "longmemeval-s":
         longmemeval_link = os.path.join(repo_cache, "longmemeval_s_cleaned.json")
-        if not os.path.exists(longmemeval_link):
-            os.symlink("/data/longmemeval_s_cleaned.json", longmemeval_link)
+        _install_volume_symlink(longmemeval_link, "/data/longmemeval_s_cleaned.json")
 
     env = os.environ.copy()
     env["STARMEM_RETRIEVER_ID"] = retriever_id
@@ -226,14 +246,11 @@ def run_batchsize_point(conv_idx: int, batch_size: int, corpus: str = "locomo") 
     os.makedirs(repo_cache, exist_ok=True)
     corpus_link = os.path.join(repo_cache, "locomo10.json")
     cache_link = os.path.join(repo_cache, "extractions")
-    if not os.path.exists(corpus_link):
-        os.symlink("/data/locomo10.json", corpus_link)
-    if not os.path.exists(cache_link):
-        os.symlink("/data/extractions", cache_link)
+    _install_volume_symlink(corpus_link, "/data/locomo10.json")
+    _install_volume_symlink(cache_link, "/data/extractions")
     if corpus == "longmemeval-s":
         longmemeval_link = os.path.join(repo_cache, "longmemeval_s_cleaned.json")
-        if not os.path.exists(longmemeval_link):
-            os.symlink("/data/longmemeval_s_cleaned.json", longmemeval_link)
+        _install_volume_symlink(longmemeval_link, "/data/longmemeval_s_cleaned.json")
 
     env = os.environ.copy()
     env["STARMEM_CONV_IDX"] = str(conv_idx)
@@ -316,14 +333,11 @@ def run_longmemeval_warmup_point(item_idx: int, extractor_model: str = "") -> st
     # bench/.cache/longmemeval_s_cleaned.json. Without the symlink,
     # `loadConversations({offline: true})` throws.
     corpus_link = os.path.join(repo_cache, "locomo10.json")
-    if not os.path.exists(corpus_link):
-        os.symlink("/data/locomo10.json", corpus_link)
     longmemeval_link = os.path.join(repo_cache, "longmemeval_s_cleaned.json")
-    if not os.path.exists(longmemeval_link):
-        os.symlink("/data/longmemeval_s_cleaned.json", longmemeval_link)
     cache_link = os.path.join(repo_cache, "extractions")
-    if not os.path.exists(cache_link):
-        os.symlink("/data/extractions", cache_link)
+    _install_volume_symlink(corpus_link, "/data/locomo10.json")
+    _install_volume_symlink(longmemeval_link, "/data/longmemeval_s_cleaned.json")
+    _install_volume_symlink(cache_link, "/data/extractions")
 
     env = os.environ.copy()
     env["STARMEM_BENCH_CORPUS"] = "longmemeval-s"
@@ -341,6 +355,11 @@ def run_longmemeval_warmup_point(item_idx: int, extractor_model: str = "") -> st
     # so switching models partitions the cache rather than corrupting it.
     if extractor_model:
         env["STARMEM_BENCH_LLM_MODEL"] = extractor_model
+    # K parallel extraction calls per item. Nano-GPT tolerates unbounded
+    # concurrent calls; K is bounded only by per-item RAM and per-container
+    # socket ceiling. Default 16. Override by exporting
+    # STARMEM_WARMUP_CONCURRENCY on the driver before `modal run`.
+    env["STARMEM_WARMUP_CONCURRENCY"] = os.environ.get("STARMEM_WARMUP_CONCURRENCY", "16")
 
     # Start a background thread that commits the Volume every 60s while
     # the subprocess runs. Without this, a FunctionTimeoutError SIGKILLs
@@ -2121,14 +2140,11 @@ def run_sweep(sweep_name: str, synthetic: bool = False, corpus: str = "locomo") 
     os.makedirs(repo_cache, exist_ok=True)
     corpus_link = os.path.join(repo_cache, "locomo10.json")
     cache_link = os.path.join(repo_cache, "extractions")
-    if not os.path.exists(corpus_link):
-        os.symlink("/data/locomo10.json", corpus_link)
-    if not os.path.exists(cache_link):
-        os.symlink("/data/extractions", cache_link)
+    _install_volume_symlink(corpus_link, "/data/locomo10.json")
+    _install_volume_symlink(cache_link, "/data/extractions")
     if corpus == "longmemeval-s":
         longmemeval_link = os.path.join(repo_cache, "longmemeval_s_cleaned.json")
-        if not os.path.exists(longmemeval_link):
-            os.symlink("/data/longmemeval_s_cleaned.json", longmemeval_link)
+        _install_volume_symlink(longmemeval_link, "/data/longmemeval_s_cleaned.json")
 
     if synthetic:
         # Tiny 2-point grid for smoke testing. Both points must populate

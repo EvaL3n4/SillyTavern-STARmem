@@ -42,15 +42,28 @@ export function _cacheKey(model, messages, maxTokens) {
 /**
  * Wrap an inner LLM client with on-disk memoization.
  *
+ * Optionally accepts a shared `stats` counter (`{hits, misses}`). The
+ * returned closure increments `stats.hits` on a cache hit and
+ * `stats.misses` on a miss. Counters are process-local and unsynchronised —
+ * safe under Node's single-threaded event loop, where `hits++` compiles
+ * to a non-preemptible read-modify-write on a primitive integer. Passing
+ * `stats` is strictly opt-in; omitting it keeps the closure a zero-cost
+ * pass-through identical to the pre-Phase-12 behavior.
+ *
+ * Added for the Phase 12 LongMemEval warmup: attribution in warmup
+ * reports needed hit/miss accounting without a per-batch fs.stat probe.
+ *
  * @param {(profileId: string, messages: Array<{role: string, content: string}>, maxTokens: number) => Promise<string>} inner
  * @param {object} opts
  * @param {string} opts.dir            - Cache directory (created on demand).
  * @param {string} opts.model          - Model identifier for the cache key.
  * @param {boolean} [opts.disabled]    - If true, bypass entirely.
+ * @param {{hits: number, misses: number}} [opts.stats]
+ *     - Optional shared counter. Mutated in place; caller reads when done.
  * @returns {(profileId: string, messages: Array<{role: string, content: string}>, maxTokens: number) => Promise<string>}
  */
 export function wrapWithCache(inner, opts) {
-    const { dir, model, disabled = false } = opts;
+    const { dir, model, disabled = false, stats } = opts;
 
     if (disabled) {
         return inner;
@@ -64,11 +77,14 @@ export function wrapWithCache(inner, opts) {
             const raw = await readFile(file, 'utf8');
             const parsed = JSON.parse(raw);
             if (typeof parsed?.response === 'string') {
+                if (stats) stats.hits = (stats.hits ?? 0) + 1;
                 return parsed.response;
             }
         } catch {
             // miss or corrupt — fall through
         }
+
+        if (stats) stats.misses = (stats.misses ?? 0) + 1;
 
         const response = await inner(profileId, messages, maxTokens);
 

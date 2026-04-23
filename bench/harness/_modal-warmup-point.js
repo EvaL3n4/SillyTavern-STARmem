@@ -1,30 +1,70 @@
 /**
- * Warmup point for LongMemEval-S extraction cache.
+ * Warmup point for the LongMemEval-S extraction cache.
  *
- * Reads one item by index, runs seedConversation with the live extractor
- * enabled, and emits seed stats. Meant to be fanned out via
- * run_longmemeval_warmup_point.map(range(500)) so Modal parallelizes
- * the first-pass live-LLM cost across 32 free-tier containers.
+ * Design (Phase 12 Task 6, Design A — parallel cache prewarming):
  *
- * Mirrors bench/baselines/_modal-point.js's stderr-redirect pattern so
- * stdout stays pure JSON for the Python-side json.loads().
+ * The serial `seedConversation` path is O(turns) per item because
+ * `maybeConsolidate` fires a sequential extractFacts call every BATCH_SIZE
+ * turns (spec §6.3). For LongMemEval-S's 400–800-turn items that means
+ * ~80–160 sequential LLM hops per item — blowing Modal's 1800s per-cell
+ * budget.
+ *
+ * This warmup bypasses the state pipeline entirely. It reproduces the
+ * exact (model, messages, maxTokens) triples that `consolidate()` would
+ * produce given the item's filtered turn stream, and memoizes their LLM
+ * responses into the same on-disk cache `wrapWithCache` writes to. When
+ * baselines later run, `seedConversation`'s real `consolidate()` path
+ * hits a warm cache on every call and returns in microseconds.
+ *
+ * Correctness contract — how this stays in sync with production:
+ *
+ *   1. `renderExtractionPrompt` + `EXTRACT_MAX_TOKENS` are imported from
+ *      the real `src/consolidation/extractFacts.js`. If anyone edits the
+ *      system prompt, the transcript format, or the token budget, the
+ *      warmup follows automatically. Worst-case drift means stale cache
+ *      entries miss cleanly — slow, not wrong.
+ *
+ *   2. The empty-turn filter matches `bench/harness/seeder.js:223`
+ *      byte-for-byte: `!turn.text || turn.text.trim().length === 0`.
+ *
+ *   3. `BATCH_SIZE` is read from `CONSOLIDATION` at call time (not
+ *      destructured at module top), so `setConstantOverrides` sweeps
+ *      from Phase 9.4.9 are observed and the warmup targets the same
+ *      keys the sweep will look up.
+ *
+ *   4. Each batch is rendered as `{role: 'user', content: turn.text}[]`,
+ *      matching the `messageOf` callback `seeder.js:233` passes into
+ *      `consolidate`.
+ *
+ * Parallelism via `concurrencyLimit(K)` at `STARMEM_WARMUP_CONCURRENCY`
+ * (default 16). Nano-GPT tolerates unbounded concurrent calls, so K is
+ * bounded only by per-item RAM and per-container socket ceiling.
  *
  * Env (enforced):
  *   STARMEM_BENCH_CORPUS=longmemeval-s
  *   STARMEM_WARMUP_ITEM_IDX=<int>  (0-indexed into the post-flatten corpus)
- *   STARMEM_BENCH_LIVE_EXTRACTOR=1  (without this, seedConversation's
- *     _resolveExtractor() falls back to rule-based and the cache stays cold)
- *   STARMEM_BENCH_LLM_URL, STARMEM_BENCH_API_KEY, STARMEM_BENCH_LLM_MODEL
- *     (supplied by the env_secret Modal Secret, same as run_baseline_point)
+ *   STARMEM_BENCH_LIVE_EXTRACTOR=1
+ *   STARMEM_BENCH_LLM_URL / STARMEM_BENCH_LLM_API_KEY / STARMEM_BENCH_LLM_MODEL
+ *
+ * Optional:
+ *   STARMEM_WARMUP_CONCURRENCY=<int>  (default 16)
  *
  * @module bench/harness/_modal-warmup-point
- * @see docs/plans/phase-12-multi-corpus.md Task 6 Pre-step
+ * @see docs/plans/phase-12-multi-corpus.md Task 6
+ * @see docs/plans/phase-12-task-6-extraction-cost-decision.md
  */
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { getAdapter } from '../corpora/index.js';
-import { seedConversation } from './seeder.js';
+import { renderExtractionPrompt, EXTRACT_MAX_TOKENS } from '../../src/consolidation/extractFacts.js';
+import { CONSOLIDATION } from '../../src/core/constants.js';
+import { wrapWithCache } from './extractionCache.js';
+import { makeLLMExtractor } from './llmExtractor.js';
+import { concurrencyLimit } from './concurrencyLimit.js';
 
 const corpusName = process.env.STARMEM_BENCH_CORPUS;
 const itemIdx = Number(process.env.STARMEM_WARMUP_ITEM_IDX);
+const K = Number(process.env.STARMEM_WARMUP_CONCURRENCY ?? '16');
 
 if (corpusName !== 'longmemeval-s') {
     console.error(`warmup-point requires STARMEM_BENCH_CORPUS=longmemeval-s, got '${corpusName}'`);
@@ -38,11 +78,20 @@ if (process.env.STARMEM_BENCH_LIVE_EXTRACTOR !== '1') {
     console.error(`warmup requires STARMEM_BENCH_LIVE_EXTRACTOR=1 to populate the extraction cache; rule-based fallback would no-op`);
     process.exit(2);
 }
+if (!Number.isInteger(K) || K < 1) {
+    console.error(`STARMEM_WARMUP_CONCURRENCY must be a positive integer, got '${process.env.STARMEM_WARMUP_CONCURRENCY}'`);
+    process.exit(2);
+}
 
 // Route all harness log output to stderr so stdout is reserved for the
 // JSON payload that run_longmemeval_warmup_point will json.loads().
 const _origLog = console.log;
 console.log = (...args) => console.error(...args);
+
+const DEFAULT_CACHE_DIR = path.resolve(
+    fileURLToPath(new URL('.', import.meta.url)),
+    '..', '.cache', 'extractions',
+);
 
 const t0 = Date.now();
 
@@ -57,30 +106,72 @@ if (itemIdx >= items.length) {
 }
 
 const item = items[itemIdx];
-// Print item shape upfront so Modal's live log shows whether this item
-// is abnormally large vs the plan's ~20-turn estimate. Item 0 timed
-// out at 600s on first smoke (2026-04-23); visibility here makes the
-// next tier of triage fast.
-console.error(`[warmup item=${itemIdx}] ${new Date().toISOString()} item loaded: turns=${item.turns.length} qa=${item.qa?.length ?? 0}`);
-console.error(`[warmup item=${itemIdx}] ${new Date().toISOString()} starting seedConversation (live extraction)...`);
 
-const tSeedStart = Date.now();
-const seedResult = await seedConversation(item, {
-    chatIdPrefix: `warmup-lme-${itemIdx}`,
-    keepBackend: false,  // discard state; we only care about cache side-effects
+// Exact predicate match with bench/harness/seeder.js:223–225. If this
+// drifts, cache keys drift and the warmup is wasted — so don't let it.
+const nonEmpty = item.turns.filter(t => t.text && t.text.trim().length > 0);
+
+// BATCH_SIZE read at call time (not destructured at module top) so a
+// runtime setConstantOverrides() sweep is observed. See phase-9-4-9
+// swept-constants pattern + tests/unit/core/swept-constants-overridable.
+const { BATCH_SIZE } = CONSOLIDATION;
+
+/** @type {Array<Array<{speaker?: string, text: string}>>} */
+const batches = [];
+for (let i = 0; i < nonEmpty.length; i += BATCH_SIZE) {
+    batches.push(nonEmpty.slice(i, i + BATCH_SIZE));
+}
+
+console.error(`[warmup item=${itemIdx}] ${new Date().toISOString()} item loaded: turns=${item.turns.length} nonEmpty=${nonEmpty.length} batches=${batches.length} (BATCH_SIZE=${BATCH_SIZE})`);
+console.error(`[warmup item=${itemIdx}] ${new Date().toISOString()} starting parallel extraction (K=${K})...`);
+
+const model = process.env.STARMEM_BENCH_LLM_MODEL;
+const inner = makeLLMExtractor({
+    url: process.env.STARMEM_BENCH_LLM_URL,
+    apiKey: process.env.STARMEM_BENCH_LLM_API_KEY,
+    model,
 });
-const tSeedMs = Date.now() - tSeedStart;
+const stats = { hits: 0, misses: 0 };
+const cachedExtractor = wrapWithCache(inner, { dir: DEFAULT_CACHE_DIR, model, stats });
 
-console.error(`[warmup item=${itemIdx}] ${new Date().toISOString()} seedConversation done in ${tSeedMs}ms — facts=${seedResult.factCount} turns=${seedResult.turnsProcessed} batches=${seedResult.consolidationStats.batches}`);
+const limit = concurrencyLimit(K);
+const tExtractStart = Date.now();
 
+/** @type {Array<{batchIdx: number, error: string}>} */
+const failures = [];
+await Promise.all(batches.map((batch, bIdx) => limit(async () => {
+    const messages = renderExtractionPrompt(
+        batch.map(t => ({ role: 'user', content: t.text })),
+    );
+    try {
+        await cachedExtractor('warmup', messages, EXTRACT_MAX_TOKENS);
+    } catch (err) {
+        failures.push({
+            batchIdx: bIdx,
+            error: /** @type {any} */(err)?.message ?? String(err),
+        });
+    }
+})));
+
+const tExtractMs = Date.now() - tExtractStart;
 const wallMs = Date.now() - t0;
 
+console.error(
+    `[warmup item=${itemIdx}] ${new Date().toISOString()} done in ${tExtractMs}ms ` +
+    `— hits=${stats.hits} misses=${stats.misses} failures=${failures.length}/${batches.length}`,
+);
+
+// Emit the JSON payload on stdout for json.loads() in the Python orchestrator.
 _origLog(JSON.stringify({
     itemIdx,
     itemTurns: item.turns.length,
-    factCount: seedResult.factCount,
-    turnsProcessed: seedResult.turnsProcessed,
-    consolidationStats: seedResult.consolidationStats,
-    seedMs: tSeedMs,
+    nonEmptyTurns: nonEmpty.length,
+    batchCount: batches.length,
+    batchSize: BATCH_SIZE,
+    concurrency: K,
+    hits: stats.hits,
+    misses: stats.misses,
+    failures,
+    extractMs: tExtractMs,
     wallMs,
 }));

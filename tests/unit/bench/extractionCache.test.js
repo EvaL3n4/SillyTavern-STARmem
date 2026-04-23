@@ -88,4 +88,48 @@ describe('extractionCache', () => {
         const stored = JSON.parse(await readFile(path.join(dir, `${key}.json`), 'utf8'));
         expect(stored.response).toBe('recovered');
     });
+
+    test('stats counter increments misses on cold call, hits on warm recall', async () => {
+        const inner = jest.fn(async () => '{"entries":[]}');
+        const stats = { hits: 0, misses: 0 };
+        const wrapped = wrapWithCache(inner, { dir, model: 'm', stats });
+
+        await wrapped('p', [{ role: 'u', content: 'a' }], 100);
+        expect(stats).toEqual({ hits: 0, misses: 1 });
+
+        await wrapped('p', [{ role: 'u', content: 'b' }], 100);
+        expect(stats).toEqual({ hits: 0, misses: 2 });
+
+        // Re-read the first key — cache hit
+        await wrapped('p', [{ role: 'u', content: 'a' }], 100);
+        expect(stats).toEqual({ hits: 1, misses: 2 });
+
+        expect(inner).toHaveBeenCalledTimes(2);
+    });
+
+    test('stats is opt-in — omitting keeps pre-Phase-12 behavior', async () => {
+        const inner = jest.fn(async () => 'ok');
+        const wrapped = wrapWithCache(inner, { dir, model: 'm' });
+
+        // No throw, no crash, and caller sees identical behavior.
+        await wrapped('p', [{ role: 'u', content: 'x' }], 100);
+        const r2 = await wrapped('p', [{ role: 'u', content: 'x' }], 100);
+        expect(r2).toBe('ok');
+        expect(inner).toHaveBeenCalledTimes(1);
+    });
+
+    test('corrupt cache file → stats charges a miss (not a hit) and overwrites', async () => {
+        const { writeFile, mkdir } = await import('node:fs/promises');
+        await mkdir(dir, { recursive: true });
+        const key = _cacheKey('m', [{ role: 'u', content: 'hi' }], 100);
+        await writeFile(path.join(dir, `${key}.json`), 'not json{{{');
+
+        const stats = { hits: 0, misses: 0 };
+        const inner = jest.fn(async () => 'recovered');
+        const wrapped = wrapWithCache(inner, { dir, model: 'm', stats });
+        await wrapped('p', [{ role: 'u', content: 'hi' }], 100);
+
+        expect(stats).toEqual({ hits: 0, misses: 1 });
+        expect(inner).toHaveBeenCalledTimes(1);
+    });
 });

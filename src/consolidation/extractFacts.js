@@ -22,7 +22,7 @@ import { callLLM } from './llmClient.js';
 import { createEntry } from '../memory/entry.js';
 import { ALL_EDGE_TYPES } from '../core/schema.js';
 
-const EXTRACT_MAX_TOKENS = 2048;
+export const EXTRACT_MAX_TOKENS = 2048;
 
 const SYSTEM_PROMPT = `You extract durable facts from a transcript of chat messages.
 
