@@ -386,6 +386,52 @@ type RebuildReport = { replacedCount: number; newCount: number; duration: number
 
 ---
 
+### Phase 12 — Multi-Corpus Benchmarking
+
+**Purpose:** Ship a second benchmark corpus (LongMemEval-S) alongside LoCoMo so Phase 10 (UI/UX) designs against a multi-corpus retrieval surface.
+
+**Inputs:** Phase 11 baseline infrastructure (coverage column, elbow guard, baselines-on-Modal surface, conversation-level-split template). Four provably-inert Tier 3 edge-weight knobs on LoCoMo single-session (λ₁, λ₂, EXPLICIT_RELATION_WEIGHT, COOCCURRENCE_WEIGHT, three-time reproduction).
+
+**Outputs:**
+- `bench/corpora/{adapter,locomo,longmemeval,index}.js`
+- Tier 2 demolition landed in `src/retrieval/ladder.js`
+- Per-task-type metrics slice in `bench/metrics/retrieval.js` + renderer `bench/render/by-task-type.js`
+- Modal `--corpus` parameter across run-point/run-baselines/run-sweep modes
+- First live 4-retriever baselines on both corpora (`docs/bench/baselines/*.md`)
+- λ₁ tripwire sweep on LongMemEval-S (expands to full 4-knob sweep if signal surfaces)
+- `docs/bench/baseline.json` refresh with per-corpus headlines
+
+**Spec reference:** §6.1 (retrieval evaluation), §7 (benchmark harness). No spec changes required; LongMemEval fits the existing "deterministic QA-over-haystack" shape.
+
+**Inter-phase contract:**
+```typescript
+// What Phase 10 inherits:
+type CorpusAdapter = {
+    name: 'locomo' | 'longmemeval-s';
+    loadConversations: () => Promise<CorpusConversation[]>;
+    metadata: { sourceUrl: string; cacheKey: string; itemCount: number; taskTypes?: string[] };
+};
+
+type MetricsResult = {
+    // existing fields unchanged: recallAt1/5/10, mrr, coverage, p50/p95Latency, n_scored, n_skipped
+    byTaskType?: Record<string, { mrr: number; coverage: number; n: number }>;
+};
+```
+
+**Done-when:**
+- [ ] Tier 2 demolition landed, ladder test regression suite green
+- [ ] `CorpusAdapter` interface + LoCoMo port + LongMemEval-S adapter
+- [ ] `computeMetrics` emits `byTaskType` when QA items carry `taskType`
+- [ ] Modal `--corpus` parameter functional across 3 modes
+- [ ] Live 4-retriever baselines documented for both corpora
+- [ ] λ₁ tripwire + decision-gated expansion resolved
+- [ ] Retro in `docs/plans/phase-12-retro.md` + ROADMAP Phase Retro Log entry
+- [ ] All jest + pytest green at phase close
+
+_(Phase 10 UI/UX and Phase 11 Infrastructure Hardening are tracked in §6 Phase Retro Log only; §3 skipped them per prior-session convention when they diverged from the original 0-9 baseline.)_
+
+---
+
 ## 4. Cross-Phase Conventions
 
 ### Runtime dependency policy (critical)
