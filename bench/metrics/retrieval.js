@@ -62,6 +62,7 @@ export const STANDARD_K = [1, 3, 5, 10];
  * @property {Record<number, number>} precisionAtK  - NaN if n_scored === 0.
  * @property {Record<number, number>} recallAtK     - NaN if n_scored === 0.
  * @property {number} mrr            - NaN if n_scored === 0.
+ * @property {number} coverage       - n_scored / n. NaN if n === 0.
  */
 
 /**
@@ -300,6 +301,7 @@ export function computeMetrics(runs, opts = {}) {
         n: runs.length,
         n_scored,
         n_skipped,
+        coverage: runs.length > 0 ? n_scored / runs.length : NaN,
         precisionAtK: precisionResult,
         recallAtK: recallResult,
         mrr: mrrCount > 0 ? mrrSum / mrrCount : NaN,
