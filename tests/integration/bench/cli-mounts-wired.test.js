@@ -23,7 +23,10 @@ const REQUIRED_WIRINGS = [
     {
         file: 'bench/cli.js',
         mounts: [
-            { symbol: 'loadLocomo',    from: './loaders/locomo.js' },
+            // Phase 12 Task 5: cli.js migrated from loadLocomo to getAdapter
+            // for multi-corpus support. Legacy loadLocomo path remains
+            // accessible via bench/loaders/ re-export shim.
+            { symbol: 'getAdapter',    from: './corpora/index.js' },
             { symbol: 'runHarness',    from: './runner.js' },
         ],
     },

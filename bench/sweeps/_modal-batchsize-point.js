@@ -14,7 +14,7 @@
  */
 import { performance } from 'node:perf_hooks';
 import { runHarness } from '../runner.js';
-import { loadLocomo } from '../loaders/locomo.js';
+import { getAdapter } from '../corpora/index.js';
 
 async function main() {
     const convIdx = parseInt(process.env.STARMEM_CONV_IDX ?? '', 10);
@@ -29,7 +29,9 @@ async function main() {
     const _origLog = console.log;
     console.log = (...args) => console.error(...args);
 
-    const fullCorpus = await loadLocomo({ offline: true });
+    const corpusName = process.env.STARMEM_BENCH_CORPUS ?? 'locomo';
+    const adapter = getAdapter(corpusName);
+    const fullCorpus = await adapter.loadConversations({ offline: true });
     const conv = fullCorpus[convIdx];
     if (!conv) {
         console.error(`convIdx ${convIdx} out of range (corpus size ${fullCorpus.length})`);

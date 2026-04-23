@@ -13,7 +13,7 @@
  */
 import { performance } from 'node:perf_hooks';
 import { runHarness } from '../runner.js';
-import { loadLocomo } from '../loaders/locomo.js';
+import { getAdapter } from '../corpora/index.js';
 import { bm25only } from './bm25only.js';
 import { recency } from './recency.js';
 import { random } from './random.js';
@@ -39,7 +39,9 @@ async function main() {
     }
     const retriever = RETRIEVERS[retrieverId];
 
-    const corpus = await loadLocomo({ offline: true });
+    const corpusName = process.env.STARMEM_BENCH_CORPUS ?? 'locomo';
+    const adapter = getAdapter(corpusName);
+    const corpus = await adapter.loadConversations({ offline: true });
     const wallT0 = performance.now();
     const { runs, metrics, envSnapshot } = await runHarness({
         corpus,

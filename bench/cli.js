@@ -14,7 +14,7 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { runHarness } from './runner.js';
-import { loadLocomo } from './loaders/locomo.js';
+import { getAdapter } from './corpora/index.js';
 
 /**
  * Parse process.argv into a simple key/value map.
@@ -81,13 +81,10 @@ async function main() {
     const outPath = args.out ?? defaultOut;
     const metricsPath = args['metrics-out'] ?? outPath.replace(/\.jsonl$/, '.metrics.json');
 
-    if (corpusName !== 'locomo') {
-        console.error(`Unknown corpus: ${corpusName}`);
-        process.exit(1);
-    }
-
-    const corpus = await loadLocomo({
-        maxConversations,
+    const adapter = getAdapter(corpusName);  // throws with known-list on typos
+    const corpus = await adapter.loadConversations({
+        maxConversations,                                               // LoCoMo legacy
+        maxItems: args['max-items'] ? Number(args['max-items']) : undefined,  // LongMemEval
         offline,
     });
 

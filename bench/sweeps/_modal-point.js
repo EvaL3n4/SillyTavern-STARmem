@@ -10,7 +10,7 @@
  */
 
 import { runHarness } from '../runner.js';
-import { loadLocomo } from '../loaders/index.js';
+import { getAdapter } from '../corpora/index.js';
 import { performance } from 'node:perf_hooks';
 
 // Route all harness log output to stderr so stdout is reserved for the
@@ -59,7 +59,9 @@ function aggregateConsolidationStats(runs) {
 
 async function main() {
     const overrides = JSON.parse(process.env.STARMEM_OVERRIDES || '{}');
-    const corpus = await loadLocomo({ offline: true });
+    const corpusName = process.env.STARMEM_BENCH_CORPUS ?? 'locomo';
+    const adapter = getAdapter(corpusName);
+    const corpus = await adapter.loadConversations({ offline: true });
 
     const t0 = performance.now();
     const result = await runHarness({ corpus, overrides });

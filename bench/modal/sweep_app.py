@@ -52,11 +52,12 @@ def hello():
     timeout=1500,
     memory=4096,
 )
-def run_point(overrides_json: str) -> str:
+def run_point(overrides_json: str, corpus: str = "locomo") -> str:
     """Run a single sweep point.
 
     Args:
         overrides_json: JSON string of Record<string, number> overrides.
+        corpus: Benchmark corpus to run against. 'locomo' or 'longmemeval-s'.
 
     Returns:
         JSON string with { overrides, metrics, latencyMs, runCount, wallMs }.
@@ -76,6 +77,10 @@ def run_point(overrides_json: str) -> str:
         os.symlink("/data/locomo10.json", corpus_link)
     if not os.path.exists(cache_link):
         os.symlink("/data/extractions", cache_link)
+    if corpus == "longmemeval-s":
+        longmemeval_link = os.path.join(repo_cache, "longmemeval_s_cleaned.json")
+        if not os.path.exists(longmemeval_link):
+            os.symlink("/data/longmemeval_s_cleaned.json", longmemeval_link)
 
     # Diagnostic: collect filesystem state before running Node.
     diag = {
@@ -91,6 +96,7 @@ def run_point(overrides_json: str) -> str:
 
     env = os.environ.copy()
     env["STARMEM_OVERRIDES"] = overrides_json
+    env["STARMEM_BENCH_CORPUS"] = corpus
 
     # check=False — we want to surface stderr on non-zero exit, not raise.
     result = subprocess.run(
@@ -138,11 +144,12 @@ def run_point(overrides_json: str) -> str:
     timeout=600,
     memory=4096,
 )
-def run_baseline_point(retriever_id: str) -> str:
+def run_baseline_point(retriever_id: str, corpus: str = "locomo") -> str:
     """Run one baseline retriever over the full corpus.
 
     Args:
         retriever_id: one of BASELINE_IDS ("ladder", "bm25only", "recency", "random").
+        corpus: Benchmark corpus to run against. 'locomo' or 'longmemeval-s'.
 
     Returns:
         JSON string with { retrieverId, metrics, latencyMs, runCount, wallMs, envSnapshot }.
@@ -158,9 +165,14 @@ def run_baseline_point(retriever_id: str) -> str:
         os.symlink("/data/locomo10.json", corpus_link)
     if not os.path.exists(cache_link):
         os.symlink("/data/extractions", cache_link)
+    if corpus == "longmemeval-s":
+        longmemeval_link = os.path.join(repo_cache, "longmemeval_s_cleaned.json")
+        if not os.path.exists(longmemeval_link):
+            os.symlink("/data/longmemeval_s_cleaned.json", longmemeval_link)
 
     env = os.environ.copy()
     env["STARMEM_RETRIEVER_ID"] = retriever_id
+    env["STARMEM_BENCH_CORPUS"] = corpus
 
     result = subprocess.run(
         ["node", "bench/baselines/_modal-point.js"],
@@ -189,12 +201,13 @@ def run_baseline_point(retriever_id: str) -> str:
     timeout=1800,
     memory=4096,
 )
-def run_batchsize_point(conv_idx: int, batch_size: int) -> str:
+def run_batchsize_point(conv_idx: int, batch_size: int, corpus: str = "locomo") -> str:
     """Run one (conversation, BATCH_SIZE) cell.
 
     Args:
         conv_idx: 0-indexed conversation slot in LoCoMo-10.
         batch_size: BATCH_SIZE override to apply.
+        corpus: Benchmark corpus to run against. 'locomo' or 'longmemeval-s'.
 
     Returns:
         JSON string with { convIdx, batchSize, metrics, consolidationStats,
@@ -211,10 +224,15 @@ def run_batchsize_point(conv_idx: int, batch_size: int) -> str:
         os.symlink("/data/locomo10.json", corpus_link)
     if not os.path.exists(cache_link):
         os.symlink("/data/extractions", cache_link)
+    if corpus == "longmemeval-s":
+        longmemeval_link = os.path.join(repo_cache, "longmemeval_s_cleaned.json")
+        if not os.path.exists(longmemeval_link):
+            os.symlink("/data/longmemeval_s_cleaned.json", longmemeval_link)
 
     env = os.environ.copy()
     env["STARMEM_CONV_IDX"] = str(conv_idx)
     env["STARMEM_BATCH_SIZE"] = str(batch_size)
+    env["STARMEM_BENCH_CORPUS"] = corpus
 
     result = subprocess.run(
         ["node", "bench/sweeps/_modal-batchsize-point.js"],
@@ -249,8 +267,11 @@ BATCHSIZE_CONV_INDICES = [0, 1, 2, 3, 4]
     timeout=1800,
     memory=4096,
 )
-def run_baselines() -> dict:
+def run_baselines(corpus: str = "locomo") -> dict:
     """Fan out baseline retrievers to parallel containers.
+
+    Args:
+        corpus: Benchmark corpus to run against. 'locomo' or 'longmemeval-s'.
 
     Returns:
         Dict with keys:
@@ -262,7 +283,7 @@ def run_baselines() -> dict:
     import os
     from datetime import datetime
 
-    point_results = list(run_baseline_point.map(BASELINE_IDS))
+    point_results = list(run_baseline_point.map([(rid, corpus) for rid in BASELINE_IDS]))
     points = [json.loads(pr) for pr in point_results]
 
     ts = datetime.utcnow().strftime("%Y-%m-%dT%H-%M-%SZ")
@@ -322,7 +343,13 @@ def render_baselines_report(payload):
         delta = ladder["metrics"]["mrr"] - bm25["metrics"]["mrr"]
         verdict = "PASS" if delta >= -0.02 else "FAIL"
         lines.append(f"**Structural invariant (ladder ≥ bm25only − 0.02):** ladder_mrr − bm25only_mrr = {delta:+.4f} → **{verdict}**")
-    return "\n".join(lines)
+    report = "\n".join(lines)
+    # Append per-task-type slice if any point carries it
+    for pt in payload["points"]:
+        if pt.get("metrics", {}).get("byTaskType"):
+            report = _append_task_type_slice(report, pt["metrics"])
+            break
+    return report
 
 
 ABS_DELTA_FLOOR = 0.005
@@ -505,6 +532,61 @@ def _should_amend(baseline_metrics, candidate_metrics, min_mrr_delta=0.02, max_c
         "mrr_delta": mrr_delta,
         "coverage_delta": cov_delta,
     }
+
+
+def render_by_task_type(by_task_type: dict, headline: str = "") -> str:
+    """Mirror of bench/render/by-task-type.js. Kept in sync manually —
+    there's no shared source of truth across JS/Python (same pattern as
+    _should_amend mirror).
+    """
+    if not by_task_type:
+        return "_No per-task-type slice available (corpus did not provide taskType)._\n"
+
+    KNOWN_ORDER = [
+        "single-session-user",
+        "single-session-assistant",
+        "single-session-preference",
+        "temporal-reasoning",
+        "knowledge-update",
+        "multi-session",
+    ]
+    ordered = [k for k in KNOWN_ORDER if k in by_task_type] + sorted(
+        k for k in by_task_type if k not in KNOWN_ORDER
+    )
+
+    lines = []
+    if headline:
+        lines.append(headline)
+        lines.append("")
+    lines.append("| Task type                    | MRR      | Coverage | n scored | n skipped |")
+    lines.append("|------------------------------|----------|----------|----------|-----------|")
+    for tt in ordered:
+        m = by_task_type[tt]
+        mrr = f"{m['mrr']:.4f}"
+        cov = f"{m['coverage']:.4f}"
+        n_scored = str(m.get("n_scored", "?"))
+        n_skipped = str(m.get("n_skipped", "—"))
+        lines.append(
+            f"| {tt.ljust(28)} | {mrr.rjust(8)} | {cov.rjust(8)} | {n_scored.rjust(8)} | {n_skipped.rjust(9)} |"
+        )
+    return "\n".join(lines) + "\n"
+
+
+def _append_task_type_slice(report: str, metrics: dict) -> str:
+    """Append per-task-type slice and abstention count to a report when present."""
+    if not metrics:
+        return report
+    by_tt = metrics.get("byTaskType")
+    abstention = metrics.get("abstentionCount", 0)
+    if not by_tt and abstention == 0:
+        return report
+    lines = [report.rstrip()]
+    if by_tt:
+        lines.append("")
+        lines.append(render_by_task_type(by_tt, headline="### Per-task-type slice"))
+    if abstention > 0:
+        lines.append(f"\n**Abstention QAs excluded from scoring:** {abstention}")
+    return "\n".join(lines) + "\n"
 
 
 def render_tau_report(result, corpus_len, qa_count):
@@ -1705,14 +1787,15 @@ def _cartesian_product(knobs):
 
 
 @app.function(image=image, volumes={"/data": volume}, secrets=[env_secret], timeout=1800, memory=4096)
-def run_sweep(sweep_name: str, synthetic: bool = False) -> dict:
+def run_sweep(sweep_name: str, synthetic: bool = False, corpus: str = "locomo") -> dict:
     """Run a full parameter sweep in parallel via Modal.
 
     Args:
         sweep_name: 'tau', 'bm25', 'hops', 'relw', 'graph', or 'consolidation'.
         synthetic: If True, use a tiny 2-point grid for smoke testing.
-            The corpus is always full LoCoMo-10; `synthetic` only shrinks
+            The corpus is always full; `synthetic` only shrinks
             the knob grid, not the data.
+        corpus: Benchmark corpus to run against. 'locomo' or 'longmemeval-s'.
 
     Returns:
         Dict with keys:
@@ -1733,6 +1816,20 @@ def run_sweep(sweep_name: str, synthetic: bool = False) -> dict:
 
     # 9.4.9 dispatch — multi-round sweeps run in specialized helpers
     # that manage their own persistence + rendering.
+    #
+    # Phase 12 Task 5: the three sub-orchestrators below are LoCoMo-only
+    # in v12 (they drive graph/consolidation/batchsize knob sweeps, all
+    # scoped to the regression-control corpus). LongMemEval-S corpus
+    # support for them is deferred; Phase 12's LongMemEval sweeps
+    # (lambda1_tripwire, etc.) go through the generic grid path below,
+    # which IS corpus-aware.
+    if sweep_name in ("batchsize", "graph", "consolidation") and corpus != "locomo":
+        raise ValueError(
+            f"--sweep-name {sweep_name!r} is LoCoMo-only in Phase 12. "
+            f"Got --corpus {corpus!r}. LongMemEval-S support for these sub-orchestrators "
+            f"is deferred to a later phase; use a generic sweep entry (e.g. lambda1_tripwire) "
+            f"for LongMemEval corpus sweeps."
+        )
     if sweep_name == "batchsize":
         return run_consolidation_batchsize_sweep()
     if sweep_name == "graph":
@@ -1754,6 +1851,10 @@ def run_sweep(sweep_name: str, synthetic: bool = False) -> dict:
         os.symlink("/data/locomo10.json", corpus_link)
     if not os.path.exists(cache_link):
         os.symlink("/data/extractions", cache_link)
+    if corpus == "longmemeval-s":
+        longmemeval_link = os.path.join(repo_cache, "longmemeval_s_cleaned.json")
+        if not os.path.exists(longmemeval_link):
+            os.symlink("/data/longmemeval_s_cleaned.json", longmemeval_link)
 
     if synthetic:
         # Tiny 2-point grid for smoke testing. Both points must populate
@@ -1796,7 +1897,7 @@ def run_sweep(sweep_name: str, synthetic: bool = False) -> dict:
 
     # Fan out to parallel containers
     overrides_jsons = [json.dumps(point) for point in grid]
-    point_results = list(run_point.map(overrides_jsons))
+    point_results = list(run_point.map([(oj, corpus) for oj in overrides_jsons]))
 
     points = [json.loads(pr) for pr in point_results]
 
@@ -1809,11 +1910,7 @@ def run_sweep(sweep_name: str, synthetic: bool = False) -> dict:
     }
 
     # Compute corpus stats (Modal containers already ran the full corpus)
-    # Corpus is always the full LoCoMo-10 (_modal-point.js calls
-    # loadLocomo({ offline: true }) with no maxConversations). The
-    # `synthetic` flag shrinks the GRID, not the corpus — so every
-    # point's metrics are over 1986 QAs regardless of synthetic mode.
-    corpus_len = 10
+    corpus_len = 500 if corpus == "longmemeval-s" else 10
     qa_count = points[0]["runCount"] if points else 0
 
     if sweep_name == "bm25":
@@ -1821,16 +1918,17 @@ def run_sweep(sweep_name: str, synthetic: bool = False) -> dict:
         # helper subprocess. The Modal container has `/repo` and volume mount,
         # so we shell out to a Node one-liner.
         tags_probe = subprocess.run(
-            ["node", "-e", """
-                const { loadLocomo } = await import('./bench/loaders/index.js');
-                const { seedConversation } = await import('./bench/harness/seeder.js');
-                const { loadState } = await import('./src/core/state.js');
-                const corpus = await loadLocomo({ offline: true, maxConversations: 1 });
-                const seed = await seedConversation(corpus[0], { chatIdPrefix: 'tags-probe', keepBackend: true });
+            ["node", "-e", f"""
+                const {{ getAdapter }} = await import('./bench/corpora/index.js');
+                const {{ seedConversation }} = await import('./bench/harness/seeder.js');
+                const {{ loadState }} = await import('./src/core/state.js');
+                const adapter = getAdapter('{corpus}');
+                const corpus = await adapter.loadConversations({{ offline: true, maxConversations: 1 }});
+                const seed = await seedConversation(corpus[0], {{ chatIdPrefix: 'tags-probe', keepBackend: true }});
                 const state = await loadState(seed.chatId);
                 const ep = Object.values(state.entries).filter(e => e.scope === 'episodic');
                 const withTags = ep.filter(e => Array.isArray(e.tags) && e.tags.length > 0).length;
-                console.log(JSON.stringify({ n: ep.length, withTags, rate: ep.length > 0 ? withTags / ep.length : 0 }));
+                console.log(JSON.stringify({{ n: ep.length, withTags, rate: ep.length > 0 ? withTags / ep.length : 0 }}));
             """.strip()],
             cwd="/repo",
             capture_output=True,
@@ -1843,6 +1941,12 @@ def run_sweep(sweep_name: str, synthetic: bool = False) -> dict:
         tags_stats = None
 
     report = renderer(result, corpus_len, qa_count, tags_stats) if tags_stats else renderer(result, corpus_len, qa_count)
+
+    # Append per-task-type slice if any point carries it
+    for p in points:
+        if p.get("metrics", {}).get("byTaskType"):
+            report = _append_task_type_slice(report, p["metrics"])
+            break
 
     # Persist raw + rendered outputs to the Modal Volume so nothing is lost
     # if the calling session drops before the markdown is received. Schema
@@ -1888,6 +1992,7 @@ def main(
     sweep_name: str = "tau",
     synthetic: bool = False,
     local_out: str = "",
+    corpus: str = "locomo",
 ):
     """Dispatch entrypoint for Modal bench functions.
 
@@ -1920,11 +2025,20 @@ def main(
         modal run bench/modal/sweep_app.py --mode run-baselines --local-out docs/bench/baselines
             → fans out 4 baseline retrievers to parallel Modal containers,
               writes {ts}-baselines.{md,json} to host dir
+
+    --corpus CORPUS:
+        Benchmark corpus to run against. One of:
+          - locomo           (default; LoCoMo-10, 1986 QA items)
+          - longmemeval-s    (LongMemEval-S, 500 items, ~115K tok haystacks)
+        Passed through to the Node runner via STARMEM_BENCH_CORPUS env var.
     """
+    if corpus not in {"locomo", "longmemeval-s"}:
+        raise ValueError(f"--corpus must be one of: locomo, longmemeval-s. Got: {corpus!r}")
+
     if mode == "hello":
         print(json.dumps(hello.remote(), indent=2))
     elif mode == "run-point":
-        result_str = run_point.remote(overrides_json)
+        result_str = run_point.remote(overrides_json, corpus=corpus)
         print(result_str)
         if local_out:
             from datetime import datetime as _dt
@@ -1939,7 +2053,7 @@ def main(
                 file=__import__("sys").stderr,
             )
     elif mode == "run-baselines":
-        baselines_out = run_baselines.remote()
+        baselines_out = run_baselines.remote(corpus=corpus)
         report = baselines_out["report"]
         result_json_str = baselines_out["result_json"]
         run_dir = baselines_out["run_dir"]
@@ -1955,7 +2069,7 @@ def main(
             (out / f"{stem}.json").write_text(result_json_str)
             print(f"<!-- mirrored to host: {out / stem}.{{md,json}} -->", file=__import__("sys").stderr)
     elif mode == "run-sweep":
-        sweep_out = run_sweep.remote(sweep_name, synthetic)
+        sweep_out = run_sweep.remote(sweep_name, synthetic, corpus=corpus)
         report = sweep_out["report"]
         result_json_str = sweep_out["result_json"]
         run_dir = sweep_out["run_dir"]
