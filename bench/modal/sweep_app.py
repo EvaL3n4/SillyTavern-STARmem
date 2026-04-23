@@ -519,7 +519,13 @@ def run_longmemeval_warmup(corpus_size: int = 500, extractor_model: str = "") ->
 
     warmed = []
     failed = []
+    all_failed_items = []  # per-item allFailed=true: subprocess exited 0 but every batch rejected
     total_fact_count = 0
+    total_failed_batches = 0
+    total_batches = 0
+    first_item_errors = []  # firstError from each all-failed item, for fast triage
+    models_seen = set()
+    urls_seen = set()
     for raw in results_raw:
         parsed = json.loads(raw)
         if "error" in parsed:
@@ -527,19 +533,44 @@ def run_longmemeval_warmup(corpus_size: int = 500, extractor_model: str = "") ->
         else:
             warmed.append(parsed)
             total_fact_count += parsed.get("factCount", 0) or 0
+            total_failed_batches += parsed.get("failureCount", 0) or 0
+            total_batches += parsed.get("batchCount", 0) or 0
+            if parsed.get("modelResolved"):
+                models_seen.add(parsed["modelResolved"])
+            if parsed.get("urlHost"):
+                urls_seen.add(parsed["urlHost"])
+            if parsed.get("allFailed"):
+                all_failed_items.append(parsed["itemIdx"])
+                if parsed.get("firstError") and len(first_item_errors) < 3:
+                    first_item_errors.append({
+                        "itemIdx": parsed["itemIdx"],
+                        "firstError": parsed["firstError"],
+                    })
 
     volume.reload()  # pick up the fan-out's commits
     cache_files_after = len(os.listdir(cache_dir))
 
+    # Items where every batch failed are de-facto failed, regardless of the
+    # subprocess exit code. Surface this explicitly so a zero cacheFilesDelta
+    # with zero failedCount never happens again (caught 2026-04-23 smoke #2).
+    effective_warmed = [w for w in warmed if not w.get("allFailed")]
+
     return {
-        "warmedCount": len(warmed),
+        "warmedCount": len(effective_warmed),
+        "allFailedCount": len(all_failed_items),
         "failedCount": len(failed),
         "totalFactCount": total_fact_count,
+        "totalFailedBatches": total_failed_batches,
+        "totalBatches": total_batches,
+        "modelsSeen": sorted(models_seen),
+        "urlsSeen": sorted(urls_seen),
         "cacheFilesBefore": cache_files_before,
         "cacheFilesAfter": cache_files_after,
         "cacheFilesDelta": cache_files_after - cache_files_before,
         "wallMs": int((time.time() - t0) * 1000),
         "failures": failed[:10],  # cap for log legibility on Modal's output tail
+        "allFailedItems": all_failed_items[:20],
+        "firstItemErrors": first_item_errors,
     }
 
 

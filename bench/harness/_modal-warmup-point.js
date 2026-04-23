@@ -126,19 +126,34 @@ console.error(`[warmup item=${itemIdx}] ${new Date().toISOString()} item loaded:
 console.error(`[warmup item=${itemIdx}] ${new Date().toISOString()} starting parallel extraction (K=${K})...`);
 
 const model = process.env.STARMEM_BENCH_LLM_MODEL;
+const llmUrl = process.env.STARMEM_BENCH_LLM_URL;
 const inner = makeLLMExtractor({
-    url: process.env.STARMEM_BENCH_LLM_URL,
+    url: llmUrl,
     apiKey: process.env.STARMEM_BENCH_LLM_API_KEY,
     model,
 });
 const stats = { hits: 0, misses: 0 };
 const cachedExtractor = wrapWithCache(inner, { dir: DEFAULT_CACHE_DIR, model, stats });
 
+// Provenance: prove to the operator (and to post-mortem logs) exactly
+// which model+URL the subprocess resolved from the injected env. Strip
+// any embedded credentials from the URL display — host+path only.
+let urlHost = '';
+try {
+    const u = new URL(llmUrl ?? '');
+    urlHost = `${u.host}${u.pathname}`;
+} catch {
+    urlHost = '<unparseable>';
+}
+console.error(`[warmup item=${itemIdx}] model=${model} url=${urlHost}`);
+
 const limit = concurrencyLimit(K);
 const tExtractStart = Date.now();
 
-/** @type {Array<{batchIdx: number, error: string}>} */
+/** @type {Array<{batchIdx: number, error: string, name?: string, code?: string}>} */
 const failures = [];
+/** @type {null | {name: string, message: string, code?: string, cause?: unknown, stack?: string}} */
+let firstErrorDump = null;
 await Promise.all(batches.map((batch, bIdx) => limit(async () => {
     const messages = renderExtractionPrompt(
         batch.map(t => ({ role: 'user', content: t.text })),
@@ -146,9 +161,37 @@ await Promise.all(batches.map((batch, bIdx) => limit(async () => {
     try {
         await cachedExtractor('warmup', messages, EXTRACT_MAX_TOKENS);
     } catch (err) {
+        const e = /** @type {any} */ (err);
+        // Log every failure to stderr the moment it lands, so Modal's
+        // live function-log stream shows them instead of burying the
+        // info in the per-item JSON payload. Keeps one-line tail noise
+        // manageable while making all-batch-failure smokes diagnosable
+        // without extra round trips.
+        console.error(
+            `[warmup item=${itemIdx} batch=${bIdx}] FAILED: ${e?.name ?? 'Error'}: ${e?.message ?? String(err)}` +
+            (e?.code ? ` (code=${e.code})` : ''),
+        );
+        // Dump the first failure in full — stack + cause. Gives us
+        // network-level detail (fetch DNS/TLS/reset) without flooding
+        // the log when the whole batch is failing identically.
+        if (firstErrorDump === null) {
+            firstErrorDump = {
+                name: e?.name ?? 'Error',
+                message: e?.message ?? String(err),
+                code: e?.code,
+                cause: e?.cause ? String(e.cause) : undefined,
+                stack: e?.stack,
+            };
+            console.error(`[warmup item=${itemIdx} batch=${bIdx}] first-error detail:\n${e?.stack ?? '(no stack)'}`);
+            if (e?.cause) {
+                console.error(`[warmup item=${itemIdx} batch=${bIdx}] first-error cause: ${String(e.cause)}`);
+            }
+        }
         failures.push({
             batchIdx: bIdx,
-            error: /** @type {any} */(err)?.message ?? String(err),
+            error: e?.message ?? String(err),
+            name: e?.name,
+            code: e?.code,
         });
     }
 })));
@@ -158,7 +201,10 @@ const wallMs = Date.now() - t0;
 
 console.error(
     `[warmup item=${itemIdx}] ${new Date().toISOString()} done in ${tExtractMs}ms ` +
-    `— hits=${stats.hits} misses=${stats.misses} failures=${failures.length}/${batches.length}`,
+    `— hits=${stats.hits} misses=${stats.misses} failures=${failures.length}/${batches.length}` +
+    (failures.length === batches.length && batches.length > 0
+        ? ` ALL-FAILED (firstError: ${firstErrorDump?.name}: ${firstErrorDump?.message?.slice(0, 200)})`
+        : ''),
 );
 
 // Emit the JSON payload on stdout for json.loads() in the Python orchestrator.
@@ -169,9 +215,14 @@ _origLog(JSON.stringify({
     batchCount: batches.length,
     batchSize: BATCH_SIZE,
     concurrency: K,
+    modelResolved: model,
+    urlHost,
     hits: stats.hits,
     misses: stats.misses,
-    failures,
+    failureCount: failures.length,
+    allFailed: failures.length === batches.length && batches.length > 0,
+    firstError: firstErrorDump,
+    failures: failures.slice(0, 5),  // sample; full list would flood the summary
     extractMs: tExtractMs,
     wallMs,
 }));
