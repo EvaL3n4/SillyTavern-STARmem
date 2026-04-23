@@ -56,7 +56,8 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { getAdapter } from '../corpora/index.js';
-import { renderExtractionPrompt, EXTRACT_MAX_TOKENS } from '../../src/consolidation/extractFacts.js';
+import { EXTRACT_MAX_TOKENS } from '../../src/consolidation/extractFacts.js';
+import { enumerateWarmupBatches } from './warmup/enumerate.js';
 import { CONSOLIDATION } from '../../src/core/constants.js';
 import { wrapWithCache } from './extractionCache.js';
 import { makeLLMExtractor } from './llmExtractor.js';
@@ -116,16 +117,17 @@ const nonEmpty = item.turns.filter(t => t.text && t.text.trim().length > 0);
 // swept-constants pattern + tests/unit/core/swept-constants-overridable.
 const { BATCH_SIZE } = CONSOLIDATION;
 
-/** @type {Array<Array<{speaker?: string, text: string}>>} */
-const batches = [];
-for (let i = 0; i < nonEmpty.length; i += BATCH_SIZE) {
-    batches.push(nonEmpty.slice(i, i + BATCH_SIZE));
-}
+const model = process.env.STARMEM_BENCH_LLM_MODEL;
+
+const batches = enumerateWarmupBatches([item], {
+    model,
+    extractMaxTokens: EXTRACT_MAX_TOKENS,
+    batchSize: BATCH_SIZE,
+});
 
 console.error(`[warmup item=${itemIdx}] ${new Date().toISOString()} item loaded: turns=${item.turns.length} nonEmpty=${nonEmpty.length} batches=${batches.length} (BATCH_SIZE=${BATCH_SIZE})`);
 console.error(`[warmup item=${itemIdx}] ${new Date().toISOString()} starting parallel extraction (K=${K})...`);
 
-const model = process.env.STARMEM_BENCH_LLM_MODEL;
 const llmUrl = process.env.STARMEM_BENCH_LLM_URL;
 const inner = makeLLMExtractor({
     url: llmUrl,
@@ -155,11 +157,8 @@ const failures = [];
 /** @type {null | {name: string, message: string, code?: string, cause?: unknown, stack?: string}} */
 let firstErrorDump = null;
 await Promise.all(batches.map((batch, bIdx) => limit(async () => {
-    const messages = renderExtractionPrompt(
-        batch.map(t => ({ role: 'user', content: t.text })),
-    );
     try {
-        await cachedExtractor('warmup', messages, EXTRACT_MAX_TOKENS);
+        await cachedExtractor('warmup', batch.messages, batch.maxTokens);
     } catch (err) {
         const e = /** @type {any} */ (err);
         // Log every failure to stderr the moment it lands, so Modal's
