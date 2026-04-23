@@ -104,4 +104,33 @@ describe('enumerateWarmupBatches', () => {
         });
         expect(batches.every(b => b.model === MODEL)).toBe(true);
     });
+
+    test('item with all-empty turns produces no batches', () => {
+        const items = [mkItem('e', ['', '   ', '\t\n'])];
+        const batches = enumerateWarmupBatches(items, {
+            model: MODEL,
+            extractMaxTokens: EXTRACT_MAX_TOKENS,
+            batchSize: 5,
+        });
+        expect(batches).toEqual([]);
+    });
+
+    test('batchSize=1 produces one batch per non-empty turn', () => {
+        const items = [mkItem('b', ['a', 'b', 'c'])];
+        const batches = enumerateWarmupBatches(items, {
+            model: MODEL,
+            extractMaxTokens: EXTRACT_MAX_TOKENS,
+            batchSize: 1,
+        });
+        expect(batches).toHaveLength(3);
+        expect(batches.every(b => b.messages[1].content.split('\n').filter(l => l.startsWith('[user]')).length === 1)).toBe(true);
+    });
+
+    test('invalid inputs throw with descriptive messages', () => {
+        expect(() => enumerateWarmupBatches(null, {})).toThrow(/items must be an array/);
+        expect(() => enumerateWarmupBatches([], null)).toThrow(/opts required/);
+        expect(() => enumerateWarmupBatches([], { model: '', extractMaxTokens: 1, batchSize: 1 })).toThrow(/model must be a non-empty string/);
+        expect(() => enumerateWarmupBatches([], { model: 'm', extractMaxTokens: 0, batchSize: 1 })).toThrow(/extractMaxTokens must be a positive integer/);
+        expect(() => enumerateWarmupBatches([], { model: 'm', extractMaxTokens: 1, batchSize: -1 })).toThrow(/batchSize must be a positive integer/);
+    });
 });
