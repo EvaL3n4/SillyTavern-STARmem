@@ -1,105 +1,127 @@
 {
-  "asOf": "2026-04-22",
-  "gitSha": "307b63c",
-  "corpus": "locomo10-full (1986 QA items)",
+  "asOf": "2026-04-23",
+  "gitSha": "18c0df3",
+  "corpus": "locomo10-full (1986 QA items, live extraction via google/gemma-4-26b-a4b-it on Nano-GPT)",
   "nodeVersion": "v20.20.2",
   "scorerId": "default",
   "status": "measured",
-  "statusReason": "Sub-phase 9.4.7 fixed the seeder idle-drain leak and 9.4.8 reran the sweeps on Modal (free-tier, 32-container waves) against the full 10-conversation LoCoMo corpus (1986 QA items) with a warm live-extraction cache (google/gemma-4-26b-a4b-it). Numbers supersede the 9.4.6 advisory-only baseline; the ladder now cleanly beats bm25only/recency/random on MRR and recall@5.",
+  "statusReason": "Sub-phase 9.5 re-measured all sweeps on the 9.4.8 Modal substrate with live extraction (google/gemma-4-26b-a4b-it via Nano-GPT, temperature=0, warm cache seeded by 9.4.8). Added TIER3_MAX_HOPS and EXPLICIT_RELATION_WEIGHT single-axis sweeps previously uncovered in Phase 9. Zero constant amendments landed across 7 sweeps + baselines — every swept knob was flat, inert, or coverage-bias-gated. The 9.4.8 TIER2_TAU_GAP=10 plateau reproduces within <0.005 MRR noise under live extraction. Structural invariant ladderVsBm25Only passes decisively: ladder MRR 0.8057 - bm25only MRR 0.6898 = +0.1159 (~6x amendment threshold). LoCoMo's elbow surface is corpus-structural; live extraction populates tags (0% -> 100%) and shifts extraction distribution without disturbing the retrieval layer's ranking invariants. Supersedes 9.4.8/9.4.9 numbers for per-knob notes and headlineMetrics.",
   "knownIssues": [
     "9.4.6 baseline.json claimed Tier 3 contributes 0.0001 MRR lift (well below 0.05 threshold). That measurement was on the broken ladder with residual-working-buffer contamination. Post-9.4.7 seeder idle-drain fix + 9.4.8 Modal sweeps show Tier 3 actually contributes +0.0794 MRR lift when TIER2_TAU_GAP allows queries to reach it. The graph expansion is genuinely valuable; 9.4.6 couldn't see it through the bench-state noise.",
     "Sweeps run via Modal per-knob-value parallelism (one container per grid point). Free-tier concurrency cap of 32 containers means 48-point sweeps run in two waves (~3-4 min wall-clock vs ~62 min serial per 9.4.6 retro).",
-    "9.4.9 graph sweep surfaced a subset-selection-bias trap: TIER3_SEEDS_K, EDGE_CAP_PER_ENTRY, and COOCCURRENCE_WEIGHT all produce headline \u0394MRR \u2265 +0.10 at their 'winner' values, but coverage drops from baseline ~64% to 48-50%. The knobs narrow Tier 3 retrieval so fewer queries find matches at all, inflating MRR on the remainder. Mirror image of 9.4.6's vacuous-true trap. Hardened amendment criteria (\u0394MRR \u2265 0.02 AND coverage within 5pp of baseline) gate these out; renderer flags them with \u26a0\ufe0f and 'HOLD (subset-selection bias)'. Revisit in a phase that adds a coverage-weighted retrieval metric (candidate for v2.1 scope).",
-    "9.4.9 consolidation sweep Branch C fired on full grid: DEDUP_JACCARD_THRESHOLD MRR range 0.0045 across [0.5, 0.9] \u2014 below the 0.005 flatness threshold. Rule-based extractor under-stresses dedup (updateRate 0.007-0.045, well below band target [0.2, 0.4]). Deferred to sub-phase 9.5 live extraction where the LLM extractor should produce realistic dedup pressure. BATCH_SIZE round was dropped from 9.4.9 scope mid-flight \u2014 changing BATCH_SIZE invalidates the warm extraction cache (cache key includes batch composition), causing Modal function timeouts on live-LLM fallback. Also filed as 9.5 candidate."
+    "9.4.9 graph sweep surfaced a subset-selection-bias trap: TIER3_SEEDS_K, EDGE_CAP_PER_ENTRY, and COOCCURRENCE_WEIGHT all produce headline \u0394MRR \u2265 +0.10 at their 'winner' values, but coverage drops from baseline ~64% to 48-50%. The knobs narrow Tier 3 retrieval so fewer queries find matches at all, inflating MRR on the remainder. Mirror image of 9.4.6's vacuous-true trap. Hardened amendment criteria (\u0394MRR \u2265 0.02 AND coverage within 5pp of baseline) gate these out; renderer flags them with \u26a0\ufe0f and 'HOLD (subset-selection bias)'. 9.5 graph sweep reproduced the trap identically under live extraction \u2014 confirms it's corpus-structural, not extractor-dependent. Revisit in a phase that adds a coverage-weighted retrieval metric (v2.1 scope).",
+    "9.5 consolidation sweep DEDUP round reproduced 9.4.9 Branch C under live Gemma: MRR range 0.0020 across [0.5, 0.9] (below 0.005 flatness threshold), updateRate 0.007-0.045 (well below band target [0.2, 0.4]). Fourth-time reproduction confirms dedup flatness is corpus-structural on LoCoMo's single-session fact distribution \u2014 Gemma 4 26B A4B doesn't produce enough near-duplicates to stress dedup either. Not extractor-dependent; deferred to multi-session corpora (v2.1 scope).",
+    "9.5 BATCH_SIZE round attempted twice under live extraction and both hit FunctionTimeoutError: run_point at 600s (~470 live Nano-GPT calls landed, none persisted to Volume) and at 1500s (~1200+ calls, also not persisted because volume.commit() only fires on clean exit and SIGKILL skips the error-path try/except). 9.4.9 retro's '~20% miss rate' budget estimate was wrong by ~10x \u2014 changing BATCH_SIZE invalidates 100% of the extraction cache for that seed pass. Filed to Phase 11 with three redesign options: (a) mid-subprocess periodic volume.commit() via threading (commit every 60s), (b) conversation-level splitting (5 convs x 5 BATCH_SIZE values = 25 bounded containers), (c) cheaper stress-test model (Gemma 4 1B A1B for 10x speedup if dedup signal is the only question). Per sweep-cache-invalidation-audit Branch D: 'do not chase a timing-out sweep.'",
+    "Renderer's _detect_elbow produces vacuous amendment proposals when any axis has zero variance across its sampled values \u2014 proposes the sort-first corner as the 'elbow' despite \u0394metric/\u0394knob = 0. Reproduced 3x in 9.5 alone (\u03c4 sweep's TIER2_TAU_CONFIDENCE axis, bm25's TAG_BOOST/SUBJECT_BOOST flat grid, relw's fully-inert axis). Phase 11 'zero-axis-\u0394 guard': when maxDelta on any axis is below the amendment threshold, suppress the elbow recommendation and emit 'held at spec \u2014 knob flat/inert on this corpus'. ~6 LOC fix. Every proposed amendment from 9.5 was manually held per this finding; none landed in this baseline."
   ],
   "tuned": {
     "TIER2_TAU_CONFIDENCE": {
       "specDefault": 2.0,
       "measured": 2.0,
-      "source": "sweeps/2026-04-22-tau.md",
-      "note": "INERT on LoCoMo-10. Initial 48-point sweep proved this axis produces identical MRR across values 0.5-5.0 at any fixed TIER2_TAU_GAP (rank-1 Tier-2 BM25 scores always clear even low thresholds). Keep at spec default; candidate for removal in future sweeps."
+      "source": "sweeps/2026-04-22-tau-live.md",
+      "note": "INERT on LoCoMo-10 (second-time repro). 9.5 re-swept full 48-point grid under live Gemma: identical MRR to 4 decimals across values [0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 4.0, 5.0] at any fixed TIER2_TAU_GAP. Rank-1 Tier-2 BM25 scores always clear even low thresholds \u2014 the confidence threshold never bites. Keep at spec default; candidate for removal in future sweeps."
     },
     "TIER2_TAU_GAP": {
       "specDefault": 0.5,
       "measured": 10,
-      "source": "sweeps/2026-04-22-tau.md (+ extended/sledgehammer followups narrated in retro)",
-      "note": "AMENDED. Extended + sledgehammer sweeps (48-point \u2192 8-point \u2192 4-point) revealed MRR climbs monotonically from 0.7303 (gap=0.1) through 0.7721 (gap=1.5) to plateau at 0.8077 (gap=10) and stay flat through gap=1000. Tier 3 graph expansion becomes the dominant retrieval path at gap \u2265 10. +0.0625 absolute MRR lift vs spec default. Phase 11 candidate: Tier 2's confident-hit gating may be net-negative \u2014 ladder could simplify to always-Tier-3."
+      "source": "sweeps/2026-04-22-tau-live.md (+ 9.4.8 extended/sledgehammer followups for confirmation)",
+      "note": "AMENDED (9.4.8, reconfirmed 9.5). 9.5 full 48-point re-sweep under live extraction: MRR climbs monotonically from 0.7303 (gap=0.1) through 0.7876 (gap=3) to plateau at 0.8057 (gap=10). +0.0754 absolute MRR swing across the gap axis. Matches 9.4.8 measurement (0.8077) within 0.002 noise. Tier 3 graph expansion becomes the dominant retrieval path at gap \u2265 10. Phase 11 candidate: Tier 2's confident-hit gating may be net-negative \u2014 ladder could simplify to always-Tier-3-as-Tier-2-seed."
     },
     "TAG_BOOST": {
       "specDefault": 2,
       "measured": 2,
-      "source": "sweeps/2026-04-22-bm25.md",
-      "note": "ADVISORY. Sweep shows TAG_BOOST peaks at 3 (+0.0098 MRR absolute vs spec default, real non-flat signal). However the +0.0098 lift is redundantly absorbed by the TIER2_TAU_GAP=10 amendment (validation sweep at cb30323 landed at 0.8080, essentially matching gap=10 alone at 0.8077). Keeping at spec default 2 ships one-knob amendment rather than two."
+      "source": "sweeps/2026-04-23-bm25-live.md",
+      "note": "FLAT under live extraction. 9.5 bm25 full 16-point grid with tags populated at 100% (up from 0% under rule-based): MRR spread 0.0065 across [1,2,3,4] \u00d7 [1,2,3,4] (0.8051 min, 0.8116 max). Below 0.02 amendment threshold. Disconfirms 9.4.8's borderline +0.0098 lift as corpus-noise rather than micro-signal \u2014 scorer genuinely doesn't differentiate tag weights on LoCoMo even with real tag content. Keep at spec default."
     },
     "SUBJECT_BOOST": {
       "specDefault": 2,
       "measured": 2,
-      "source": "sweeps/2026-04-22-bm25.md",
-      "note": "INERT on LoCoMo-10. BM25 sweep showed <0.003 MRR variation across all values 1-4 (rounding noise). Keep at spec default."
+      "source": "sweeps/2026-04-23-bm25-live.md",
+      "note": "FLAT under live extraction (third-time repro). 9.5 bm25 grid: same flat surface as TAG_BOOST (MRR spread 0.0065 across full 4\u00d74). Keep at spec default."
     },
     "TIER3_LAMBDA_1": {
       "specDefault": 1.0,
       "measured": 1.0,
-      "source": "sweeps/2026-04-22-graph.md",
-      "note": "INERT on LoCoMo-10. 9.4.9 graph sweep: identical MRR (0.8057) across values [0.5, 0.75, 1.0, 1.25, 1.5] at fixed gap=10. The exp(\u03bb\u2081\u00b7edge + \u03bb\u2082\u00b7bm25) scoring rescales uniformly on LoCoMo's edge landscape \u2014 rank order is preserved. Keep at spec default."
+      "source": "sweeps/2026-04-22-graph-live.md",
+      "note": "INERT on LoCoMo-10 (third-time repro under live Gemma). 9.5 graph sweep: identical MRR (0.8057, \u0394 -0.0020 vs gap=10 baseline) across values [0.5, 0.75, 1.0, 1.25, 1.5]. Matches 9.4.9 rule-based finding to 4 decimals. The exp(\u03bb\u2081\u00b7edge + \u03bb\u2082\u00b7bm25) scoring rescales uniformly on LoCoMo's edge landscape \u2014 rank order is preserved regardless of \u03bb coefficient. Evidence the inertness is corpus-structural, not extractor-dependent. Keep at spec default."
     },
     "TIER3_LAMBDA_2": {
       "specDefault": 0.3,
       "measured": 0.3,
-      "source": "sweeps/2026-04-22-graph.md",
-      "note": "INERT on LoCoMo-10. Same result shape as TIER3_LAMBDA_1 \u2014 identical MRR across [0.1, 0.2, 0.3, 0.4, 0.5]. Keep at spec default."
+      "source": "sweeps/2026-04-22-graph-live.md",
+      "note": "INERT on LoCoMo-10 (third-time repro under live Gemma). 9.5 graph sweep: identical MRR across [0.1, 0.2, 0.3, 0.4, 0.5]. Same result shape and magnitudes as TIER3_LAMBDA_1. Keep at spec default."
     },
     "TIER3_BEAM_WIDTH": {
       "specDefault": 5,
       "measured": 5,
-      "source": "sweeps/2026-04-22-graph.md",
-      "note": "ADVISORY. 9.4.9 graph sweep: beam=3 is MRR-best (+0.0055 vs gap=10 baseline), monotonic decline at 5/8/10. Below 0.02 amendment threshold. Keep at spec default; candidate for a precision-weighted metric review in v2.1."
+      "source": "sweeps/2026-04-22-graph-live.md",
+      "note": "BORDERLINE CLEAN. 9.5 graph sweep: beam=3 is MRR-best at 0.8132 (+0.0055 vs gap=10 baseline) with clean coverage (n_scored 1263, 0.011pp below baseline 64.3% \u2014 well inside the 5pp guard). Monotonic decline at 5/8/10. Only non-coverage-bias positive signal in the entire graph sweep. Below 0.02 amendment threshold so doesn't land, but flagged for Phase 11 observation: the one graph knob where structure still matters after Tier 2 gating."
     },
     "TIER3_SEEDS_K": {
       "specDefault": 3,
       "measured": 3,
-      "source": "sweeps/2026-04-22-graph.md",
-      "note": "HELD (subset-selection bias). 9.4.9 graph sweep: K=1 \u2192 MRR 0.9228 (+0.1151) but coverage drops to 50% (\u26a0\ufe0f >5pp below baseline ~64%). K=3 sits at coverage-baseline; K=5/7 go ABOVE baseline coverage but MRR drops below gap=10. Spec default 3 is the knee. Amendment gated out by hardened criteria (\u0394MRR \u2265 0.02 AND coverage within 5pp). See knownIssues[2]."
+      "source": "sweeps/2026-04-22-graph-live.md",
+      "note": "HELD (subset-selection bias, third-time repro). 9.5 graph sweep: K=1 \u2192 MRR 0.9228 (+0.1151) but coverage drops to 50.1% (\u26a0\ufe0f >5pp below baseline ~64%). Identical coverage+MRR signature as 9.4.9 rule-based. Amendment gated out by hardened criteria (\u0394MRR \u2265 0.02 AND coverage within 5pp). See knownIssues[2]."
     },
     "EDGE_CAP_PER_ENTRY": {
       "specDefault": 20,
       "measured": 20,
-      "source": "sweeps/2026-04-22-graph.md",
-      "note": "HELD (subset-selection bias). 9.4.9 graph sweep: cap=10 \u2192 MRR 0.9377 (+0.1300) but coverage 49% (\u26a0\ufe0f). Monotonic MRR decline as cap widens, but all points deviate from baseline coverage. Coverage-gated out. Spec default 20 holds."
+      "source": "sweeps/2026-04-22-graph-live.md",
+      "note": "HELD (subset-selection bias, third-time repro). 9.5 graph sweep: cap=10 \u2192 MRR 0.9377 (+0.1300) but coverage 48.7% (\u26a0\ufe0f). Identical signature as 9.4.9 rule-based. Coverage-gated out. Spec default 20 holds."
     },
     "COOCCURRENCE_WEIGHT": {
       "specDefault": 0.5,
       "measured": 0.5,
-      "source": "sweeps/2026-04-22-graph.md",
-      "note": "INHERITED-HELD. 9.4.9 graph sweep: identical MRR (0.9377) across [0.25, 0.5, 0.75, 1.0] \u2014 pure inertness, not noise. Coverage warning inherited from pinned TIER3_SEEDS_K=1 and EDGE_CAP_PER_ENTRY=10 baseOverrides in this round. Spec default 0.5 holds."
+      "source": "sweeps/2026-04-22-graph-live.md",
+      "note": "INHERITED-HELD. 9.5 graph sweep: identical MRR (0.9377) across [0.25, 0.5, 0.75, 1.0] \u2014 pure inertness, coverage warning inherited from pinned TIER3_SEEDS_K=1 + EDGE_CAP_PER_ENTRY=10 baseOverrides. Spec default 0.5 holds."
     },
     "DEDUP_JACCARD_THRESHOLD": {
       "specDefault": 0.7,
       "measured": 0.7,
-      "source": "sweeps/2026-04-22-consolidation.md",
-      "note": "BRANCH C (deferred to 9.5). 9.4.9 consolidation sweep: MRR range 0.0045 across [0.5, 0.6, 0.7, 0.8, 0.9] \u2014 below 0.005 flatness threshold. updateRate 0.007-0.045 well below band target [0.2, 0.4]. Rule-based extractor under-stresses dedup. Defer tuning to 9.5 live extraction."
+      "source": "sweeps/2026-04-22-consolidation-live.md",
+      "note": "BRANCH C (fourth-time repro under live Gemma). 9.5 consolidation DEDUP round: MRR range 0.0020 across [0.5, 0.6, 0.7, 0.8, 0.9] \u2014 below 0.005 flatness threshold. updateRate 0.007-0.045 (well below band target [0.2, 0.4]), essentially identical to 9.4.9 rule-based numbers. Gemma 4 26B A4B doesn't produce enough near-duplicates on LoCoMo to stress dedup either. Dedup flatness is corpus-structural, not extractor-dependent. See knownIssues[3]. Keep at spec default."
+    },
+    "TIER3_MAX_HOPS": {
+      "specDefault": 2,
+      "measured": 2,
+      "source": "sweeps/2026-04-22-hops-live.md",
+      "note": "HELD (new knob in 9.5). 2-point synthetic preview under live Gemma: hops=2 produces MRR 0.8057, n_scored 1277 (matches Task 4 reference); hops=3 degrades to MRR 0.8024 (-0.0032) with n_scored 1283 (+6). Extra hops broaden retrieval slightly but degrade rank quality on the enlarged set \u2014 not subset-selection (coverage went up, not down). Full 4-point sweep not run because 2-point shape was unambiguous. Keep at spec default."
+    },
+    "EXPLICIT_RELATION_WEIGHT": {
+      "specDefault": 1.0,
+      "measured": 1.0,
+      "source": "sweeps/2026-04-23-relw-live.md",
+      "note": "INERT on LoCoMo-10 (new knob in 9.5, fourth edge-weight knob confirmed inert). 9.5 sweep: identical metrics to 4 decimal places across [0.5, 1.0, 1.5, 2.0, 3.0] (MRR 0.8057, recallAt5 0.9363, n_scored 1277). Zero variance on the axis. Together with TIER3_LAMBDA_1/LAMBDA_2 inertness, confirms LoCoMo's single-session structure doesn't expose edge-weight asymmetry to any ranking knob. Keep at spec default."
+    }
+  },
+  "observations": {
+    "EXTRACT_MAX_TOKENS": {
+      "specDefault": 2048,
+      "recommendation": "lower (candidate target: 256)",
+      "source": "observation: host-side char-proxy distribution over 1182 live Gemma extraction cache entries, 2026-04-23",
+      "note": "OVERBUDGETED (observation only, not an amendment). 9.5 post-cache analysis: p95 extraction response length is ~280 chars \u2248 70 tokens (chars/4 proxy). Spec default 2048 is ~29x overbudget for observed live Gemma output on LoCoMo. A lower default (256 \u2014 still 3.5x the p95 observed) would save latency and token cost without affecting any observed output. Not swept in 9.5 (cache-key-flow Pattern 1 \u2014 EXTRACT_MAX_TOKENS sits in the extraction cache key directly, same cache-invalidation class as BATCH_SIZE). Stored under observations/ rather than tuned/ because it's not in _SWEPT_RETRIEVAL_KEYS (it's a direct LLM param, not a swept retrieval knob). Filed as Phase 11 candidate: sweep against a fresh cache or use a sub-knob design that keeps output-size observations warm."
     }
   },
   "headlineMetrics": {
-    "corpus": "locomo10-full (1986 QA items)",
-    "n_scored_range": "~1412 on spec-default (71% of QAs)",
-    "n_skipped_range": "~574 on spec-default (29% of QAs)",
+    "corpus": "locomo10-full (1986 QA items, live extraction)",
+    "n_scored_range": "~1277 on spec-default (64.3% of QAs, post-9.4.8 baseline)",
+    "n_skipped_range": "~709 on spec-default (35.7% of QAs)",
     "skipReasonNote": "Skipped QAs are those where no retrieved entry's provenance.sourceMessages intersected qa.evidenceTurns. Reflects retrieval misses, not corpus gaps (99.5% of LoCoMo QAs have non-empty evidenceTurns after the 9.4.6 Task 2 loader fix).",
     "ladder": {
-      "recallAt1": 0.4495,
-      "recallAt5": 0.8553,
+      "recallAt1": 0.5317,
+      "recallAt5": 0.9363,
       "recallAt10": 1.0,
-      "mrr": 0.7452,
-      "p50LatencyMs": 1.85,
-      "p95LatencyMs": 4.16
+      "mrr": 0.8057,
+      "p50LatencyMs": 3.65,
+      "p95LatencyMs": 5.15
     },
     "bm25only": {
       "recallAt1": 0.3124,
       "recallAt5": 0.7912,
       "recallAt10": 1.0,
       "mrr": 0.6898,
-      "p50LatencyMs": 6.01,
-      "p95LatencyMs": 7.34
+      "p50LatencyMs": 5.90,
+      "p95LatencyMs": 6.99
     },
     "recency": {
       "recallAt1": 0.0,
@@ -113,32 +135,39 @@
       "recallAt1": 0.0755,
       "recallAt5": 0.4717,
       "recallAt10": 1.0,
-      "mrr": 0.269,
+      "mrr": 0.2690,
       "p50LatencyMs": 0.04,
-      "p95LatencyMs": 0.24
+      "p95LatencyMs": 0.26
     }
   },
   "structuralInvariants": {
     "ladderVsRandom": {
       "threshold": 0.02,
-      "measuredMrrDelta": 0.4762,
+      "measuredMrrDelta": 0.5367,
       "status": "PASS",
-      "note": "Ladder MRR (0.7452) is +0.4762 vs random (0.2690). Post-9.4.7 ladder cleanly beats the random baseline."
+      "note": "Ladder MRR (0.8057) is +0.5367 vs random (0.2690) under live extraction. ~27x the amendment threshold."
     },
     "ladderVsBm25Only": {
       "threshold": 0.02,
-      "measuredMrrDelta": 0.0554,
+      "measuredMrrDelta": 0.1159,
       "status": "PASS",
-      "note": "Ladder MRR (0.7452) is +0.0554 vs bm25only (0.6898). Scorer chain + Tier 3 graph expansion earn their keep."
+      "note": "Ladder MRR (0.8057) is +0.1159 vs bm25only (0.6898) under live extraction on full LoCoMo. ~6x the amendment threshold. Scorer chain + Tier 3 graph expansion earn their keep decisively. No Phase 11 scorer-chain investigation needed; Decision 8's invariant gate is satisfied with enormous headroom."
     }
   },
   "provenance": {
-    "tauSweep": "sweeps/2026-04-22-tau.md",
-    "graphSweep": "sweeps/2026-04-22-graph.md",
-    "consolidationSweep": "sweeps/2026-04-22-consolidation.md",
-    "bm25Sweep": "sweeps/2026-04-22-bm25.md",
-    "baselineComparison": "baselines/2026-04-22-comparison.md",
+    "tauSweep": "sweeps/2026-04-22-tau-live.md",
+    "graphSweep": "sweeps/2026-04-22-graph-live.md",
+    "consolidationSweep": "sweeps/2026-04-22-consolidation-live.md (DEDUP round only; BATCH_SIZE deferred to Phase 11)",
+    "bm25Sweep": "sweeps/2026-04-23-bm25-live.md",
+    "hopsSweep": "sweeps/2026-04-22-hops-live.md (2-point synthetic preview)",
+    "relwSweep": "sweeps/2026-04-23-relw-live.md",
+    "baselineComparison": "baselines/2026-04-23-comparison.md",
     "supersededArtifacts": [
+      "sweeps/2026-04-22-tau.md",
+      "sweeps/2026-04-22-graph.md",
+      "sweeps/2026-04-22-consolidation.md",
+      "sweeps/2026-04-22-bm25.md",
+      "baselines/2026-04-22-comparison.md",
       "sweeps/2026-04-21-tau-rulebased-prefix.md",
       "sweeps/2026-04-21-tau-VACUOUS-pre-9-4-6.md",
       "sweeps/2026-04-21-graph.md",
