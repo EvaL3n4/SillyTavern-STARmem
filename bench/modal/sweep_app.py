@@ -410,14 +410,54 @@ def _elbow_on_slice(sorted_pts, primary_name, accessor, ratio):
     return None
 
 
+def _should_amend(baseline_metrics, candidate_metrics, min_mrr_delta=0.02, max_coverage_drop=0.05):
+    """Python mirror of bench/render/amendment-rule.js::shouldAmend.
+
+    Returns dict with keys {amend: bool, reason: str, mrr_delta: float, coverage_delta: float}.
+    Catches subset-selection bias: MRR may climb because coverage falls (smaller answerable
+    query subset), not because retrieval improved. Gate: ΔMRR ≥ 0.02 AND Δcoverage ≥ −5pp.
+    """
+    import math
+    mrr_delta = candidate_metrics.get("mrr", float("nan")) - baseline_metrics.get("mrr", float("nan"))
+    cov_delta = candidate_metrics.get("coverage", float("nan")) - baseline_metrics.get("coverage", float("nan"))
+
+    if math.isnan(mrr_delta) or math.isnan(cov_delta):
+        return {
+            "amend": False,
+            "reason": "Cannot amend: NaN in baseline or candidate metrics.",
+            "mrr_delta": mrr_delta,
+            "coverage_delta": cov_delta,
+        }
+    if mrr_delta < min_mrr_delta:
+        return {
+            "amend": False,
+            "reason": f"ΔMRR = {mrr_delta:+.4f} < {min_mrr_delta} (below amendment threshold).",
+            "mrr_delta": mrr_delta,
+            "coverage_delta": cov_delta,
+        }
+    if cov_delta < -max_coverage_drop:
+        return {
+            "amend": False,
+            "reason": f"ΔMRR = {mrr_delta:+.4f} ≥ {min_mrr_delta}, but coverage drops {-cov_delta * 100:.1f}pp > {max_coverage_drop * 100:.0f}pp allowed (subset-selection bias suspected).",
+            "mrr_delta": mrr_delta,
+            "coverage_delta": cov_delta,
+        }
+    return {
+        "amend": True,
+        "reason": f"ΔMRR = {mrr_delta:+.4f} ≥ {min_mrr_delta} and Δcoverage = {cov_delta * 100:+.1f}pp ≥ −{max_coverage_drop * 100:.0f}pp.",
+        "mrr_delta": mrr_delta,
+        "coverage_delta": cov_delta,
+    }
+
+
 def render_tau_report(result, corpus_len, qa_count):
     """Port of tau.js renderReport to Python."""
     from datetime import datetime
     today = datetime.now().isoformat()[:10]
     primary_metric = "recallAt5"
 
-    header = "| TIER2_TAU_CONFIDENCE | TIER2_TAU_GAP | recallAt5 | precisionAt3 | mrr | p50 | p95 |"
-    separator = "|---|---|---|---|---|---|---|"
+    header = "| TIER2_TAU_CONFIDENCE | TIER2_TAU_GAP | recallAt5 | precisionAt3 | mrr | coverage | p50 | p95 |"
+    separator = "|---|---|---|---|---|---|---|---|---|"
     rows = []
     for p in result["points"]:
         tc = p["overrides"]["TIER2_TAU_CONFIDENCE"]
@@ -425,9 +465,11 @@ def render_tau_report(result, corpus_len, qa_count):
         r5 = f"{p['metrics']['recallAtK']['5']:.4f}"
         p3 = f"{p['metrics']['precisionAtK']['3']:.4f}"
         mrr = f"{p['metrics']['mrr']:.4f}"
+        cov = p["metrics"].get("coverage")
+        cov_s = f"{cov:.4f}" if isinstance(cov, (int, float)) else "—"
         p50 = f"{p['latencyMs']['p50']:.2f}"
         p95 = f"{p['latencyMs']['p95']:.2f}"
-        rows.append(f"| {tc} | {tg} | {r5} | {p3} | {mrr} | {p50} | {p95} |")
+        rows.append(f"| {tc} | {tg} | {r5} | {p3} | {mrr} | {cov_s} | {p50} | {p95} |")
 
     # Heatmap
     tau_gap_values = sorted({p["overrides"]["TIER2_TAU_GAP"] for p in result["points"]})
@@ -465,6 +507,24 @@ def render_tau_report(result, corpus_len, qa_count):
     else:
         amendment_section = "No amendment needed — elbow within 50% of current spec."
 
+    # Amendment verdict (Phase 11 Task 4)
+    baseline_pt = result["points"][0] if result["points"] else None
+    candidate_pt = None
+    if baseline_pt and result["elbow"].get("overrides"):
+        candidate_pt = next(
+            (p for p in result["points"]
+             if all(p["overrides"].get(k) == v for k, v in result["elbow"]["overrides"].items())),
+            None,
+        )
+    if baseline_pt and candidate_pt and candidate_pt is not baseline_pt:
+        verdict = _should_amend(baseline_pt["metrics"], candidate_pt["metrics"])
+        amendment_verdict_block = (
+            f"\n### Amendment verdict\n\n"
+            f"{'**Amend**' if verdict['amend'] else '**Held at spec**'} — {verdict['reason']}"
+        )
+    else:
+        amendment_verdict_block = "\n### Amendment verdict\n\nNo distinct candidate point found — held at spec."
+
     first_point = result["points"][0] if result["points"] else None
     env_block = (
         "```json\n" + json.dumps(first_point["metrics"], indent=2) + "\n```"
@@ -476,8 +536,8 @@ def render_tau_report(result, corpus_len, qa_count):
 
     report = f"""# τ sweep — {today}
 
-**Corpus:** {corpus_len} conversations, {qa_count} QA items
-**Primary metric:** {primary_metric}
+|**Corpus:** {corpus_len} conversations, {qa_count} QA items
+|**Primary metric:** {primary_metric}
 
 ## Points
 
@@ -499,7 +559,7 @@ TIER2_TAU_CONFIDENCE
 
 ## Spec amendment proposal
 
-{amendment_section}
+{amendment_section}{amendment_verdict_block}
 
 ## Environment snapshot
 
@@ -521,8 +581,8 @@ def render_bm25_report(result, corpus_len, qa_count, tags_stats):
         if tags_stats["rate"] < 0.05 else ""
     )
 
-    header = "| TAG_BOOST | SUBJECT_BOOST | recallAt5 | precisionAt3 | mrr | p50 | p95 |"
-    separator = "|---|---|---|---|---|---|---|"
+    header = "| TAG_BOOST | SUBJECT_BOOST | recallAt5 | precisionAt3 | mrr | coverage | p50 | p95 |"
+    separator = "|---|---|---|---|---|---|---|---|---|"
     rows = []
     for p in result["points"]:
         tb = p["overrides"]["TAG_BOOST"]
@@ -530,9 +590,11 @@ def render_bm25_report(result, corpus_len, qa_count, tags_stats):
         r5 = f"{p['metrics']['recallAtK']['5']:.4f}"
         p3 = f"{p['metrics']['precisionAtK']['3']:.4f}"
         mrr = f"{p['metrics']['mrr']:.4f}"
+        cov = p["metrics"].get("coverage")
+        cov_s = f"{cov:.4f}" if isinstance(cov, (int, float)) else "—"
         p50 = f"{p['latencyMs']['p50']:.2f}"
         p95 = f"{p['latencyMs']['p95']:.2f}"
-        rows.append(f"| {tb} | {sb} | {r5} | {p3} | {mrr} | {p50} | {p95} |")
+        rows.append(f"| {tb} | {sb} | {r5} | {p3} | {mrr} | {cov_s} | {p50} | {p95} |")
 
     # Heatmap
     subject_values = sorted({p["overrides"]["SUBJECT_BOOST"] for p in result["points"]})
@@ -593,6 +655,24 @@ def render_bm25_report(result, corpus_len, qa_count, tags_stats):
     else:
         amendment_section = "No amendment needed — elbow within 50% of current spec."
 
+    # Amendment verdict (Phase 11 Task 4)
+    baseline_pt = result["points"][0] if result["points"] else None
+    candidate_pt = None
+    if baseline_pt and result["elbow"].get("overrides"):
+        candidate_pt = next(
+            (p for p in result["points"]
+             if all(p["overrides"].get(k) == v for k, v in result["elbow"]["overrides"].items())),
+            None,
+        )
+    if baseline_pt and candidate_pt and candidate_pt is not baseline_pt:
+        verdict = _should_amend(baseline_pt["metrics"], candidate_pt["metrics"])
+        amendment_verdict_block = (
+            f"\n### Amendment verdict\n\n"
+            f"{'**Amend**' if verdict['amend'] else '**Held at spec**'} — {verdict['reason']}"
+        )
+    else:
+        amendment_verdict_block = "\n### Amendment verdict\n\nNo distinct candidate point found — held at spec."
+
     first_point = result["points"][0] if result["points"] else None
     env_block = (
         "```json\n" + json.dumps(first_point["metrics"], indent=2) + "\n```"
@@ -651,7 +731,7 @@ Not in scope for Phase 9 — note only.
 
 ## Spec amendment proposal
 
-{amendment_section}
+{amendment_section}{amendment_verdict_block}
 
 ## envSnapshot
 
@@ -668,13 +748,6 @@ def render_single_axis_report(result, corpus_len, qa_count):
     a compact table (axis value → primary metric + secondary metrics) plus
     a per-row ΔMRR column vs the sweep's own baseline (point with the
     smallest primary-knob value). No heatmap — single axis.
-
-    This is intentionally simpler than render_tau_report / render_bm25_report:
-    no amendment proposal section, no environment snapshot. Both are emitted
-    centrally by run_sweep's post-processing (TODO: confirm — currently they
-    only live in tau/bm25 renderers). For 9.5 the elbow-detection output is
-    enough; 9.4.9-style amendment gating can be bolted on when a single-axis
-    sweep first surfaces a real elbow.
     """
     import json
     from datetime import datetime
@@ -700,20 +773,22 @@ def render_single_axis_report(result, corpus_len, qa_count):
     sorted_pts = sorted(points, key=lambda p: p["overrides"][swept_knob])
     baseline_mrr = sorted_pts[0]["metrics"]["mrr"]
 
-    header = f"| {swept_knob} | n_scored | recallAt5 | mrr | ΔMRR vs min | p50 | p95 |"
-    sep = "|---|---|---|---|---|---|---|"
+    header = f"| {swept_knob} | n_scored | recallAt5 | mrr | coverage | ΔMRR vs min | p50 | p95 |"
+    sep = "|---|---|---|---|---|---|---|---|---|"
     rows = []
     for p in sorted_pts:
         v = p["overrides"][swept_knob]
         n_scored = p["metrics"].get("n_scored", "-")
         r5 = f"{p['metrics']['recallAtK']['5']:.4f}"
         mrr = p["metrics"]["mrr"]
+        cov = p["metrics"].get("coverage")
+        cov_s = f"{cov:.4f}" if isinstance(cov, (int, float)) else "—"
         delta = mrr - baseline_mrr
         mrr_s = f"{mrr:.4f}"
         delta_s = f"{delta:+.4f}"
         p50 = f"{p['latencyMs']['p50']:.2f}"
         p95 = f"{p['latencyMs']['p95']:.2f}"
-        rows.append(f"| {v} | {n_scored} | {r5} | {mrr_s} | {delta_s} | {p50} | {p95} |")
+        rows.append(f"| {v} | {n_scored} | {r5} | {mrr_s} | {cov_s} | {delta_s} | {p50} | {p95} |")
 
     elbow = result.get("elbow", {})
     elbow_overrides = elbow.get("overrides", {})
@@ -723,6 +798,24 @@ def render_single_axis_report(result, corpus_len, qa_count):
         f"**Base overrides (inlined into every point):** `{json.dumps(base_overrides)}`\n"
         if base_overrides else ""
     )
+
+    # Amendment verdict (Phase 11 Task 4)
+    baseline_pt = sorted_pts[0] if sorted_pts else None
+    candidate_pt = None
+    if baseline_pt and elbow_overrides:
+        candidate_pt = next(
+            (p for p in points
+             if all(p["overrides"].get(k) == v for k, v in elbow_overrides.items())),
+            None,
+        )
+    if baseline_pt and candidate_pt and candidate_pt is not baseline_pt:
+        verdict = _should_amend(baseline_pt["metrics"], candidate_pt["metrics"])
+        amendment_verdict_block = (
+            f"\n### Amendment verdict\n\n"
+            f"{'**Amend**' if verdict['amend'] else '**Held at spec**'} — {verdict['reason']}"
+        )
+    else:
+        amendment_verdict_block = "\n### Amendment verdict\n\nNo distinct candidate point found — held at spec."
 
     report = f"""# {result["name"]} sweep — {today}
 
@@ -738,7 +831,7 @@ def render_single_axis_report(result, corpus_len, qa_count):
 ## Elbow
 
 **Recommended:** `{json.dumps(elbow_overrides)}`
-**Rationale:** {elbow_rationale}
+**Rationale:** {elbow_rationale}{amendment_verdict_block}
 """
     return report
 
@@ -855,19 +948,20 @@ def render_graph_report_stub(payload):
             prev = rounds[prev_idx]
             prev_overrides[prev["knob"]] = prev["winner"]["value"]
 
-        header = f"| {knob} | n_scored | recallAt5 | precisionAt3 | mrr | p50 | p95 | ΔMRR vs gap=10 |"
-        separator = "|---|---|---|---|---|---|---|---|"
+        header = f"| {knob} | n_scored | recallAt5 | precisionAt3 | mrr | coverage | p50 | p95 | ΔMRR vs gap=10 |"
+        separator = "|---|---|---|---|---|---|---|---|---|---|"
         rows = []
         has_coverage_drop = False
         for p in r["points"]:
             v = p["overrides"][knob]
             m = p["metrics"]
             n_scored = m.get("n_scored", "—")
-            n_total = m.get("n", 1986)
             r5 = f"{m['recallAtK']['5']:.4f}"
             p3 = f"{m['precisionAtK']['3']:.4f}"
             mrr = m["mrr"]
             mrr_str = f"{mrr:.4f}"
+            cov = m.get("coverage")
+            cov_s = f"{cov:.4f}" if isinstance(cov, (int, float)) else "—"
             lift = mrr - BASELINE_GAP10_MRR
             lift_str = f"{lift:+.4f}"
             p50 = f"{p['latencyMs']['p50']:.2f}"
@@ -876,7 +970,7 @@ def render_graph_report_stub(payload):
             # post-9.4.8 baseline. Below BASELINE - 5pp means the knob
             # traded coverage for precision, and the MRR is computed
             # over a smaller, possibly-easier subset.
-            coverage_pct = (n_scored / n_total * 100) if isinstance(n_scored, int) and n_total else None
+            coverage_pct = (cov * 100) if isinstance(cov, (int, float)) else None
             n_scored_cell = f"{n_scored}"
             if coverage_pct is not None and abs(coverage_pct - BASELINE_COVERAGE_PCT) > COVERAGE_FLOOR_DELTA_PCT:
                 n_scored_cell = f"⚠️ {n_scored}"
@@ -886,7 +980,7 @@ def render_graph_report_stub(payload):
             v_cell = f"**{v}**" if is_winner else str(v)
             rows.append(
                 f"| {v_cell} | {n_scored_cell} | {r5} | {p3} | "
-                f"{mrr_str} | {p50} | {p95} | {lift_str} |"
+                f"{mrr_str} | {cov_s} | {p50} | {p95} | {lift_str} |"
             )
         rows_joined = "\n".join(rows)
 
@@ -937,53 +1031,33 @@ def render_graph_report_stub(payload):
         "EDGE_CAP_PER_ENTRY": 20,
         "COOCCURRENCE_WEIGHT": 0.5,
     }
+    baseline_metrics = {"mrr": BASELINE_GAP10_MRR, "coverage": BASELINE_COVERAGE_PCT / 100}
     amendment_lines = []
     for r in rounds:
         knob = r["knob"]
         spec = spec_defaults.get(knob)
         measured = r["winner"]["value"]
-        round_lift = r["winner"]["mrr"] - BASELINE_GAP10_MRR
         if spec is None:
             continue
 
-        # Hardened criterion (Task 5 fix post-Task 6 synthetic smoke):
-        # amendment requires BOTH ΔMRR ≥ threshold AND the winning point's
-        # coverage within COVERAGE_FLOOR_DELTA_PCT of baseline. Without the
-        # coverage gate, subset-selection bias (seeds_k=1, edge_cap=10, etc.)
-        # would produce spurious amendments — the knob narrows Tier 3
-        # retrieval to only the easy-to-answer subset, inflating MRR on
-        # the remainder.
         winner_point = next(
             (p for p in r["points"] if p["overrides"][knob] == measured),
             None,
         )
-        winner_coverage_pct = None
         if winner_point:
-            wn_scored = winner_point["metrics"].get("n_scored")
-            wn_total = winner_point["metrics"].get("n", 1986)
-            if isinstance(wn_scored, int) and wn_total:
-                winner_coverage_pct = wn_scored / wn_total * 100
-        coverage_ok = (
-            winner_coverage_pct is None
-            or abs(winner_coverage_pct - BASELINE_COVERAGE_PCT) <= COVERAGE_FLOOR_DELTA_PCT
-        )
+            verdict = _should_amend(baseline_metrics, winner_point["metrics"])
+        else:
+            verdict = {"amend": False, "reason": "Winner point not found in round."}
 
-        if round_lift >= AMENDMENT_THRESHOLD and coverage_ok:
+        if verdict["amend"]:
             amendment_lines.append(
                 f"- **`{knob}`**: spec default `{spec}` → measured `{measured}` "
-                f"(ΔMRR {round_lift:+.4f}, coverage OK) — AMEND"
-            )
-        elif round_lift >= AMENDMENT_THRESHOLD and not coverage_ok:
-            amendment_lines.append(
-                f"- `{knob}`: spec default `{spec}` → winning value `{measured}` "
-                f"(ΔMRR {round_lift:+.4f} but coverage {winner_coverage_pct:.1f}% "
-                f"deviates >{COVERAGE_FLOOR_DELTA_PCT}pp from baseline) — "
-                f"**HOLD (subset-selection bias)**"
+                f"({verdict['reason']}) — AMEND"
             )
         else:
             amendment_lines.append(
                 f"- `{knob}`: spec default `{spec}` → measured `{measured}` "
-                f"(ΔMRR {round_lift:+.4f}) — below threshold, hold at spec default"
+                f"({verdict['reason']}) — **HOLD**"
             )
     amendment_section = "\n".join(amendment_lines) if amendment_lines else "No amendments proposed."
 
@@ -1197,9 +1271,9 @@ def render_consolidation_report_stub(payload):
         knob = r["knob"]
         header = (
             f"| {knob} | added | updated | drained | updateRate | dedupHitRate | "
-            f"n_scored | recallAt5 | mrr | ΔMRR vs gap=10 | p50 | p95 |"
+            f"n_scored | recallAt5 | mrr | coverage | ΔMRR vs gap=10 | p50 | p95 |"
         )
-        separator = "|---|---|---|---|---|---|---|---|---|---|---|---|"
+        separator = "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"
         rows = []
         has_coverage_drop = False
         for p in r["points"]:
@@ -1214,16 +1288,17 @@ def render_consolidation_report_stub(payload):
             dhr = f"{dhr_raw:.4f}" if dhr_raw is not None else "—"
             m = p["metrics"]
             n_scored = m.get("n_scored", "—")
-            n_total = m.get("n", 1986)
             r5 = f"{m['recallAtK']['5']:.4f}"
             mrr = m["mrr"]
             mrr_str = f"{mrr:.4f}"
+            cov = m.get("coverage")
+            cov_s = f"{cov:.4f}" if isinstance(cov, (int, float)) else "—"
             lift = mrr - BASELINE_GAP10_MRR
             lift_str = f"{lift:+.4f}"
             p50 = f"{p['latencyMs']['p50']:.2f}"
             p95 = f"{p['latencyMs']['p95']:.2f}"
 
-            coverage_pct = (n_scored / n_total * 100) if isinstance(n_scored, int) and n_total else None
+            coverage_pct = (cov * 100) if isinstance(cov, (int, float)) else None
             n_scored_cell = f"{n_scored}"
             if coverage_pct is not None and abs(coverage_pct - BASELINE_COVERAGE_PCT) > COVERAGE_FLOOR_DELTA_PCT:
                 n_scored_cell = f"⚠️ {n_scored}"
@@ -1235,7 +1310,7 @@ def render_consolidation_report_stub(payload):
 
             rows.append(
                 f"| {v_cell} | {added} | {updated} | {drained} | {ur} | {dhr} | "
-                f"{n_scored_cell} | {r5} | {mrr_str} | {lift_str} | {p50} | {p95} |"
+                f"{n_scored_cell} | {r5} | {mrr_str} | {cov_s} | {lift_str} | {p50} | {p95} |"
             )
         rows_joined = "\n".join(rows)
 
@@ -1260,31 +1335,16 @@ def render_consolidation_report_stub(payload):
             best_val = best_band["overrides"][knob]
             mrr_best = max(r["points"], key=lambda p: p["metrics"]["mrr"])
 
-            # Hardened amendment check
-            winner_mrr = r["elbow"]["mrr"]
-            winner_lift = winner_mrr - BASELINE_GAP10_MRR
-            winner_coverage = None
+            # Hardened amendment check via _should_amend (Phase 11 Task 4)
             winner_point = next(
                 (p for p in r["points"] if p["overrides"][knob] == r["elbow"]["value"]),
                 None,
             )
+            baseline_metrics = {"mrr": BASELINE_GAP10_MRR, "coverage": BASELINE_COVERAGE_PCT / 100}
             if winner_point:
-                wn_scored = winner_point["metrics"].get("n_scored")
-                wn_total = winner_point["metrics"].get("n", 1986)
-                if isinstance(wn_scored, int) and wn_total:
-                    winner_coverage = wn_scored / wn_total * 100
-
-            coverage_ok = (
-                winner_coverage is None
-                or abs(winner_coverage - BASELINE_COVERAGE_PCT) <= COVERAGE_FLOOR_DELTA_PCT
-            )
-            amendment_verdict = (
-                "AMEND candidate (ΔMRR ≥ 0.02 AND coverage within 5pp of baseline)"
-                if winner_lift >= AMENDMENT_THRESHOLD and coverage_ok
-                else "hold at spec default"
-            )
-            if winner_lift >= AMENDMENT_THRESHOLD and not coverage_ok:
-                amendment_verdict += " — ΔMRR clears threshold but coverage drops >5pp, subset-selection bias suspected"
+                verdict = _should_amend(baseline_metrics, winner_point["metrics"])
+            else:
+                verdict = {"amend": False, "reason": "Winner point not found in round."}
 
             best_ur_str = f"{best_ur:.4f}" if best_ur is not None else "n/a"
             recommendation = (
@@ -1292,8 +1352,7 @@ def render_consolidation_report_stub(payload):
                 f"(updateRate={best_ur_str}, closest to target 0.3; MRR={best_mrr:.4f})\n\n"
                 f"**MRR-best:** `{knob} = {mrr_best['overrides'][knob]}` "
                 f"(MRR={mrr_best['metrics']['mrr']:.4f})\n\n"
-                f"**Amendment verdict:** {amendment_verdict} "
-                f"(ΔMRR vs gap=10 baseline = {winner_lift:+.4f})"
+                f"**Amendment verdict:** {'**Amend**' if verdict['amend'] else '**Held at spec**'} — {verdict['reason']}"
             )
 
         coverage_warning = ""
