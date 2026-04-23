@@ -144,12 +144,16 @@ def run_point(overrides_json: str, corpus: str = "locomo") -> str:
     timeout=600,
     memory=4096,
 )
-def run_baseline_point(retriever_id: str, corpus: str = "locomo") -> str:
+def run_baseline_point(retriever_id: str, corpus: str = "locomo", extractor_model: str = "") -> str:
     """Run one baseline retriever over the full corpus.
 
     Args:
         retriever_id: one of BASELINE_IDS ("ladder", "bm25only", "recency", "random").
         corpus: Benchmark corpus to run against. 'locomo' or 'longmemeval-s'.
+        extractor_model: Optional model override. When empty (default), inherits
+            STARMEM_BENCH_LLM_MODEL from env_secret. Must match the model used
+            during warmup or the cache-keyed (model, messages, maxTokens) hash
+            misses 100% and falls through to live extraction.
 
     Returns:
         JSON string with { retrieverId, metrics, latencyMs, runCount, wallMs, envSnapshot }.
@@ -173,6 +177,8 @@ def run_baseline_point(retriever_id: str, corpus: str = "locomo") -> str:
     env = os.environ.copy()
     env["STARMEM_RETRIEVER_ID"] = retriever_id
     env["STARMEM_BENCH_CORPUS"] = corpus
+    if extractor_model:
+        env["STARMEM_BENCH_LLM_MODEL"] = extractor_model
 
     result = subprocess.run(
         ["node", "bench/baselines/_modal-point.js"],
@@ -244,6 +250,15 @@ def run_batchsize_point(conv_idx: int, batch_size: int, corpus: str = "locomo") 
     )
     if result.returncode != 0:
         import json as _json
+        # Commit volume even on error — partial cache writes from live
+        # extractions are still valuable (survive to next run). Matches
+        # run_baseline_point's 9.5 fix (2026-04-22). Previously this
+        # function had NO commit on any path, so a run_batchsize sweep
+        # that timed out discarded every cached extraction.
+        try:
+            volume.commit()
+        except Exception:
+            pass
         return _json.dumps({
             "error": "node subprocess failed",
             "convIdx": conv_idx,
@@ -252,7 +267,261 @@ def run_batchsize_point(conv_idx: int, batch_size: int, corpus: str = "locomo") 
             "stderr": result.stderr,
             "stdout_tail": result.stdout[-2000:] if result.stdout else "",
         }, indent=2)
+    # Per-point commit so live extractions written to /data/extractions
+    # survive container timeouts / OOMs. Matches run_baseline_point's
+    # 9.5 pattern (commit is fast when there are no pending writes).
+    volume.commit()
     return result.stdout.strip()
+
+
+@app.function(
+    image=image,
+    volumes={"/data": volume},
+    secrets=[env_secret],
+    timeout=1800,   # matches run_baseline_point's budget. 600s wasn't
+                    # enough: LongMemEval-S items post-flatten-to-single-
+                    # session (Decision 8) concatenate ~30-40 sessions
+                    # into 400-800 turns, which at BATCH_SIZE batching
+                    # produces 50-200+ extraction calls @ ~1.3s each.
+                    # Item 0 hit the old 600s cold on Phase 12 Task 6's
+                    # first smoke (2026-04-23) — bump matches the
+                    # Phase 11 Task 6 pattern.
+    memory=4096,
+)
+def run_longmemeval_warmup_point(item_idx: int, extractor_model: str = "") -> str:
+    """Warm the extraction cache for a single LongMemEval-S item.
+
+    Executes extraction (no retrieval) on one item via Task 3's adapter
+    path, landing cache entries on /data/extractions/ via the repo-cache
+    symlink. Commits the Volume before return so the write survives any
+    later container crash in the fan-out.
+
+    Per sweep-cache-invalidation-audit Option A + B combined: per-item
+    granularity (Option B) + per-cell commit on clean exit (Option A) =
+    maximum durability under SIGKILL.
+
+    Returns:
+        JSON string { itemIdx, factCount, turnsProcessed,
+                      consolidationStats, wallMs }, or { error, ... }
+        on subprocess failure.
+    """
+    import os
+    import subprocess
+
+    repo_cache = "/repo/bench/.cache"
+    os.makedirs(repo_cache, exist_ok=True)
+
+    # Mirror run_baseline_point's symlink setup — longmemeval_s_cleaned.json
+    # is the file the adapter's DEFAULT_CACHE path probes via
+    # bench/.cache/longmemeval_s_cleaned.json. Without the symlink,
+    # `loadConversations({offline: true})` throws.
+    corpus_link = os.path.join(repo_cache, "locomo10.json")
+    if not os.path.exists(corpus_link):
+        os.symlink("/data/locomo10.json", corpus_link)
+    longmemeval_link = os.path.join(repo_cache, "longmemeval_s_cleaned.json")
+    if not os.path.exists(longmemeval_link):
+        os.symlink("/data/longmemeval_s_cleaned.json", longmemeval_link)
+    cache_link = os.path.join(repo_cache, "extractions")
+    if not os.path.exists(cache_link):
+        os.symlink("/data/extractions", cache_link)
+
+    env = os.environ.copy()
+    env["STARMEM_BENCH_CORPUS"] = "longmemeval-s"
+    env["STARMEM_WARMUP_ITEM_IDX"] = str(item_idx)
+    # REQUIRED: seedConversation's _resolveExtractor() gates live extraction
+    # on this env var. Without it, warmup runs the rule-based extractor
+    # and never populates the LLM cache. env_secret also supplies
+    # STARMEM_BENCH_LLM_URL / STARMEM_BENCH_API_KEY / STARMEM_BENCH_LLM_MODEL
+    # (matches what run_baseline_point relies on for live-extraction runs).
+    env["STARMEM_BENCH_LIVE_EXTRACTOR"] = "1"
+    # Model override — when empty (default), inherit STARMEM_BENCH_LLM_MODEL
+    # from env_secret. When set (via --extractor-model on the CLI), override
+    # so cache keys are deterministic per-model. Cache is keyed on the
+    # (model, messages, maxTokens) triple via extractionCache._cacheKey,
+    # so switching models partitions the cache rather than corrupting it.
+    if extractor_model:
+        env["STARMEM_BENCH_LLM_MODEL"] = extractor_model
+
+    # Start a background thread that commits the Volume every 60s while
+    # the subprocess runs. Without this, a FunctionTimeoutError SIGKILLs
+    # the container before the post-run volume.commit() can fire, and
+    # every extraction cache entry written during the live run is lost
+    # to the ether. (Learned the hard way on 2026-04-23: one 28-minute
+    # run produced zero cache files on the Volume.)
+    #
+    # Matches the pattern flagged as pending at line 1561 ("periodic
+    # volume.commit() so SIGKILL loses ≤1 min"). Per
+    # sweep-cache-invalidation-audit: Option A (per-item commit) covers
+    # clean exits; this adds the in-flight durability Option A alone
+    # can't provide.
+    import threading
+    stop_commits = threading.Event()
+
+    def _periodic_commit():
+        while not stop_commits.wait(60):
+            try:
+                volume.commit()
+            except Exception as e:  # noqa: BLE001
+                # Best-effort; don't kill the subprocess over a
+                # transient commit failure. Surface to Modal logs.
+                print(f"[warmup periodic-commit] commit failed: {e}", flush=True)
+
+    commit_thread = threading.Thread(target=_periodic_commit, daemon=True)
+    commit_thread.start()
+
+    # Stream stderr live to this container's stdout so Modal's live log
+    # shows progress. capture_output=True buffers everything until exit,
+    # which for a 28-min item means zero visibility plus total loss on
+    # SIGKILL. Popen + line-iterate instead.
+    #
+    # stdout stays captured (Python reads it for the JSON payload).
+    # stderr is merged into *this* process's stdout, which Modal
+    # captures as function log output.
+    import sys
+    proc = subprocess.Popen(
+        ["node", "bench/harness/_modal-warmup-point.js"],
+        cwd="/repo",
+        stdout=subprocess.PIPE,
+        stderr=sys.stdout,   # live to Modal's log stream
+        text=True,
+        env=env,
+    )
+    stdout_str, _ = proc.communicate()
+    returncode = proc.returncode
+
+    # Halt the periodic committer and do a final commit covering any
+    # writes between the last tick and now.
+    stop_commits.set()
+    commit_thread.join(timeout=5)
+    try:
+        volume.commit()
+    except Exception as e:  # noqa: BLE001
+        print(f"[warmup final-commit] commit failed: {e}", flush=True)
+
+    if returncode != 0:
+        import json as _json
+        return _json.dumps({
+            "error": "warmup subprocess failed",
+            "itemIdx": item_idx,
+            "returncode": returncode,
+            # stderr was streamed live to Modal's log (merged into
+            # parent stdout); nothing captured on the Python side.
+            # Refer to Modal's function log for the full stderr trace.
+            "stderr_note": "streamed live to Modal function log",
+            "stdout_tail": stdout_str[-2000:] if stdout_str else "",
+        }, indent=2)
+    return stdout_str.strip()
+
+
+@app.function(
+    image=image,
+    volumes={"/data": volume},
+    secrets=[env_secret],
+    timeout=1800,
+    memory=4096,
+)
+def run_longmemeval_warmup(corpus_size: int = 500, extractor_model: str = "") -> dict:
+    """Fan out per-item LongMemEval-S cache warm-up across bounded containers.
+
+    Top-level Modal entry (decorated): called via
+    `modal run bench/modal/sweep_app.py --mode warmup-longmemeval`.
+
+    Not a sub-orchestrator — does NOT match the Phase 11 Task 6 hot-fix
+    pattern that removed @app.function from run_graph_sweep et al. Those
+    are called from INSIDE run_sweep's open container context; this one
+    is the entry itself and must be a modal.Function so Modal spawns
+    the container that will drive the .map() fan-out.
+
+    Cache observability: extractionCache.js does not expose a stats API,
+    so we report cache-file-count delta on the Volume instead (before vs
+    after). Non-zero delta = warmup actually wrote new entries. Zero
+    delta + non-zero factCount per item = suspicious (cache-key identity
+    mismatch); investigate before dispatching the full baselines run.
+
+    Args:
+        corpus_size: number of LongMemEval-S items to warm.
+                     Default 500 = full corpus post-flatten (Decision 8).
+
+    Returns:
+        Summary dict with { warmedCount, failedCount, wallMs,
+                            totalFactCount, cacheFilesBefore,
+                            cacheFilesAfter, cacheFilesDelta,
+                            failures: [...] }.
+    """
+    import json
+    import os
+    import time
+
+    cache_dir = "/data/extractions"
+    os.makedirs(cache_dir, exist_ok=True)
+
+    # Reload BEFORE the corpus existence check — the file is usually
+    # uploaded via `modal volume put` just before this dispatch, and
+    # without reload() the container sees a stale snapshot from its
+    # cold-start and reports the file missing even when it's on the
+    # Volume. (Fresh trap caught 2026-04-23 on Phase 12 Task 6 smoke.)
+    volume.reload()
+
+    # Preflight: LongMemEval-S corpus file must live on the Volume before
+    # fan-out. We do NOT self-seed via urllib inside the orchestrator —
+    # the file is ~265MB and Modal's Volume commit API rejects anything
+    # over 16MB ("exceeds maximum supported by API"). The CLI's
+    # `modal volume put` handles large files via multipart upload; the
+    # commit-from-container path does not. Surface a clear error that
+    # points at the upload_cache.py instructions instead of hanging on
+    # a doomed commit() call.
+    corpus_vol_path = "/data/longmemeval_s_cleaned.json"
+    if not os.path.exists(corpus_vol_path):
+        return {
+            "error": "corpus missing on Volume",
+            "corpusPath": corpus_vol_path,
+            "fix": (
+                "Run from repo root on the host:\n"
+                "  # 1. Populate local cache (~265MB, one-off HF fetch)\n"
+                "  node -e \"import('./bench/corpora/longmemeval.js')"
+                ".then(m => m.loadLongMemEvalS({}).then(x => console.log('cached', x.length, 'items')))\"\n"
+                "  # 2. Upload to Volume (CLI uses multipart; API path rejects >16MB)\n"
+                "  modal volume put starmem-bench-data"
+                " bench/.cache/longmemeval_s_cleaned.json /longmemeval_s_cleaned.json\n"
+                "Then re-run: modal run bench/modal/sweep_app.py --mode warmup-longmemeval --corpus-size 1"
+            ),
+        }
+
+    cache_files_before = len(os.listdir(cache_dir))
+
+    t0 = time.time()
+    # starmap passes each tuple as (item_idx, extractor_model). Using
+    # starmap (not map) keeps extractor_model out of the primary range
+    # key so Modal's Function-level caching still considers two items
+    # with different extractor_model as distinct inputs.
+    results_raw = list(run_longmemeval_warmup_point.starmap(
+        ((i, extractor_model) for i in range(corpus_size))
+    ))
+
+    warmed = []
+    failed = []
+    total_fact_count = 0
+    for raw in results_raw:
+        parsed = json.loads(raw)
+        if "error" in parsed:
+            failed.append(parsed)
+        else:
+            warmed.append(parsed)
+            total_fact_count += parsed.get("factCount", 0) or 0
+
+    volume.reload()  # pick up the fan-out's commits
+    cache_files_after = len(os.listdir(cache_dir))
+
+    return {
+        "warmedCount": len(warmed),
+        "failedCount": len(failed),
+        "totalFactCount": total_fact_count,
+        "cacheFilesBefore": cache_files_before,
+        "cacheFilesAfter": cache_files_after,
+        "cacheFilesDelta": cache_files_after - cache_files_before,
+        "wallMs": int((time.time() - t0) * 1000),
+        "failures": failed[:10],  # cap for log legibility on Modal's output tail
+    }
 
 
 BASELINE_IDS = ["ladder", "bm25only", "recency", "random"]
@@ -267,11 +536,14 @@ BATCHSIZE_CONV_INDICES = [0, 1, 2, 3, 4]
     timeout=1800,
     memory=4096,
 )
-def run_baselines(corpus: str = "locomo") -> dict:
+def run_baselines(corpus: str = "locomo", extractor_model: str = "") -> dict:
     """Fan out baseline retrievers to parallel containers.
 
     Args:
         corpus: Benchmark corpus to run against. 'locomo' or 'longmemeval-s'.
+        extractor_model: Optional model override passed to each run_baseline_point.
+            Must match the model used during any prior warmup run — cache keys
+            are model-partitioned, so mismatched model strings hit 0% cache.
 
     Returns:
         Dict with keys:
@@ -283,7 +555,9 @@ def run_baselines(corpus: str = "locomo") -> dict:
     import os
     from datetime import datetime
 
-    point_results = list(run_baseline_point.map([(rid, corpus) for rid in BASELINE_IDS]))
+    point_results = list(run_baseline_point.map(
+        [(rid, corpus, extractor_model) for rid in BASELINE_IDS]
+    ))
     points = [json.loads(pr) for pr in point_results]
 
     ts = datetime.utcnow().strftime("%Y-%m-%dT%H-%M-%SZ")
@@ -1993,6 +2267,8 @@ def main(
     synthetic: bool = False,
     local_out: str = "",
     corpus: str = "locomo",
+    corpus_size: int = 500,   # NEW: --corpus-size N for warmup-longmemeval mode
+    extractor_model: str = "",   # NEW: --extractor-model override for warmup/baselines
 ):
     """Dispatch entrypoint for Modal bench functions.
 
@@ -2031,6 +2307,21 @@ def main(
           - locomo           (default; LoCoMo-10, 1986 QA items)
           - longmemeval-s    (LongMemEval-S, 500 items, ~115K tok haystacks)
         Passed through to the Node runner via STARMEM_BENCH_CORPUS env var.
+
+    --corpus-size N:
+        Only relevant to --mode warmup-longmemeval. Number of LongMemEval-S
+        items to warm. Default 500 = full corpus. Use lower values for
+        smoke runs: 1 to validate the pipe, 10 to validate parallelism.
+
+    --extractor-model MODEL:
+        Override the extractor model for --mode warmup-longmemeval and
+        --mode run-baselines. When empty (default), inherits
+        STARMEM_BENCH_LLM_MODEL from the env_secret. Example:
+        `--extractor-model openai/gpt-oss-20b` for a 4× throughput swap
+        over Gemma 4 26B A4B. CRITICAL: the model string is part of the
+        extraction-cache key. A warmup run with model X followed by a
+        baselines run with model Y hits 0% cache and burns live tokens.
+        Always run warmup and baselines with the same --extractor-model.
     """
     if corpus not in {"locomo", "longmemeval-s"}:
         raise ValueError(f"--corpus must be one of: locomo, longmemeval-s. Got: {corpus!r}")
@@ -2053,7 +2344,7 @@ def main(
                 file=__import__("sys").stderr,
             )
     elif mode == "run-baselines":
-        baselines_out = run_baselines.remote(corpus=corpus)
+        baselines_out = run_baselines.remote(corpus=corpus, extractor_model=extractor_model)
         report = baselines_out["report"]
         result_json_str = baselines_out["result_json"]
         run_dir = baselines_out["run_dir"]
@@ -2084,5 +2375,11 @@ def main(
             (out / f"{stem}.md").write_text(report)
             (out / f"{stem}.json").write_text(result_json_str)
             print(f"<!-- mirrored to host: {out / stem}.{{md,json}} -->", file=__import__("sys").stderr)
+    elif mode == "warmup-longmemeval":
+        result = run_longmemeval_warmup.remote(
+            corpus_size=corpus_size,
+            extractor_model=extractor_model,
+        )
+        print(json.dumps(result, indent=2))
     else:
-        print(f"Unknown mode: {mode!r}. Expected 'hello', 'run-point', 'run-baselines', or 'run-sweep'.")
+        print(f"Unknown mode: {mode!r}. Expected 'hello', 'run-point', 'run-baselines', 'run-sweep', or 'warmup-longmemeval'.")
