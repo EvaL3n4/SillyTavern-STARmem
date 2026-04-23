@@ -42,12 +42,10 @@ describe('fireworks-batch client', () => {
         expect(calls[0].opts.headers.Authorization).toBe('Bearer test-key');
         const body = JSON.parse(calls[0].opts.body);
         expect(body.datasetId).toBe('my-dataset');
-        expect(body.dataset).toEqual({ userUploaded: {} });
-        // Fireworks requires example_count on user-uploaded dataset create.
-        // Wire field name is snake_case (proto field preserved through
-        // gRPC-JSON transcoding), despite OpenAPI docs rendering camelCase.
-        // Transmitted as a stringified int64 per the gRPC proto schema.
-        expect(body.example_count).toBe('42');
+        // example_count is a property of the dataset object, not the
+        // top-level request body. gatewayDataset.example_count per the proto
+        // schema; snake_case on the wire; int64 as a string per proto3 JSON.
+        expect(body.dataset).toEqual({ userUploaded: {}, example_count: '42' });
     });
 
     test('createDataset rejects invalid exampleCount', async () => {
