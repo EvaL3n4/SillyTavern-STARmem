@@ -1260,7 +1260,19 @@ Use `memory` or `hindsight_retain` to record:
 
 ---
 
-**Task 9 — full-LoCoMo baseline comparison — complete. Three findings:**
+**Task 10 — hops + relw sweeps (combined completion) — complete. Three findings:**
+
+1. **`TIER3_MAX_HOPS` preview showed movement** (recorded in Task 5/6 observations block above): hops=3 produced −0.0032 ΔMRR with coverage going 1277→1283. Not subset-selection (coverage went up), just more-hops-adds-noise. Hold at spec 2.
+
+2. **`EXPLICIT_RELATION_WEIGHT` is structurally inert on LoCoMo.** All 5 values produce identical metrics to 4 decimal places: `n_scored=1277`, `recallAt5=0.9363`, `MRR=0.8057`. Zero variance on the axis. Hold at spec 1.0. Fourth edge-related Tier-3 knob to hit inertness (`TIER3_LAMBDA_1`, `TIER3_LAMBDA_2`, `COOCCURRENCE_WEIGHT`, and now `EXPLICIT_RELATION_WEIGHT` — three of four are pure inertness, `COOCCURRENCE_WEIGHT` was pinned at gap=10 so its inertness may have been inherited).
+
+3. **Elbow detector false-positive reproduces THIRD time.** Same bug, same `Δmetric/Δknob = 0.000000 ≤ 0.1×maxΔ = 0.000000` self-admission in the rationale. Priority remains at confirmed-recurring — Phase 11's "zero-axis-Δ guard" bullet now has 3 reproductions in 9.5 alone (Tasks 5, 8, 10).
+
+**Emerging Phase 11 framing:** three distinct Tier 3 edge-related knobs inert on LoCoMo, plus bm25 tag/subject boosts flat with 100% populated tags. LoCoMo's single-session structure doesn't expose edge-weight asymmetry to any ranking knob. Corpus expansion (multi-session, cross-character per the inherited v2.1 scope) is where edge-weighting sweeps become meaningful.
+
+---
+
+
 
 1. **Structural invariant PASS decisively.** ladder MRR 0.8057 > bm25only 0.6898 > recency 0.2703 > random 0.2690. ΔMRR ladder-vs-bm25only = +0.1159, ~6× the 0.02 amendment threshold. Decision 8's invariant-gate is satisfied with enormous headroom. No Phase 11 scorer-chain investigation needed.
 
@@ -1340,7 +1352,7 @@ Phase 11 candidates identified during 9.5 dispatch. Task 11's retro expands thes
 - [x] Task 7: Consolidation sweep + EXTRACT_MAX_TOKENS observation. *(DEDUP round 2026-04-22T19-46-24Z — Branch C fires fourth-time, updateRate 0.007-0.045 across thresholds. BATCH_SIZE round deferred to Phase 11 after Branch D fired twice. EXTRACT_MAX_TOKENS observation pending — can be done from warm cache.)*
 - [x] Task 8: BM25 sweep with tags-populated-rate reported. *(16 points, 2026-04-23T04-27-08Z. Tags 100% populated under live Gemma. Grid Branch-C flat (MRR spread 0.0065 < 0.02). Elbow detector false-positive reproduces — bug filed for Phase 11.)*
 - [x] Task 9: Baseline comparison with structural invariant verdict. *(4 retrievers, full LoCoMo, 2026-04-23 at commit f02b1a5. ladder 0.8057 > bm25only 0.6898 > recency 0.2703 > random 0.2690. Invariant PASS by +0.1159 MRR, 6× threshold. 30+ min wall-clock — Modal parallelization filed for Phase 11.)*
-- [ ] Task 10: New hops + relw sweep drivers + writeups.
+- [x] Task 10: New hops + relw sweep drivers + writeups. *(hops smoked pre-Task-5 with 2-row preview; relw 5 points 2026-04-23T05-09-11Z. relw is structurally inert to 4dp across all values — third edge-weight knob confirmed inert on LoCoMo. Third reproduction of elbow-detector false-positive in 9.5.)*
 - [ ] Task 11: `baseline.json` status=measured, retro written, all artifacts committed.
 - [ ] No tests regress from 9.4.9 close (816 tests green minimum).
 - [ ] No secrets-guard redactions in plan or retro.
