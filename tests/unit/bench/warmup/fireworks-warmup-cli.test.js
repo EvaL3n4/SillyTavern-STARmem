@@ -37,6 +37,19 @@ describe('fireworks-warmup CLI', () => {
             expect(() => parseArgv(['delete', 'x'])).toThrow(/unknown command/i);
         });
 
+        test('handles trailing comma in --corpora (empty parts filtered)', () => {
+            const parsed = parseArgv(['submit', '--corpora', 'locomo,']);
+            expect(parsed.corpora).toEqual(['locomo']);
+        });
+
+        test('rejects missing value after --model', () => {
+            expect(() => parseArgv(['submit', '--corpora', 'locomo', '--model'])).toThrow();
+        });
+
+        test('rejects missing value after --submission-id', () => {
+            expect(() => parseArgv(['submit', '--corpora', 'locomo', '--submission-id'])).toThrow();
+        });
+
         test('submit requires --corpora', () => {
             expect(() => parseArgv(['submit'])).toThrow(/corpora/i);
         });

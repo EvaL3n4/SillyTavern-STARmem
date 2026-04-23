@@ -12,7 +12,7 @@
 
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile, rename } from 'node:fs/promises';
 import { randomBytes } from 'node:crypto';
 
 import { enumerateWarmupBatches } from './warmup/enumerate.js';
@@ -137,11 +137,13 @@ async function readManifest(submissionId) {
 async function writeManifest(manifest) {
     const dir = submissionDir(manifest.submissionId);
     await mkdir(dir, { recursive: true });
-    await writeFile(
-        path.join(dir, 'manifest.json'),
-        JSON.stringify(manifest, null, 2),
-        'utf8',
-    );
+    // Atomic write: stage to tmp, then rename. Prevents a half-written
+    // manifest.json surviving a SIGINT mid-serialization, which would
+    // break JSON.parse on the next `resume`.
+    const final = path.join(dir, 'manifest.json');
+    const tmp = `${final}.tmp`;
+    await writeFile(tmp, JSON.stringify(manifest, null, 2), 'utf8');
+    await rename(tmp, final);
 }
 
 function generateSubmissionId() {
@@ -235,7 +237,7 @@ async function runSubmit(auth, parsed) {
         batchSize: CONSOLIDATION.BATCH_SIZE,
         createdAt: new Date().toISOString(),
         state: 'enumerated',
-        inputDatasetId: submissionId,
+        inputDatasetId: `${submissionId}-in`,
         jobChain: [],
         batchCount: effectiveBatches.length,
         lastPolledAt: null,
@@ -306,11 +308,12 @@ async function runContinue(auth, submissionId) {
         process.exit(2);
     }
 
-    // Generate new jobId + outputDatasetId
-    const d = new Date();
-    const yyyymmdd = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
-    const rand = randomBytes(3).toString('hex');
-    const newJobId = `starmem-${yyyymmdd}-${rand}`;
+    // New jobId = `${submissionId}-c${N}` where N = existing chain length.
+    // First continuation is -c1, second is -c2. Preserves chronology + keeps
+    // the audit trail tied to the original submission rather than producing
+    // a fresh-looking id on each continue.
+    const continueN = manifest.jobChain.length;
+    const newJobId = `${manifest.submissionId}-c${continueN}`;
     const newOutputDatasetId = `${newJobId}-out`;
 
     // Create output dataset
@@ -448,7 +451,16 @@ async function advanceFromCompleted(auth, manifest) {
 
     for (let i = 0; i < manifest.jobChain.length; i++) {
         const entry = manifest.jobChain[i];
-        const { resultsPath } = await downloadResults(auth, entry.outputDatasetId, dir);
+        let resultsPath;
+        try {
+            ({ resultsPath } = await downloadResults(auth, entry.outputDatasetId, dir));
+        } catch (err) {
+            const e = /** @type {any} */ (err);
+            throw new Error(
+                `fireworks-warmup: downloadResults failed on jobChain[${i}] ` +
+                `(jobId=${entry.jobId} outputDatasetId=${entry.outputDatasetId}): ${e?.message ?? String(err)}`,
+            );
+        }
         const stats = await ingestResults(resultsPath, {
             cacheDir: CACHE_DIR,
             model: manifest.model,
