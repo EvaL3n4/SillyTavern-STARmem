@@ -943,15 +943,23 @@ def run_graph_sweep(synthetic: bool = False) -> dict:
 # flagged flat and tuning defers to 9.5 live extraction.
 CONSOLIDATION_ROUNDS = [
     {"name": "dedup",       "knob": "DEDUP_JACCARD_THRESHOLD", "values": [0.5, 0.6, 0.7, 0.8, 0.9]},
-    # 9.5 (2026-04-22): BATCH_SIZE round re-enabled. 9.4.9 dropped it
-    # because under rule-based extraction the warm cache can't absorb
-    # cache-key changes (Pattern 2 per sweep-cache-invalidation-audit:
-    # BATCH_SIZE reshapes `messages` → new sha256 → miss → 600s timeout).
-    # Under 9.5 live extraction, cache misses regenerate on demand via
-    # Nano-GPT (no Modal timeout; expected ~500 live calls per 9.4.9
-    # budget estimate, ~$0.25 at current Gemma rates). Grid from the
-    # 9.4.9 retro's deferred handoff.
-    {"name": "batch_size", "knob": "BATCH_SIZE", "values": [8, 16, 24, 32, 48]},
+    # 9.5 (2026-04-22): BATCH_SIZE round dropped again — Branch D fired
+    # twice. First attempt at run_point timeout=600s hit FunctionTimeoutError
+    # after ~470 live Nano-GPT calls; raised to 1500s, hit it again after
+    # ~1200+ calls. One run_point (one BATCH_SIZE grid value) materializes
+    # ~94 conversations × live batched extraction at ~1.3s/call, which
+    # exceeds reasonable per-point container budgets. The 9.4.9 retro
+    # budget estimate ("~20% miss rate") was wrong by ~10× — changing
+    # BATCH_SIZE invalidates 100% of the extraction cache for that seed
+    # pass, not 20%.
+    #
+    # Deferred to Phase 11 for budget-aware redesign: mid-subprocess
+    # periodic volume.commit() (threading, commit every 60s so SIGKILL
+    # loses ≤1 min), or split by conversation count so each Modal call
+    # is bounded, or use a cheaper model for the stress test.
+    # Per sweep-cache-invalidation-audit's Branch D: "Do not chase a
+    # timing-out sweep."
+    # {"name": "batch_size", "knob": "BATCH_SIZE", "values": [8, 16, 24, 32, 48]},
 ]
 
 # Threshold for Branch C "flat surface" detection. Matches the ΔMRR
@@ -1139,9 +1147,12 @@ def render_consolidation_report_stub(payload):
   doesn't produce enough near-duplicates on LoCoMo to stress dedup either.
   Interpretation: dedup flatness is corpus-structural (LoCoMo's fact
   distribution), not extractor-dependent.
-- BATCH_SIZE round re-enabled in 9.5. Under live extraction, cache misses from
-  batch-composition changes trigger live Nano-GPT calls (no Modal timeout, per
-  Pattern 2 handoff in sweep-cache-invalidation-audit).
+- BATCH_SIZE round deferred to Phase 11 — Branch D fired twice on 9.5
+  attempts (600s and 1500s per-point timeouts). One run_point needs
+  ~94 conversations × batched live extraction, which doesn't fit in
+  reasonable container budgets. Budget-aware redesign pending (periodic
+  mid-subprocess commits, conversation-level splitting, or cheaper
+  stress-test model).
 - Band rule reminder: updateRate < 0.1 = too strict (dedup rarely fires),
   updateRate > 0.5 = too lax (over-merges distinct facts). Target [0.2, 0.4]
   closest to 0.3.

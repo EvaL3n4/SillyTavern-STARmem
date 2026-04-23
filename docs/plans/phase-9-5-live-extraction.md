@@ -1297,6 +1297,8 @@ Use `memory` or `hindsight_retain` to record:
 
 Phase 11 candidates identified during 9.5 dispatch. Task 11's retro expands these with per-sweep findings.
 
+- **BATCH_SIZE consolidation round — budget-aware redesign.** 9.5 attempted the deferred 9.4.9 round twice under live extraction (run_point timeout=600s and 1500s). Both hit `FunctionTimeoutError` — first at ~470 live Nano-GPT calls, second at ~1200+. Every BATCH_SIZE grid value materializes ~94 conversations × batched live extraction at ~1.3s/call; 9.4.9's "~20% miss rate" budget estimate was wrong by ~10× (cache-key change = 100% miss for that seed pass, not 20%). No cache writes persisted either time — `volume.commit()` only fires at run_point exit, and SIGKILL skips the error path. Redesign options: (a) mid-subprocess periodic commits via threading (commit every 60s so SIGKILL loses ≤1 min); (b) conversation-level splitting so each Modal call is bounded (5 convs × 5 BATCH_SIZE values = 25 containers); (c) cheaper stress-test model (Gemma 4 1B A1B for 10× speedup if the dedup signal is the only question). Field-surfaced 2026-04-22 during Task 7 first and second dispatches.
+
 - **`--local-out` parity for `run-point` mode.** `bench/modal/sweep_app.py`'s `@app.local_entrypoint()` handles `--local-out` only under `mode == "run-sweep"` (lines ~1311–1325). Single-point diagnostic runs via `run-point` discard the JSON payload to stdout and don't mirror to `docs/bench/runs/`. ~8 LOC fix: extend the `run-point` branch to write `run-point-YYYY-MM-DDThh-mm-ssZ.json` when `local_out` is set. Keeps the "every Modal dispatch includes `--local-out`" convention durable against future Azure-hiccup retries. Field-surfaced 2026-04-22 during Task 4 smoke.
 - **Scorer-chain investigation** (conditional on Task 9 inversion — see Decision 8).
 - **Coverage-weighted retrieval metric** (inherited from 9.4.9; `recall@k × coverage` or similar to neutralize subset-selection bias on graph-structure knobs).
@@ -1312,7 +1314,7 @@ Phase 11 candidates identified during 9.5 dispatch. Task 11's retro expands thes
 - [x] Task 4: Smoke writeup confirms Modal warm-cache replay. *(Completed 2026-04-22; run-point on full LoCoMo returned n_scored=1277, cache intact at 1182 entries, `--local-out` gap filed for Phase 11.)*
 - [x] Task 5: τ sweep live writeup produced, flat/elbow verdict recorded. *(48 points, 2026-04-22T19-06-35Z. `TIER2_TAU_CONFIDENCE` inert re-confirmed, `TIER2_TAU_GAP=10` plateau reproduces. Detector false-positive filed for Phase 11.)*
 - [x] Task 6: Graph sweep (6 rounds) live writeup, per-round verdicts. *(27 points across 6 rounds, 2026-04-22T19-35-03Z. λ1/λ2 inert third-time repro. beam=3 borderline clean. seeds_k/edge_cap/cooccurrence all coverage-bias HOLD'd. Zero amendments shipped — coverage guard did its job.)*
-- [ ] Task 7: Consolidation sweep + EXTRACT_MAX_TOKENS observation.
+- [x] Task 7: Consolidation sweep + EXTRACT_MAX_TOKENS observation. *(DEDUP round 2026-04-22T19-46-24Z — Branch C fires fourth-time, updateRate 0.007-0.045 across thresholds. BATCH_SIZE round deferred to Phase 11 after Branch D fired twice. EXTRACT_MAX_TOKENS observation pending — can be done from warm cache.)*
 - [ ] Task 8: BM25 sweep with tags-populated-rate reported.
 - [ ] Task 9: Baseline comparison with structural invariant verdict.
 - [ ] Task 10: New hops + relw sweep drivers + writeups.
