@@ -1462,15 +1462,13 @@ def render_consolidation_report_stub(payload):
     return report
 
 
-@app.function(
-    image=image,
-    volumes={"/data": volume},
-    secrets=[env_secret],
-    timeout=1800,
-    memory=4096,
-)
 def run_consolidation_batchsize_sweep() -> dict:
     """Conversation-level-split BATCH_SIZE sweep (Phase 11 Task 6).
+
+    Called from run_sweep when sweep_name='batchsize' — inherits the
+    parent's @app.function context (volume mount, timeout, memory).
+    Do NOT decorate this function: run_sweep already owns the container.
+    This matches the run_graph_sweep / run_consolidation_sweep pattern.
 
     25 cells (5 values × 5 convs) fanned out to parallel containers,
     then aggregated into one MetricsResult per BATCH_SIZE value.
