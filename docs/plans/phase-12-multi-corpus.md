@@ -2224,8 +2224,9 @@ def run_longmemeval_warmup_point(item_idx: int) -> str:
     maximum durability under SIGKILL.
 
     Returns:
-        JSON string { itemIdx, extractionCalls, cacheHits, cacheMisses,
-                      factCount, wallMs }.
+        JSON string { itemIdx, factCount, turnsProcessed,
+                      consolidationStats, wallMs }, or { error, ... }
+        on subprocess failure.
     """
     import os
     import subprocess
@@ -2233,9 +2234,10 @@ def run_longmemeval_warmup_point(item_idx: int) -> str:
     repo_cache = "/repo/bench/.cache"
     os.makedirs(repo_cache, exist_ok=True)
 
-    # Mirror run_baseline_point's symlink setup — same path both for
-    # consistency with siblings and because the adapter probes the
-    # repo-cache paths.
+    # Mirror run_baseline_point's symlink setup — longmemeval_s_cleaned.json
+    # is the file the adapter's DEFAULT_CACHE path probes via
+    # bench/.cache/longmemeval_s_cleaned.json. Without the symlink,
+    # `loadConversations({offline: true})` throws.
     corpus_link = os.path.join(repo_cache, "locomo10.json")
     if not os.path.exists(corpus_link):
         os.symlink("/data/locomo10.json", corpus_link)
@@ -2249,6 +2251,12 @@ def run_longmemeval_warmup_point(item_idx: int) -> str:
     env = os.environ.copy()
     env["STARMEM_BENCH_CORPUS"] = "longmemeval-s"
     env["STARMEM_WARMUP_ITEM_IDX"] = str(item_idx)
+    # REQUIRED: seedConversation's _resolveExtractor() gates live extraction
+    # on this env var. Without it, warmup runs the rule-based extractor
+    # and never populates the LLM cache. env_secret also supplies
+    # STARMEM_BENCH_LLM_URL / STARMEM_BENCH_API_KEY / STARMEM_BENCH_LLM_MODEL
+    # (matches what run_baseline_point relies on for live-extraction runs).
+    env["STARMEM_BENCH_LIVE_EXTRACTOR"] = "1"
 
     result = subprocess.run(
         ["node", "bench/harness/_modal-warmup-point.js"],
@@ -2295,39 +2303,55 @@ def run_longmemeval_warmup(corpus_size: int = 500) -> dict:
     is the entry itself and must be a modal.Function so Modal spawns
     the container that will drive the .map() fan-out.
 
+    Cache observability: extractionCache.js does not expose a stats API,
+    so we report cache-file-count delta on the Volume instead (before vs
+    after). Non-zero delta = warmup actually wrote new entries. Zero
+    delta + non-zero factCount per item = suspicious (cache-key identity
+    mismatch); investigate before dispatching the full baselines run.
+
     Args:
         corpus_size: number of LongMemEval-S items to warm.
                      Default 500 = full corpus post-flatten (Decision 8).
 
     Returns:
         Summary dict with { warmedCount, failedCount, wallMs,
-                            totalExtractionCalls, totalCacheHits,
+                            totalFactCount, cacheFilesBefore,
+                            cacheFilesAfter, cacheFilesDelta,
                             failures: [...] }.
     """
     import json
+    import os
     import time
+
+    cache_dir = "/data/extractions"
+    os.makedirs(cache_dir, exist_ok=True)
+    volume.reload()  # pick up any writes from previous dispatches before counting
+    cache_files_before = len(os.listdir(cache_dir))
 
     t0 = time.time()
     results_raw = list(run_longmemeval_warmup_point.map(range(corpus_size)))
 
     warmed = []
     failed = []
-    total_calls = 0
-    total_hits = 0
+    total_fact_count = 0
     for raw in results_raw:
         parsed = json.loads(raw)
         if "error" in parsed:
             failed.append(parsed)
         else:
             warmed.append(parsed)
-            total_calls += parsed.get("extractionCalls", 0)
-            total_hits += parsed.get("cacheHits", 0)
+            total_fact_count += parsed.get("factCount", 0) or 0
+
+    volume.reload()  # pick up the fan-out's commits
+    cache_files_after = len(os.listdir(cache_dir))
 
     return {
         "warmedCount": len(warmed),
         "failedCount": len(failed),
-        "totalExtractionCalls": total_calls,
-        "totalCacheHits": total_hits,
+        "totalFactCount": total_fact_count,
+        "cacheFilesBefore": cache_files_before,
+        "cacheFilesAfter": cache_files_after,
+        "cacheFilesDelta": cache_files_after - cache_files_before,
         "wallMs": int((time.time() - t0) * 1000),
         "failures": failed[:10],  # cap for log legibility on Modal's output tail
     }
@@ -2341,45 +2365,61 @@ elif mode == "warmup-longmemeval":
     print(json.dumps(result, indent=2))
 ```
 
-Plumb `corpus_size` through the same argparse path as `corpus` / `sweep_name`.
+Plumb `corpus_size` through the same argparse path as `corpus` / `sweep_name` — accept `--corpus-size N` defaulting to 500.
 
-**`bench/harness/_modal-warmup-point.js`** (new file, ~40 LOC):
+**`bench/harness/_modal-warmup-point.js`** (new file, ~50 LOC):
 
 ```js
 /**
  * Warmup point for LongMemEval-S extraction cache.
  *
- * Reads one item by index, runs the adapter's extraction path (no
- * retrieval), and emits cache stats. Meant to be fanned out via
+ * Reads one item by index, runs seedConversation with the live extractor
+ * enabled, and emits seed stats. Meant to be fanned out via
  * run_longmemeval_warmup_point.map(range(500)) so Modal parallelizes
  * the first-pass live-LLM cost across 32 free-tier containers.
  *
- * Env:
- *   STARMEM_BENCH_CORPUS=longmemeval-s  (enforced)
- *   STARMEM_WARMUP_ITEM_IDX=<int>       (0-indexed into the post-flatten corpus)
+ * Mirrors bench/baselines/_modal-point.js's stderr-redirect pattern so
+ * stdout stays pure JSON for the Python-side json.loads().
+ *
+ * Env (enforced):
+ *   STARMEM_BENCH_CORPUS=longmemeval-s
+ *   STARMEM_WARMUP_ITEM_IDX=<int>  (0-indexed into the post-flatten corpus)
+ *   STARMEM_BENCH_LIVE_EXTRACTOR=1  (without this, seedConversation's
+ *     _resolveExtractor() falls back to rule-based and the cache stays cold)
+ *   STARMEM_BENCH_LLM_URL, STARMEM_BENCH_API_KEY, STARMEM_BENCH_LLM_MODEL
+ *     (supplied by the env_secret Modal Secret, same as run_baseline_point)
+ *
+ * @module bench/harness/_modal-warmup-point
+ * @see docs/plans/phase-12-multi-corpus.md Task 6 Pre-step
  */
+import { getAdapter } from '../corpora/index.js';
+import { seedConversation } from './seeder.js';
 
-import { getAdapter } from '../adapters/registry.js';                   // Task 2
-import { seedConversation } from './seeder.js';                          // existing; longmemeval-s adapter feeds it conversation-shaped items
-import { resetExtractionCacheStats, getExtractionCacheStats } from './extractionCache.js';
-
-const corpus = process.env.STARMEM_BENCH_CORPUS;
+const corpusName = process.env.STARMEM_BENCH_CORPUS;
 const itemIdx = Number(process.env.STARMEM_WARMUP_ITEM_IDX);
 
-if (corpus !== 'longmemeval-s') {
-    console.error(`warmup-point requires STARMEM_BENCH_CORPUS=longmemeval-s, got '${corpus}'`);
+if (corpusName !== 'longmemeval-s') {
+    console.error(`warmup-point requires STARMEM_BENCH_CORPUS=longmemeval-s, got '${corpusName}'`);
     process.exit(2);
 }
 if (!Number.isInteger(itemIdx) || itemIdx < 0) {
     console.error(`warmup-point requires STARMEM_WARMUP_ITEM_IDX as non-negative integer, got '${process.env.STARMEM_WARMUP_ITEM_IDX}'`);
     process.exit(2);
 }
+if (process.env.STARMEM_BENCH_LIVE_EXTRACTOR !== '1') {
+    console.error(`warmup requires STARMEM_BENCH_LIVE_EXTRACTOR=1 to populate the extraction cache; rule-based fallback would no-op`);
+    process.exit(2);
+}
+
+// Route all harness log output to stderr so stdout is reserved for the
+// JSON payload that run_longmemeval_warmup_point will json.loads().
+const _origLog = console.log;
+console.log = (...args) => console.error(...args);
 
 const t0 = Date.now();
-resetExtractionCacheStats();
 
-const adapter = getAdapter('longmemeval-s');
-const items = await adapter.loadCorpus();
+const adapter = getAdapter(corpusName);
+const items = await adapter.loadConversations({ offline: true });
 
 if (itemIdx >= items.length) {
     console.error(`STARMEM_WARMUP_ITEM_IDX ${itemIdx} out of range (corpus has ${items.length} items)`);
@@ -2388,37 +2428,52 @@ if (itemIdx >= items.length) {
 
 const item = items[itemIdx];
 
-// Use the same per-item seeding primitive the baselines runner uses — that
-// guarantees cache-key identity between warm-up and subsequent read paths.
-// If Task 3's adapter exposes a different per-item seed entry, swap it in here.
 const seedResult = await seedConversation(item, {
-    chatIdPrefix: `warmup-longmemeval-${itemIdx}`,
+    chatIdPrefix: `warmup-lme-${itemIdx}`,
     keepBackend: false,  // discard state; we only care about cache side-effects
 });
 
-const stats = getExtractionCacheStats();
 const wallMs = Date.now() - t0;
 
-process.stdout.write(JSON.stringify({
+_origLog(JSON.stringify({
     itemIdx,
-    extractionCalls: stats.calls,
-    cacheHits: stats.hits,
-    cacheMisses: stats.misses,
-    factCount: seedResult.factCount ?? null,
+    factCount: seedResult.factCount,
+    turnsProcessed: seedResult.turnsProcessed,
+    consolidationStats: seedResult.consolidationStats,
     wallMs,
-}, null, 2) + '\n');
+}));
 ```
 
-**Preflight notes for the sketch (verify before dispatch):**
+**Preflight notes for the sketch (verified 2026-04-23 against repo HEAD `5e00563`):**
 
-1. **Verify `seedConversation` accepts LongMemEval-S-shaped items.** Task 3's adapter should emit conversation-shaped objects (messages[], id, etc.) that `seedConversation` can consume. If the adapter emits a different shape (e.g. `{ sessions: [...] }`), either the warmup should call a different per-item entry or Task 3's adapter needs a `.toConversation(item)` normalizer. **Grep the Task 3 commit (`5cd7e93`) to confirm the emitted shape; the skill rule is "read the actual function signature, don't trust the plan's assumption."**
-2. **Verify `extractionCache.js` exports `resetExtractionCacheStats`/`getExtractionCacheStats`.** These were added in 9.4.8's Modal warm-cache work (per preflight Finding 1 in the Phase 12 retro audit); if the names drift, pick the real export names from `bench/harness/extractionCache.js`.
-3. **Smoke the warmup on 1 item before full fan-out.** Run `modal run bench/modal/sweep_app.py --mode warmup-longmemeval --corpus-size 1` first; confirm non-zero `extractionCalls` + a cache-files-delta on the Volume (can be checked via the existing `hello` mode's `cacheFiles` counter). If calls=0 or the cache-files-delta is 0, the cache-key identity is off and the subsequent 500-item fan-out would be wasted.
-4. **Per-item timeout headroom.** Declared at 600s. LongMemEval-S items post-flatten are typically ≤20 turns with ≤5 extraction calls at ~1.3s each = ~7s expected; even a 3× worst-case stays well under 600s. No need to inflate. Log the observed per-item wallMs in the summary dict to build a real distribution for Phase 13+.
+1. ✅ **Adapter shape compatibility confirmed.** `bench/corpora/longmemeval.js::normalizeItem` emits `CorpusConversation` (`{id, turns[], qa[]}`) with `turns[]` carrying `{speaker, text, sessionId, turnIndex}`. `seedConversation` at `bench/harness/seeder.js:193` iterates `conv.turns` and reads `turn.text` — compatible as-is.
+2. ✅ **Adapter API path confirmed.** Import is `from '../corpora/index.js'` (barrel), method is `loadConversations({offline: true})`. Sibling pattern in `bench/baselines/_modal-point.js:16` uses the same import.
+3. ✅ **Live extractor gating confirmed.** `_resolveExtractor()` at `seeder.js:42` checks `STARMEM_BENCH_LIVE_EXTRACTOR === '1'`. The warm-up Python sets this explicitly and the Node script refuses to run without it — no silent rule-based fallback risk.
+4. ⚠️ **No cache stats API in `extractionCache.js`.** File only exports `_cacheKey` and `wrapWithCache` (verified at `bench/harness/extractionCache.js`). Observability moved to Python-side `os.listdir('/data/extractions')` count delta. Do NOT add counter hooks to `extractionCache.js` just for the warmup — scope creep into a hot path.
+5. ✅ **Per-item timeout headroom.** Declared at 600s. LongMemEval-S items post-flatten are typically ≤20 turns with ≤5 extraction calls at ~1.3s each = ~7s expected; even 5× worst-case stays well under 600s.
 
-**Expected wall-clock for the full warmup:** 500 items / 32 parallel containers = 16 waves; at ~15-20s per wave (cold-start dominated, not per-item compute) = **~4-5 min total**.
+**Smoke sequence before full dispatch:**
 
-**Expected Nano-GPT cost:** ~500 items × ~4 calls/item × Gemma 4 26B A4B token pricing. Check the current Nano-GPT rate before full dispatch; smoke run's `totalExtractionCalls` × (cost/call) extrapolates to the full corpus budget.
+```bash
+# 1. Tiny smoke: one item, verify the pipe works end-to-end.
+modal run bench/modal/sweep_app.py --mode warmup-longmemeval --corpus-size 1
+# Expect: warmedCount=1, failedCount=0, cacheFilesDelta ≥ 1, totalFactCount > 0.
+# If cacheFilesDelta=0 but totalFactCount>0, the cache-key identity is off — STOP.
+# If warmedCount=0 and failures[0] shows subprocess stderr, read it (usually a missing env var).
+
+# 2. Mid-size smoke: 10 items, validate parallelism kicks in.
+modal run bench/modal/sweep_app.py --mode warmup-longmemeval --corpus-size 10
+# Expect: wallMs well under single-item × 10 (e.g. ~15s, not ~70s).
+
+# 3. Full run.
+modal run bench/modal/sweep_app.py --mode warmup-longmemeval
+# Expect: ~4-5 min wall-clock, cacheFilesDelta in the ~1500-3000 range
+# (500 items × ~3-5 unique extraction batches each).
+```
+
+**Expected full-run wall-clock:** 500 items / 32 parallel containers = 16 waves; at ~15-20s per wave (cold-start dominated, not per-item compute) = **~4-5 min total**.
+
+**Expected Nano-GPT cost:** ~500 items × ~4 calls/item × Gemma 4 26B A4B token pricing. The 10-item smoke gives a real-dollar extrapolation before committing to the full 500.
 
 3. **Budget visibility — Nano-GPT API cost.** Live extraction on ~500 items × ~4 calls × Gemma 4 26B A4B pricing is the real-dollar cost driver for this task. Eva runs a small smoke first (≤5 items) to validate the `longmemeval-s` adapter is emitting well-formed extraction inputs before committing the full corpus budget.
 
