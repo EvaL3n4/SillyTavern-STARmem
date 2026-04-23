@@ -247,11 +247,21 @@ export async function downloadResults(auth, datasetId, destDir) {
     );
 
     const map = endpoint?.filenameToSignedUrls || {};
-    const resultsKey = Object.keys(map).find(k => /results.*\.jsonl/i.test(k));
-    const errorsKey = Object.keys(map).find(k => /errors.*\.jsonl/i.test(k));
+    // Fireworks' actual filenames (confirmed 2026-04-24 against live response):
+    //   results: dataset/<outputDatasetId>/BIJOutputSet.jsonl
+    //   errors:  dataset/<outputDatasetId>/error-data
+    // (NOT the results*.jsonl / errors*.jsonl pattern the docs' prose implies.)
+    // Match on basename so the mapping survives any path-prefix changes.
+    const entries = Object.entries(map);
+    const resultsEntry = entries.find(([k]) => basename(k).toLowerCase().includes('output'));
+    const errorsEntry = entries.find(([k]) => basename(k).toLowerCase().includes('error'));
 
-    if (!resultsKey) {
-        throw new Error('fireworks-batch: no results file found in download endpoint response');
+    if (!resultsEntry) {
+        const seenKeys = Object.keys(map).map(k => basename(k)).join(', ') || '(none)';
+        throw new Error(
+            `fireworks-batch: no results file found in download endpoint response ` +
+            `(expected a BIJOutputSet.jsonl or similar 'output'-named key; saw: ${seenKeys})`,
+        );
     }
 
     await mkdir(destDir, { recursive: true });
@@ -261,8 +271,11 @@ export async function downloadResults(auth, datasetId, destDir) {
     /** @type {string|null} */
     let errorsPath = null;
 
-    const resultsUrl = map[resultsKey];
-    const resultsDest = `${destDir}/${resultsKey}`;
+    // Flatten path-in-key to just the basename — otherwise path.join would
+    // try to materialize `destDir/dataset/<id>/BIJOutputSet.jsonl` which
+    // requires recursive mkdir of the intermediate dirs. Keep it shallow.
+    const [resultsKey, resultsUrl] = resultsEntry;
+    const resultsDest = `${destDir}/${basename(resultsKey)}`;
     const resRes = await fetch(resultsUrl);
     if (!resRes.ok) {
         throw new Error(`fireworks-batch: failed to download results — ${resRes.status} ${resRes.statusText}`);
@@ -270,9 +283,9 @@ export async function downloadResults(auth, datasetId, destDir) {
     await writeFile(resultsDest, Buffer.from(await resRes.arrayBuffer()));
     resultsPath = resultsDest;
 
-    if (errorsKey) {
-        const errorsUrl = map[errorsKey];
-        const errorsDest = `${destDir}/${errorsKey}`;
+    if (errorsEntry) {
+        const [errorsKey, errorsUrl] = errorsEntry;
+        const errorsDest = `${destDir}/${basename(errorsKey)}`;
         const errRes = await fetch(errorsUrl);
         if (!errRes.ok) {
             throw new Error(`fireworks-batch: failed to download errors — ${errRes.status} ${errRes.statusText}`);

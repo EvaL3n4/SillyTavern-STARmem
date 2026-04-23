@@ -229,9 +229,14 @@ describe('fireworks-batch client', () => {
                 return {
                     ok: true,
                     status: 200,
+                    // Real Fireworks filenames (confirmed 2026-04-24 on a live
+                    // COMPLETED job): path-prefixed keys with basenames
+                    // `BIJOutputSet.jsonl` for results and `error-data` for
+                    // errors. NOT `results.jsonl` / `errors.jsonl`.
                     json: async () => ({
                         filenameToSignedUrls: {
-                            'results.jsonl': 'https://signed.example.com/results',
+                            'dataset/ds-1-out/BIJOutputSet.jsonl': 'https://signed.example.com/results',
+                            'dataset/ds-1-out/error-data': 'https://signed.example.com/errors',
                         },
                     }),
                     headers: new Headers({ 'content-type': 'application/json' }),
@@ -245,16 +250,42 @@ describe('fireworks-batch client', () => {
                     headers: new Headers(),
                 };
             }
+            if (url === 'https://signed.example.com/errors') {
+                return {
+                    ok: true,
+                    status: 200,
+                    arrayBuffer: async () => new TextEncoder().encode('error data').buffer,
+                    headers: new Headers(),
+                };
+            }
             throw new Error(`Unexpected URL: ${url}`);
         });
 
         const result = await downloadResults(AUTH, 'ds-1', '/tmp/dest');
 
-        // Should have called getDownloadEndpoint + signed URL fetch
-        expect(calls.length).toBeGreaterThanOrEqual(2);
+        // Should have called getDownloadEndpoint + signed URL fetches for both
+        expect(calls.length).toBeGreaterThanOrEqual(3);
         expect(calls.some(c => c.url.includes('getDownloadEndpoint'))).toBe(true);
         expect(calls.some(c => c.url === 'https://signed.example.com/results')).toBe(true);
-        expect(result.resultsPath).toBeTruthy();
+        expect(calls.some(c => c.url === 'https://signed.example.com/errors')).toBe(true);
+        // Flattened to basename under destDir; path-prefix-in-key stripped.
+        expect(result.resultsPath).toBe('/tmp/dest/BIJOutputSet.jsonl');
+        expect(result.errorsPath).toBe('/tmp/dest/error-data');
+    });
+
+    test('downloadResults throws with seen-keys context when no output key', async () => {
+        global.fetch = jest.fn(async () => ({
+            ok: true,
+            status: 200,
+            json: async () => ({
+                filenameToSignedUrls: {
+                    'dataset/x/mystery-file.bin': 'https://signed.example.com/mystery',
+                },
+            }),
+            headers: new Headers({ 'content-type': 'application/json' }),
+        }));
+        await expect(downloadResults(AUTH, 'x', '/tmp/y'))
+            .rejects.toThrow(/mystery-file\.bin/);
     });
 
     test('network-error retry budget exhaustion names maxRetries + 1 attempts', async () => {
