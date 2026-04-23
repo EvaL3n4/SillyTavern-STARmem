@@ -53,6 +53,99 @@ def _install_volume_symlink(link_path: str, target_path: str) -> None:
     os.symlink(target_path, link_path)
 
 
+def stratified_longmemeval_indices(
+    corpus_path: str,
+    n: int,
+    seed: int,
+) -> list[int]:
+    """Pick N stratified indices from the LongMemEval-S corpus.
+
+    Groups items by `question_type` (6 canonical task types; see
+    `bench/corpora/longmemeval.js::metadata.taskTypes`), seeds a PRNG,
+    shuffles each group independently, and round-robins picks across
+    groups until N is reached. Deterministic: same (corpus_path, n,
+    seed) always returns the same list.
+
+    Rationale (Phase 12 Task 6, 2026-04-23):
+    The original plan assumed LoCoMo's extraction-cost model would
+    transfer to LongMemEval-S. It didn't — per-item batches are 3×
+    larger and per-item wall is 30×. Full-corpus warmup extrapolates to
+    ~$16.50 per partition. Stratified n=50 preserves the per-task-type
+    mismatch-detection signal at ~$1.65 and lets later partitions
+    (different extractor, different BATCH_SIZE) stay iterable. See
+    `docs/plans/phase-12-task-6-extraction-cost-decision.md`.
+
+    Args:
+        corpus_path: Absolute path to longmemeval_s_cleaned.json on the
+            Volume (e.g. `/data/longmemeval_s_cleaned.json`).
+        n: Total number of items to pick. Must satisfy 1 ≤ n ≤ len(corpus).
+        seed: PRNG seed. Same seed = same indices = same cache keys.
+
+    Returns:
+        Sorted list of N integer indices into the corpus. Sorted to keep
+        fan-out ordering stable and log lines easier to eyeball — the
+        stratification logic already ran against the unsorted shuffles.
+    """
+    import json
+    import random as _random
+
+    if n < 1:
+        raise ValueError(f"stratified n must be >= 1, got {n!r}")
+
+    with open(corpus_path, "r") as f:
+        corpus = json.load(f)
+
+    if n > len(corpus):
+        raise ValueError(
+            f"stratified n={n} exceeds corpus size {len(corpus)}. "
+            f"Use --corpus-size for non-stratified full-corpus runs."
+        )
+
+    # Group original indices by question_type. item["question_type"] is
+    # present on every LongMemEval-S record per the canonical schema
+    # (see bench/corpora/longmemeval.js:55); missing values would be a
+    # corpus integrity bug, not a case to silently paper over.
+    by_type: dict[str, list[int]] = {}
+    for i, item in enumerate(corpus):
+        qt = item.get("question_type")
+        if qt is None:
+            raise ValueError(
+                f"corpus item at idx={i} missing question_type; cannot stratify. "
+                f"Corpus file is likely corrupted or stale."
+            )
+        by_type.setdefault(qt, []).append(i)
+
+    # Deterministic shuffle per type using a per-type derived seed so a
+    # change in type-dict iteration order (unlikely on Py3.7+, but
+    # theoretically) doesn't shift results.
+    for qt, indices in by_type.items():
+        r = _random.Random(f"{seed}|{qt}")
+        r.shuffle(indices)
+
+    # Round-robin pick across task types (canonical order, per adapter
+    # metadata). Evens the per-type count: at n=50 / 6 types we get
+    # 9, 9, 8, 8, 8, 8 picks. Any integer split works.
+    type_order = sorted(by_type.keys())  # alphabetical for determinism
+    picked: list[int] = []
+    cursors = {qt: 0 for qt in type_order}
+    while len(picked) < n:
+        progress = False
+        for qt in type_order:
+            if len(picked) >= n:
+                break
+            c = cursors[qt]
+            if c < len(by_type[qt]):
+                picked.append(by_type[qt][c])
+                cursors[qt] = c + 1
+                progress = True
+        if not progress:
+            # Shouldn't happen given the n ≤ len(corpus) check, but guard
+            # against any off-by-one in future edits.
+            break
+
+    return sorted(picked)
+
+
 @app.function(image=image, volumes={"/data": volume}, timeout=600, memory=4096)
 def hello():
     import os
@@ -167,7 +260,12 @@ def run_point(overrides_json: str, corpus: str = "locomo") -> str:
     timeout=600,
     memory=4096,
 )
-def run_baseline_point(retriever_id: str, corpus: str = "locomo", extractor_model: str = "") -> str:
+def run_baseline_point(
+    retriever_id: str,
+    corpus: str = "locomo",
+    extractor_model: str = "",
+    sample_indices_json: str = "",
+) -> str:
     """Run one baseline retriever over the full corpus.
 
     Args:
@@ -177,6 +275,11 @@ def run_baseline_point(retriever_id: str, corpus: str = "locomo", extractor_mode
             STARMEM_BENCH_LLM_MODEL from env_secret. Must match the model used
             during warmup or the cache-keyed (model, messages, maxTokens) hash
             misses 100% and falls through to live extraction.
+        sample_indices_json: Optional JSON-stringified array of integer indices.
+            When non-empty, the Node baseline-point filters the corpus to
+            exactly these items before running the harness. Pass the same
+            indices that warmup used (see `stratified_longmemeval_indices`)
+            for cache-hit alignment.
 
     Returns:
         JSON string with { retrieverId, metrics, latencyMs, runCount, wallMs, envSnapshot }.
@@ -199,6 +302,8 @@ def run_baseline_point(retriever_id: str, corpus: str = "locomo", extractor_mode
     env["STARMEM_BENCH_CORPUS"] = corpus
     if extractor_model:
         env["STARMEM_BENCH_LLM_MODEL"] = extractor_model
+    if sample_indices_json:
+        env["STARMEM_SAMPLE_INDICES_JSON"] = sample_indices_json
 
     result = subprocess.run(
         ["node", "bench/baselines/_modal-point.js"],
@@ -439,7 +544,12 @@ def run_longmemeval_warmup_point(item_idx: int, extractor_model: str = "") -> st
     timeout=1800,
     memory=4096,
 )
-def run_longmemeval_warmup(corpus_size: int = 500, extractor_model: str = "") -> dict:
+def run_longmemeval_warmup(
+    corpus_size: int = 500,
+    extractor_model: str = "",
+    stratified_sample: int = 0,
+    stratify_seed: int = 2026,
+) -> dict:
     """Fan out per-item LongMemEval-S cache warm-up across bounded containers.
 
     Top-level Modal entry (decorated): called via
@@ -458,13 +568,23 @@ def run_longmemeval_warmup(corpus_size: int = 500, extractor_model: str = "") ->
     mismatch); investigate before dispatching the full baselines run.
 
     Args:
-        corpus_size: number of LongMemEval-S items to warm.
-                     Default 500 = full corpus post-flatten (Decision 8).
+        corpus_size: number of LongMemEval-S items to warm when
+            stratified_sample is 0. Default 500 = full corpus
+            post-flatten (Decision 8). Ignored when stratified_sample
+            > 0.
+        extractor_model: Optional model override (see run_baseline_point).
+        stratified_sample: When > 0, pick N items via
+            `stratified_longmemeval_indices` instead of `range(corpus_size)`.
+            Preserves per-task-type signal at a fraction of the cost
+            (Phase 12 Task 6 cost-decision, 2026-04-23).
+        stratify_seed: PRNG seed for stratification. Same seed = same
+            items = same cache keys between warmup and baselines.
 
     Returns:
         Summary dict with { warmedCount, failedCount, wallMs,
                             totalFactCount, cacheFilesBefore,
                             cacheFilesAfter, cacheFilesDelta,
+                            sampledIndices, stratified, stratifySeed,
                             failures: [...] }.
     """
     import json
@@ -508,13 +628,47 @@ def run_longmemeval_warmup(corpus_size: int = 500, extractor_model: str = "") ->
 
     cache_files_before = len(os.listdir(cache_dir))
 
+    # Resolve the item indices to dispatch. Stratified sampling wins over
+    # corpus_size when both are set; corpus_size becomes a no-op
+    # parameter (documented in the docstring) to avoid a silent override.
+    if stratified_sample > 0:
+        sampled_indices = stratified_longmemeval_indices(
+            corpus_path=corpus_vol_path,
+            n=stratified_sample,
+            seed=stratify_seed,
+        )
+        stratified = True
+    else:
+        sampled_indices = list(range(corpus_size))
+        stratified = False
+
+    # Reify the indices on the Volume as a named artifact. Baselines
+    # will read this same file so warmup and baselines operate on
+    # exactly the same items. File is tiny (<4KB for n=500) so
+    # committing is effectively free. Naming scheme partitions cleanly
+    # on (n, seed): two runs with different seeds never collide.
+    indices_filename = (
+        f"sampled_items_n{stratified_sample}_seed{stratify_seed}.json"
+        if stratified
+        else f"sampled_items_full{corpus_size}.json"
+    )
+    indices_path = f"/data/{indices_filename}"
+    with open(indices_path, "w") as f:
+        json.dump({
+            "n": len(sampled_indices),
+            "seed": stratify_seed,
+            "stratified": stratified,
+            "indices": sampled_indices,
+        }, f, indent=2)
+    volume.commit()  # durable before fan-out reads it
+
     t0 = time.time()
     # starmap passes each tuple as (item_idx, extractor_model). Using
     # starmap (not map) keeps extractor_model out of the primary range
     # key so Modal's Function-level caching still considers two items
     # with different extractor_model as distinct inputs.
     results_raw = list(run_longmemeval_warmup_point.starmap(
-        ((i, extractor_model) for i in range(corpus_size))
+        ((i, extractor_model) for i in sampled_indices)
     ))
 
     warmed = []
@@ -571,6 +725,12 @@ def run_longmemeval_warmup(corpus_size: int = 500, extractor_model: str = "") ->
         "failures": failed[:10],  # cap for log legibility on Modal's output tail
         "allFailedItems": all_failed_items[:20],
         "firstItemErrors": first_item_errors,
+        # Stratified-sample provenance — downstream baselines read this
+        # same indices file so the two runs stay aligned.
+        "stratified": stratified,
+        "stratifySeed": stratify_seed if stratified else None,
+        "sampledIndicesPath": indices_path,
+        "sampledCount": len(sampled_indices),
     }
 
 
@@ -586,7 +746,12 @@ BATCHSIZE_CONV_INDICES = [0, 1, 2, 3, 4]
     timeout=1800,
     memory=4096,
 )
-def run_baselines(corpus: str = "locomo", extractor_model: str = "") -> dict:
+def run_baselines(
+    corpus: str = "locomo",
+    extractor_model: str = "",
+    stratified_sample: int = 0,
+    stratify_seed: int = 2026,
+) -> dict:
     """Fan out baseline retrievers to parallel containers.
 
     Args:
@@ -594,6 +759,12 @@ def run_baselines(corpus: str = "locomo", extractor_model: str = "") -> dict:
         extractor_model: Optional model override passed to each run_baseline_point.
             Must match the model used during any prior warmup run — cache keys
             are model-partitioned, so mismatched model strings hit 0% cache.
+        stratified_sample: When > 0 and corpus == 'longmemeval-s', pass the
+            same (n, seed) stratified indices that warmup used, so baselines
+            evaluate exactly the items that were warmed. Mismatched
+            (warmup_n, baseline_n) / (warmup_seed, baseline_seed) means
+            100% cache miss on the un-warmed items.
+        stratify_seed: PRNG seed — must equal the warmup's stratify_seed.
 
     Returns:
         Dict with keys:
@@ -605,18 +776,56 @@ def run_baselines(corpus: str = "locomo", extractor_model: str = "") -> dict:
     import os
     from datetime import datetime
 
+    # Resolve the stratified-sample indices once here in the orchestrator
+    # so all 4 retrievers see the same items. Reading from the Volume's
+    # sampled_items_*.json would be the strictly-aligned approach, but
+    # re-computing is cheap (<1ms for n=500), idempotent for the same
+    # (corpus_path, n, seed), and avoids coupling baselines to a warmup
+    # having run first. If the user runs baselines without prior warmup
+    # and with stratified_sample>0, live extraction pays per item but
+    # the indices are still deterministic.
+    sample_indices_json = ""
+    if corpus == "longmemeval-s" and stratified_sample > 0:
+        corpus_vol_path = "/data/longmemeval_s_cleaned.json"
+        if not os.path.exists(corpus_vol_path):
+            return {
+                "error": "corpus missing on Volume",
+                "corpusPath": corpus_vol_path,
+                "fix": "See run_longmemeval_warmup() error for upload steps.",
+            }
+        indices = stratified_longmemeval_indices(
+            corpus_path=corpus_vol_path,
+            n=stratified_sample,
+            seed=stratify_seed,
+        )
+        sample_indices_json = json.dumps(indices)
+
     point_results = list(run_baseline_point.map(
-        [(rid, corpus, extractor_model) for rid in BASELINE_IDS]
+        [(rid, corpus, extractor_model, sample_indices_json) for rid in BASELINE_IDS]
     ))
     points = [json.loads(pr) for pr in point_results]
 
     ts = datetime.utcnow().strftime("%Y-%m-%dT%H-%M-%SZ")
-    run_dir = f"/data/runs/{ts}-baselines"
+    # Partition run_dir on stratified (n, seed) so back-to-back runs at
+    # different sample sizes don't overwrite each other's artifacts.
+    stem_suffix = (
+        f"-s{stratified_sample}-seed{stratify_seed}"
+        if sample_indices_json
+        else ""
+    )
+    run_dir = f"/data/runs/{ts}-baselines{stem_suffix}"
     os.makedirs(run_dir, exist_ok=True)
 
     result_payload = {
         "name": "baselines",
         "timestamp": ts,
+        "corpus": corpus,
+        "stratified": bool(sample_indices_json),
+        "stratifiedSample": stratified_sample if sample_indices_json else None,
+        "stratifySeed": stratify_seed if sample_indices_json else None,
+        "sampledCount": (
+            len(json.loads(sample_indices_json)) if sample_indices_json else None
+        ),
         "points": points,
     }
     result_json_str = json.dumps(result_payload, indent=2)
@@ -2316,6 +2525,8 @@ def main(
     corpus: str = "locomo",
     corpus_size: int = 500,   # NEW: --corpus-size N for warmup-longmemeval mode
     extractor_model: str = "",   # NEW: --extractor-model override for warmup/baselines
+    stratified_sample: int = 0,   # NEW: --stratified-sample N for LongMemEval-S subset
+    stratify_seed: int = 2026,   # NEW: --stratify-seed N for determinism across runs
 ):
     """Dispatch entrypoint for Modal bench functions.
 
@@ -2369,6 +2580,22 @@ def main(
         extraction-cache key. A warmup run with model X followed by a
         baselines run with model Y hits 0% cache and burns live tokens.
         Always run warmup and baselines with the same --extractor-model.
+
+    --stratified-sample N:
+        Only relevant to --corpus longmemeval-s. When > 0, pick N items
+        via deterministic per-task-type stratified sampling instead of
+        running the full 500-item corpus. Picks are balanced across the
+        6 LongMemEval task types (single-session-*, temporal-reasoning,
+        knowledge-update, multi-session) via round-robin on seeded
+        per-type shuffles. Use for cost-controlled per-task-type
+        mismatch detection. Takes precedence over --corpus-size when
+        both are set. Rationale:
+        docs/plans/phase-12-task-6-extraction-cost-decision.md.
+
+    --stratify-seed N:
+        PRNG seed for --stratified-sample. Default 2026. Same seed +
+        same N = same item indices = same cache keys; warmup and
+        baselines MUST use the same seed to share the cache.
     """
     if corpus not in {"locomo", "longmemeval-s"}:
         raise ValueError(f"--corpus must be one of: locomo, longmemeval-s. Got: {corpus!r}")
@@ -2391,7 +2618,12 @@ def main(
                 file=__import__("sys").stderr,
             )
     elif mode == "run-baselines":
-        baselines_out = run_baselines.remote(corpus=corpus, extractor_model=extractor_model)
+        baselines_out = run_baselines.remote(
+            corpus=corpus,
+            extractor_model=extractor_model,
+            stratified_sample=stratified_sample,
+            stratify_seed=stratify_seed,
+        )
         report = baselines_out["report"]
         result_json_str = baselines_out["result_json"]
         run_dir = baselines_out["run_dir"]
@@ -2426,6 +2658,8 @@ def main(
         result = run_longmemeval_warmup.remote(
             corpus_size=corpus_size,
             extractor_model=extractor_model,
+            stratified_sample=stratified_sample,
+            stratify_seed=stratify_seed,
         )
         print(json.dumps(result, indent=2))
     else:

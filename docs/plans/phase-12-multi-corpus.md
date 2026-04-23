@@ -2473,7 +2473,7 @@ _origLog(JSON.stringify({
 1. ✅ **Adapter shape compatibility confirmed.** `bench/corpora/longmemeval.js::normalizeItem` emits `CorpusConversation` (`{id, turns[], qa[]}`) with `turns[]` carrying `{speaker, text, sessionId, turnIndex}`. `seedConversation` at `bench/harness/seeder.js:193` iterates `conv.turns` and reads `turn.text` — compatible as-is.
 2. ✅ **Adapter API path confirmed.** Import is `from '../corpora/index.js'` (barrel), method is `loadConversations({offline: true})`. Sibling pattern in `bench/baselines/_modal-point.js:16` uses the same import.
 3. ✅ **Live extractor gating confirmed.** `_resolveExtractor()` at `seeder.js:42` checks `STARMEM_BENCH_LIVE_EXTRACTOR === '1'`. The warm-up Python sets this explicitly and the Node script refuses to run without it — no silent rule-based fallback risk.
-4. ⚠️ **No cache stats API in `extractionCache.js`.** File only exports `_cacheKey` and `wrapWithCache` (verified at `bench/harness/extractionCache.js`). Observability moved to Python-side `os.listdir('/data/extractions')` count delta. Do NOT add counter hooks to `extractionCache.js` just for the warmup — scope creep into a hot path.
+4. ⚠️ **No cache stats API in `extractionCache.js`.** File only exports `_cacheKey` and `wrapWithCache` (verified at `bench/harness/extractionCache.js`). Observability moved to Python-side `os.listdir('/data/extractions')` count delta. ~~Do NOT add counter hooks to `extractionCache.js` just for the warmup — scope creep into a hot path.~~ **Superseded 2026-04-23 (commit `3770cb6`):** An opt-in `stats: {hits, misses}` counter was added to `wrapWithCache` after the first smoke produced `hits=0 misses=110 failures=104/104` with zero top-level error — the subprocess reported batch-level failures, the Python orchestrator classified the item as "warmed." The counter is two synchronous integer increments gated behind an optional keyword arg — zero hot-path cost, permanent operator visibility. Test coverage: `tests/unit/bench/extractionCache.test.js` +3 tests.
 5. ✅ **Per-item timeout headroom.** Declared at 600s. LongMemEval-S items post-flatten are typically ≤20 turns with ≤5 extraction calls at ~1.3s each = ~7s expected; even 5× worst-case stays well under 600s.
 
 **Smoke sequence before full dispatch:**
@@ -2495,9 +2495,46 @@ modal run bench/modal/sweep_app.py --mode warmup-longmemeval
 # (500 items × ~3-5 unique extraction batches each).
 ```
 
-**Expected full-run wall-clock:** 500 items / 32 parallel containers = 16 waves; at ~15-20s per wave (cold-start dominated, not per-item compute) = **~4-5 min total**.
+**Expected full-run wall-clock (original LoCoMo-extrapolated estimate):** 500 items / 32 parallel containers = 16 waves; at ~15-20s per wave (cold-start dominated, not per-item compute) = **~4-5 min total**.
 
-**Expected Nano-GPT cost:** ~500 items × ~4 calls/item × Gemma 4 26B A4B token pricing. The 10-item smoke gives a real-dollar extrapolation before committing to the full 500.
+**Expected Nano-GPT cost (original):** ~500 items × ~4 calls/item × Gemma 4 26B A4B token pricing. The 10-item smoke gives a real-dollar extrapolation before committing to the full 500.
+
+---
+
+**2026-04-23 retro: the LoCoMo-extrapolated estimate was wrong by ~100×.**
+
+First live `--corpus-size 1` warmup dispatches hit `FunctionTimeoutError` at both 600s and 1800s budgets. Root cause: LongMemEval-S items post-flatten (Decision 8) concatenate 30–40 sessions into 400–800-turn single conversations, not ≤20-turn items as the preflight estimated. At `BATCH_SIZE=5` and ~1.3s/call that's 80–160 sequential extraction calls per item, totaling ~30 min per-item wall — fully serial inside a single `run_longmemeval_warmup_point` container.
+
+Cost shape also 3× higher than preflight: ~100 batches/item × ~$0.00032/batch (observed, Nano-GPT GPT-OSS-20B) = ~$0.033/item × 500 = **~$16.50 per full-corpus cache partition**. With the extraction-cache keyed on `(model, messages, maxTokens)`, every model swap / prompt edit / BATCH_SIZE change pays the full tab again.
+
+**Response (committed):**
+
+1. **Design A parallel cache prewarming** (`0aee22d`). Rewrote `bench/harness/_modal-warmup-point.js` to bypass the serial `seedConversation` pipeline. Pre-computes the same `(model, messages, maxTokens)` triples `consolidate()` would produce on the filtered turn stream and memoizes them into the same on-disk cache via `wrapWithCache`, with K=16 concurrent calls. Drift self-heals because `renderExtractionPrompt` + `EXTRACT_MAX_TOKENS` are imported from the real `src/consolidation/extractFacts.js`. Per-item wall: ~90s (was ~30 min) for ~110 batches at K=16.
+
+2. **Diagnostic visibility + orchestrator honesty** (`3770cb6`). `wrapWithCache` gained opt-in `stats: {hits, misses}`. `_modal-warmup-point.js` logs every batch failure to stderr and emits `firstError` / `modelResolved` / `urlHost` on the JSON payload. Python orchestrator now classifies `allFailed` items as `failedCount`, not `warmedCount` — no more `warmedCount=10, cacheFilesDelta=0` silent failures.
+
+3. **5xx + network retry at the extractor layer** (`b64229e`). `llmExtractor` retries on HTTP 5xx and classic transient `fetch()` errors (`ECONNRESET`, `ENOTFOUND`, `UND_ERR_*`) with exponential backoff. 4xx + response-shape errors are non-retry (they don't transient-fix). Benefits both warmup and baseline paths.
+
+4. **Stratified sampling as the cost escape hatch.** Because full-corpus warmup at $16.50 per partition makes exploratory sweeps impractical, add `--stratified-sample N --stratify-seed S` flags. Picks N items via seeded round-robin across the 6 LongMemEval question types, reifies the indices to `/data/sampled_items_n{N}_seed{S}.json`, and baselines read the same file so warmup and baselines evaluate identical items. At n=50, cost drops to ~$1.65 and wall-clock to ~2 min; per-task-type error bars widen from ±5% to ±15% — acceptable for mismatch *detection*, the actual signal Task 6 is testing. See `docs/plans/phase-12-task-6-extraction-cost-decision.md`.
+
+**Updated smoke + dispatch sequence (stratified n=50):**
+
+```bash
+# Warmup — ~2 min, ~$1.65 (GPT-OSS-20B on Nano-GPT)
+modal run bench/modal/sweep_app.py --mode warmup-longmemeval \
+    --corpus longmemeval-s --stratified-sample 50 --stratify-seed 2026 \
+    --extractor-model openai/gpt-oss-20b
+
+# Baselines — must use same --stratified-sample + --stratify-seed
+# + --extractor-model or the cache partitions don't align
+modal run bench/modal/sweep_app.py --mode run-baselines \
+    --corpus longmemeval-s --stratified-sample 50 --stratify-seed 2026 \
+    --extractor-model openai/gpt-oss-20b --local-out docs/bench/baselines
+```
+
+**Retro filed for the `plan-preflight-audit` skill:** LoCoMo-calibrated cost models do not transfer to a corpus with different session-count-per-item topology. Preflight audits that cite "~4 calls/item × 500 items" without verifying the per-item turn count against the target corpus will mislead by orders of magnitude. Skill patch pending.
+
+---
 
 3. **Budget visibility — Nano-GPT API cost.** Live extraction on ~500 items × ~4 calls × Gemma 4 26B A4B pricing is the real-dollar cost driver for this task. Eva runs a small smoke first (≤5 items) to validate the `longmemeval-s` adapter is emitting well-formed extraction inputs before committing the full corpus budget.
 

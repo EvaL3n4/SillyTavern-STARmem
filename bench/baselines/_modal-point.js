@@ -41,7 +41,36 @@ async function main() {
 
     const corpusName = process.env.STARMEM_BENCH_CORPUS ?? 'locomo';
     const adapter = getAdapter(corpusName);
-    const corpus = await adapter.loadConversations({ offline: true });
+    let corpus = await adapter.loadConversations({ offline: true });
+
+    // Stratified subset filter. When run_baselines passes
+    // STARMEM_SAMPLE_INDICES_JSON, keep only those items. Must run
+    // after adapter load because indices are into the post-flatten
+    // corpus (Phase 12 Decision 8: LongMemEval-S is flattened to one
+    // single-session item per question_id, preserving the 500-item
+    // count). Invalid indices throw early rather than silently dropping.
+    const sampleIndicesJson = process.env.STARMEM_SAMPLE_INDICES_JSON;
+    if (sampleIndicesJson) {
+        let indices;
+        try {
+            indices = JSON.parse(sampleIndicesJson);
+        } catch (err) {
+            console.error(`STARMEM_SAMPLE_INDICES_JSON is not valid JSON: ${err.message}`);
+            process.exit(2);
+        }
+        if (!Array.isArray(indices) || !indices.every(i => Number.isInteger(i) && i >= 0)) {
+            console.error(`STARMEM_SAMPLE_INDICES_JSON must be an array of non-negative integers`);
+            process.exit(2);
+        }
+        const outOfRange = indices.find(i => i >= corpus.length);
+        if (outOfRange !== undefined) {
+            console.error(`STARMEM_SAMPLE_INDICES_JSON contains idx=${outOfRange} but corpus has only ${corpus.length} items`);
+            process.exit(3);
+        }
+        corpus = indices.map(i => corpus[i]);
+        console.error(`[${retrieverId}] filtered corpus to ${corpus.length} stratified items (of original ${indices.length} requested)`);
+    }
+
     const wallT0 = performance.now();
     const { runs, metrics, envSnapshot } = await runHarness({
         corpus,

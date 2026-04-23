@@ -94,6 +94,36 @@ def test_run_baselines_threads_corpus():
         assert mock_rb.remote.call_args.kwargs.get("corpus") == "longmemeval-s"
 
 
+def test_run_baselines_threads_stratified_sample():
+    """--stratified-sample + --stratify-seed reach run_baselines.remote()."""
+    with patch.object(sweep_app, "run_baselines") as mock_rb:
+        mock_rb.remote.return_value = {"report": "", "result_json": "{}", "run_dir": "/tmp"}
+        sweep_app.main(
+            mode="run-baselines",
+            corpus="longmemeval-s",
+            stratified_sample=50,
+            stratify_seed=1234,
+        )
+        kwargs = mock_rb.remote.call_args.kwargs
+        assert kwargs.get("stratified_sample") == 50
+        assert kwargs.get("stratify_seed") == 1234
+
+
+def test_warmup_longmemeval_threads_stratified_sample():
+    """--stratified-sample + --stratify-seed reach run_longmemeval_warmup.remote()."""
+    with patch.object(sweep_app, "run_longmemeval_warmup") as mock_wu:
+        mock_wu.remote.return_value = {"warmedCount": 0, "failedCount": 0}
+        sweep_app.main(
+            mode="warmup-longmemeval",
+            corpus="longmemeval-s",
+            stratified_sample=50,
+            stratify_seed=2026,
+        )
+        kwargs = mock_wu.remote.call_args.kwargs
+        assert kwargs.get("stratified_sample") == 50
+        assert kwargs.get("stratify_seed") == 2026
+
+
 # --- render_by_task_type -------------------------------------------------
 
 def test_render_by_task_type_empty_returns_placeholder():
