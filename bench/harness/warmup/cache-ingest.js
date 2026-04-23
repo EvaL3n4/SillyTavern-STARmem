@@ -62,13 +62,22 @@ export async function ingestResults(resultsJsonlPath, opts) {
             errors.push({ customId: '(missing)', reason: 'row missing custom_id' });
             continue;
         }
+        // Status-code semantics differ between Fireworks Batch Inference
+        // (BIJ) and OpenAI's Batch API. Fireworks' per-row output omits
+        // status_code entirely — failures land in a sibling error-data file.
+        // OpenAI's wrapper nests {status_code, body: {...}}. Accept both:
+        //   - Fireworks BIJ shape: response.choices[0], no status_code
+        //   - OpenAI Batch shape:  response.status_code, response.body.choices[0]
+        // Only reject when status_code is explicitly present AND not 200.
         const status = row?.response?.status_code;
-        if (status !== 200) {
+        if (status !== undefined && status !== 200) {
             skipped++;
             errors.push({ customId, reason: `status_code=${status}` });
             continue;
         }
-        const choice = row?.response?.body?.choices?.[0];
+        // Try Fireworks BIJ shape first (choices at response level),
+        // fall back to OpenAI Batch shape (choices at response.body level).
+        const choice = row?.response?.choices?.[0] ?? row?.response?.body?.choices?.[0];
         const content = choice?.message?.content;
         if (typeof content !== 'string' || content.length === 0) {
             skipped++;

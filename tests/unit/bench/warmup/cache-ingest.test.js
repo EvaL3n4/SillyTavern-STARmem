@@ -144,4 +144,38 @@ describe('ingestResults', () => {
         });
         expect(stats).toEqual({ written: 0, skipped: 0, errors: [] });
     });
+
+    test('accepts Fireworks BIJ shape (response.choices at top level, no status_code)', async () => {
+        // Confirmed on 2026-04-24 against live Fireworks output:
+        //   row.response = { id, object, created, model, choices, usage }
+        // No wrapper — response IS the chat completion directly.
+        const results = path.join(tmp, 'bij.jsonl');
+        const cacheDir = path.join(tmp, 'cache');
+        await writeFile(results, JSON.stringify({
+            custom_id: 'bij1',
+            response: {
+                id: 'chatcmpl-x',
+                object: 'chat.completion',
+                created: 1700000000,
+                model: 'accounts/fireworks/models/llama-v3p3-70b-instruct',
+                choices: [{
+                    index: 0,
+                    message: { role: 'assistant', content: '{"entries":[]}' },
+                    finish_reason: 'stop',
+                }],
+                usage: { prompt_tokens: 100, completion_tokens: 10, total_tokens: 110 },
+            },
+        }));
+        const stats = await ingestResults(results, {
+            cacheDir,
+            model: 'accounts/fireworks/models/llama-v3p3-70b-instruct',
+            maxTokens: 2048,
+        });
+        expect(stats.written).toBe(1);
+        expect(stats.skipped).toBe(0);
+        const cached = JSON.parse(
+            await readFile(path.join(cacheDir, 'bij1.json'), 'utf8'),
+        );
+        expect(cached.response).toBe('{"entries":[]}');
+    });
 });
