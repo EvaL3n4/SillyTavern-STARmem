@@ -2361,11 +2361,35 @@ def run_longmemeval_warmup(corpus_size: int = 500) -> dict:
 
 ```python
 elif mode == "warmup-longmemeval":
-    result = run_longmemeval_warmup.remote(corpus_size=corpus_size or 500)
+    result = run_longmemeval_warmup.remote(corpus_size=corpus_size)
     print(json.dumps(result, indent=2))
 ```
 
-Plumb `corpus_size` through the same argparse path as `corpus` / `sweep_name` — accept `--corpus-size N` defaulting to 500.
+**Plumb `corpus_size` through `@app.local_entrypoint()`.** Modal's Click-based CLI only accepts flags declared in the `main()` signature; adding a new CLI flag requires adding a parameter. Extend `def main(...)` at line ~1989:
+
+```python
+@app.local_entrypoint()
+def main(
+    mode: str = "hello",
+    overrides_json: str = "{}",
+    sweep_name: str = "tau",
+    synthetic: bool = False,
+    local_out: str = "",
+    corpus: str = "locomo",
+    corpus_size: int = 500,   # NEW: --corpus-size N for warmup-longmemeval mode
+):
+```
+
+Modal maps underscores to dashes on the CLI, so `corpus_size` becomes `--corpus-size` automatically. Default 500 = full LongMemEval-S corpus post-flatten (Decision 8). Only `--mode warmup-longmemeval` reads it; other modes ignore it silently.
+
+Also add a docstring line under `--corpus CORPUS:`:
+
+```
+    --corpus-size N:
+        Only relevant to --mode warmup-longmemeval. Number of LongMemEval-S
+        items to warm. Default 500 = full corpus. Use lower values for
+        smoke runs: 1 to validate the pipe, 10 to validate parallelism.
+```
 
 **`bench/harness/_modal-warmup-point.js`** (new file, ~50 LOC):
 
