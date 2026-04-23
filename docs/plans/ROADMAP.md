@@ -447,6 +447,46 @@ These are v2.1+ considerations. Do not implement them in any phase.
 
 _Appended after each phase ships. Format: `## Phase N—<date>`, with notes on surprises, scope changes, and lessons for subsequent phases._
 
+## Phase 11—2026-04-23
+
+**What shipped:** Measurement-infrastructure hardening. Zero retrieval-surface changes; 9.4.8 tune (`TIER2_TAU_GAP=10`, MRR 0.8057, coverage 0.643) holds. Five of six filed Phase 11 candidates landed (Tier 2 demolition + `EXTRACT_MAX_TOKENS → 256` deferred to Phase 12): (1) `_elbow_on_slice` zero-axis-Δ guard (`ABS_DELTA_FLOOR = 0.005`) structurally prevents the 9.5 three-time flat-axis false-positive pattern; (2) `coverage = n_scored / n` as a first-class field on `MetricsResult` + `bench/render/amendment-rule.js` (`shouldAmend({baseline, candidate})`) and Python `_should_amend` mirror, with gate `ΔMRR ≥ 0.02 AND coverage_delta ≥ −5pp` wired into all 5 Python sweep renderers; (3) `--mode run-baselines` Modal dispatch with 4-retriever parallel fan-out; (4) `--mode run-sweep --sweep-name batchsize` via conversation-level split (25 bounded containers = 5 BATCH_SIZE × 5 convs, weighted-MRR aggregation); (5) `--local-out` parity for `run-point` mode. Six 9.5 sweep artifacts re-rendered under the two-column metric via new one-shot `bench/modal/rerender.py`; zero files show "Amend" verdict (matches 9.5 retro invariant). Task 7 Modal dispatch of the BATCH_SIZE sweep completed cleanly (~22 min wall-clock across 25 cells); Branch C fired — `BATCH_SIZE=10` held at spec default, `ΔMRR = +0.0188` to candidate below 0.02 gate. `docs/bench/baseline.json` refreshed with Phase 11 closure entry, new `BATCH_SIZE` entry under `tuned/`, `coverage: 0.643` on `headlineMetrics.ladder`.
+
+**Test totals:** 77 suites / 824 tests (jest, +8 from 816: 3 coverage + 5 amendment-rule); 8 tests (pytest bench/modal, +5 from 3: 3 baselines + 2 batchsize). All green, no regressions.
+
+**Commits this phase:** 13 total. Plan (`c541d4c`) → 7 task landings → 2 Task 6 hot-fixes (`344e88f` decorator, `6c7fbaa` timeout) → Task 7 artifact (`0e9c17d`) → baseline refresh (`27a839a`) → retro (`6163351`) → this entry. Phase 11 range: `c541d4c..HEAD`.
+
+**Execution mode:** Hybrid split per plan declaration. Controller (Azure) owned Tasks 0, 1, 2, 7, 8, 9 + both Task 6 hot-fixes — small-surface mechanical + narrative. Subagents (Fireworks/Kimi via `delegate_task`) owned Tasks 3, 4, 5, 6. Tasks 5 + 6 dispatched in parallel (disjoint file sets: Task 5 wrote `rerender.py` + 6 `-live.md` files; Task 6 wrote to `sweep_app.py` + new JS/test files). Wall-clock savings ~2 min over sequential. Parallel dispatch guards held perfectly — zero cross-contamination, zero `git add -A` slips. One Azure empty-turn event on a heavy shell-output turn during Task 7 preflight; recovered cleanly. Zero empty turns during subagent delegations (as designed — `delegate_task` routes through Fireworks, not Azure).
+
+**Decisions held (1–8, 10) / revised (9, Task 6 branch prediction):**
+
+- Scope (5 of 6 candidates), BATCH_SIZE option (b), two-column coverage (no composite), re-render from cached JSON, baselines dispatch surface, two-fixture elbow test, plan filename, execution mode, plan timings — all held.
+- Decision 9 revised shape: Task 7 Modal dispatch handed to Eva manually per the 9.4.8/9.4.9/9.5 pattern; controller picked up artifact reading + observation append.
+- Task 6 pre-registration predicted Branch B (flat axis); actual data showed Branch C — BATCH_SIZE has real monotonic MRR signal 0.7756 → 0.8370 via extraction-context granularity, not a flat knob. Signal is real but ΔMRR to candidate is below the 0.02 gate — held at spec. Updates the mental model; doesn't change the verdict.
+
+**Surprises:**
+
+1. **Plan's verbatim Task 6 code had two Modal-wiring bugs invisible to static checks.** (a) `run_consolidation_batchsize_sweep` was decorated with `@app.function(...)`, making the name a `modal.Function` object — `run_sweep` dispatch hit `TypeError: 'Function' object is not callable` on first real dispatch. Sibling orchestrators (`run_graph_sweep`, `run_consolidation_sweep`) are undecorated; the plan text copied the decorator from a per-cell function and pasted it onto an orchestrator. Fixed `344e88f`. (b) Per-cell timeout 600s was below the worst-case BATCH_SIZE=3 row (~133 extraction calls × ~5s = ~665s) — `FunctionTimeoutError` on first dispatch. Fixed `6c7fbaa` by bumping to 1800s. Both preventable with "grep sibling pattern for decorator" + "compute worst-case wall-clock vs timeout" preflight checks.
+
+2. **Coverage gate earned its keep on its first real-world test.** Task 7 BATCH_SIZE sweep produced a pattern pre-Phase-11 machinery wouldn't have caught: MRR optimum at BATCH_SIZE=15 (0.8370), coverage optimum at BATCH_SIZE=10 (0.7337). ΔMRR to candidate +0.0188 below 0.02 gate; Δcoverage −2.7pp within 5pp budget. Two guards worked together — coverage made the trade-off visible; ΔMRR threshold held the line. First production hold via the `_should_amend` structural gate rather than manual retro-author judgment.
+
+3. **BATCH_SIZE is not the pure consolidation knob we pre-registered.** Plan framed it as "affects consolidation/update-rate, not ranking directly"; data shows monotonic MRR climb across the grid via extraction-context richness (larger batch = richer per-call context = better-quality entity/topic keywords surfaced). Doesn't change verdict but updates the model. Hypothesis for Phase 12: `EXTRACT_MAX_TOKENS` might have the same dual mechanism — flag in pre-registration.
+
+4. **Parallel dispatch of Tasks 5 + 6 clean on first real multi-file parallel test.** Phase 4 Tasks 4+5 was the original field validation (mostly single-file new-file tasks). Phase 11 scaled the pattern: Task 5 wrote 7 files, Task 6 wrote 3 files, zero cross-contamination, both commits exactly matched their scoped file sets. Parallel dispatch guard language (absolute paths + tripwire hashes + "another subagent is working" callout + explicit `git add <paths>`) continues to hold.
+
+5. **BATCH_SIZE=3 wall-clock was 4× plan estimate.** Plan "~2-3 min per cell," actual median 10.7 min, max 21.7 min. Cumulative ~4 hours of container-seconds for the 25-cell grid, ~22 min wall-clock with parallel fan-out. At Modal A10G pricing this is non-trivial per run; Phase 12 cache-key-bound sweeps (EXTRACT_MAX_TOKENS candidate) should budget similarly.
+
+6. **`rerender.py` revealed renderer-signature convention drift.** Tau/bm25/hops/relw renderers take `(result, corpus_len, qa_count)`; graph/consolidation stubs take `(payload)`. Not a bug, but an undocumented convention split — easy to get wrong if new sweeps are added. Minor debt; flag for Phase 12 if we touch the renderer surface.
+
+**Notes for Phase 12:**
+
+- **Tier 2 demolition** (9.5 Phase 11 candidate #5, deferred). `TIER2_TAU_GAP=10` already functionally disables Tier 2; ladder could simplify to always-Tier-3-as-Tier-2-seed. ~30 LOC change with zero retrieval-surface risk. Likely first task of Phase 12.
+- **`EXTRACT_MAX_TOKENS → 256` sweep.** p95 ~70 tokens per 9.5 observation; Phase 11 shipped the conversation-level-split infrastructure needed to sweep this safely. Reuse `_modal-batchsize-point.js` as the template. Pre-register Branch-C-or-better plus the "BATCH_SIZE affects retrieval too" hypothesis — truncation at 256 might have a retrieval-quality signal via extraction content reduction.
+- **Baselines-on-Modal surface ready for first live dispatch.** Task 3 landed the `--mode run-baselines` surface; never actually dispatched. Natural fit whenever Phase 12 or v2.1 external-baselines work wants the 4-retriever comparison under the coverage-weighted metric.
+- **Corpus expansion (v2.1).** LoCoMo single-session structure remains the retrieval-surface bottleneck — four edge-weight knobs provably inert across 3+ reproductions. Multi-session / cross-character corpus required to exercise edge-weighting meaningfully. Not Phase 12 scope unless we pivot.
+- **`bench/modal/rerender.py` disposition.** One-shot tool committed in Task 5, re-render use case closed now that renderers ship coverage natively. Lean toward keeping for ad-hoc future rescues (~140 LOC, harmless).
+
+---
+
 ## Phase 9—2026-04-21
 
 **What shipped:** Benchmarking subsystem — `bench/cli.js` (single-harness entry point), `bench/runner.js` (seed → retrieve → metrics orchestration), `bench/baselines.js` (ladder / bm25only / recency / random comparison), `bench/harness/seeder.js` (conversation-to-state seeder), `bench/loaders/locomo.js` + `index.js` (LoCoMo JSON parser), `bench/metrics/retrieval.js` (precision@k, recall@k, MRR), `bench/sweeps/_driver.js` (coordinate-descent driver), `bench/sweeps/{tau,graph,consolidation,bm25}.js` (four knob sweeps), `bench/baselines/{bm25only,recency,random}.js` (three baseline retrievers), `docs/bench/baseline.json` (measured-values artifact with FLAT/DEFERRED status), `tests/integration/bench/cli-mounts-wired.test.js` (grep invariant across 6 bench entry points), `tests/integration/bench/baseline-json.test.js` (schema validator for baseline.json). 5 smoke writeups produced (4 sweeps + 1 baseline comparison, all untracked).
