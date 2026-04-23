@@ -10,3 +10,6 @@ export const BASELINES = [
     { id: 'recency', fn: recency },
     { id: 'random', fn: random },
 ];
+
+/** Canonical IDs including the ladder. Python-side Modal dispatch iterates this. */
+export const BASELINE_IDS = ['ladder', 'bm25only', 'recency', 'random'];

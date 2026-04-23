@@ -131,6 +131,143 @@ def run_point(overrides_json: str) -> str:
     return result.stdout.strip()
 
 
+@app.function(
+    image=image,
+    volumes={"/data": volume},
+    secrets=[env_secret],
+    timeout=600,
+    memory=4096,
+)
+def run_baseline_point(retriever_id: str) -> str:
+    """Run one baseline retriever over the full corpus.
+
+    Args:
+        retriever_id: one of BASELINE_IDS ("ladder", "bm25only", "recency", "random").
+
+    Returns:
+        JSON string with { retrieverId, metrics, latencyMs, runCount, wallMs, envSnapshot }.
+    """
+    import os
+    import subprocess
+
+    repo_cache = "/repo/bench/.cache"
+    os.makedirs(repo_cache, exist_ok=True)
+    corpus_link = os.path.join(repo_cache, "locomo10.json")
+    cache_link = os.path.join(repo_cache, "extractions")
+    if not os.path.exists(corpus_link):
+        os.symlink("/data/locomo10.json", corpus_link)
+    if not os.path.exists(cache_link):
+        os.symlink("/data/extractions", cache_link)
+
+    env = os.environ.copy()
+    env["STARMEM_RETRIEVER_ID"] = retriever_id
+
+    result = subprocess.run(
+        ["node", "bench/baselines/_modal-point.js"],
+        cwd="/repo",
+        capture_output=True,
+        text=True,
+        check=False,
+        env=env,
+    )
+    if result.returncode != 0:
+        import json as _json
+        return _json.dumps({
+            "error": "node subprocess failed",
+            "retrieverId": retriever_id,
+            "returncode": result.returncode,
+            "stderr": result.stderr,
+            "stdout_tail": result.stdout[-2000:] if result.stdout else "",
+        }, indent=2)
+    return result.stdout.strip()
+
+
+BASELINE_IDS = ["ladder", "bm25only", "recency", "random"]
+
+
+@app.function(
+    image=image,
+    volumes={"/data": volume},
+    secrets=[env_secret],
+    timeout=1800,
+    memory=4096,
+)
+def run_baselines() -> dict:
+    """Fan out baseline retrievers to parallel containers.
+
+    Returns:
+        Dict with keys:
+            - report (str): rendered Markdown comparison table.
+            - result_json (str): JSON-serialized payload (all 4 baselines' metrics).
+            - run_dir (str): path inside the Modal Volume.
+    """
+    import json
+    import os
+    from datetime import datetime
+
+    point_results = list(run_baseline_point.map(BASELINE_IDS))
+    points = [json.loads(pr) for pr in point_results]
+
+    ts = datetime.utcnow().strftime("%Y-%m-%dT%H-%M-%SZ")
+    run_dir = f"/data/runs/{ts}-baselines"
+    os.makedirs(run_dir, exist_ok=True)
+
+    result_payload = {
+        "name": "baselines",
+        "timestamp": ts,
+        "points": points,
+    }
+    result_json_str = json.dumps(result_payload, indent=2)
+    with open(f"{run_dir}/result.json", "w") as f:
+        f.write(result_json_str)
+
+    report = render_baselines_report(result_payload)
+    with open(f"{run_dir}/report.md", "w") as f:
+        f.write(report)
+
+    volume.commit()
+
+    return {
+        "report": report,
+        "result_json": result_json_str,
+        "run_dir": run_dir,
+    }
+
+
+def render_baselines_report(payload):
+    """Render the four-retriever comparison as Markdown.
+
+    Columns: retriever, MRR, Coverage, R@5, R@10, latency.
+    Coverage comes from Task 4; if unavailable, emit '—'.
+    """
+    lines = []
+    lines.append(f"# Baselines comparison — {payload['timestamp']}")
+    lines.append("")
+    lines.append("| Retriever | MRR | Coverage | R@5 | R@10 | Latency (ms) |")
+    lines.append("|---|---|---|---|---|---|")
+    for pt in payload["points"]:
+        rid = pt["retrieverId"]
+        m = pt.get("metrics", {})
+        mrr_v = m.get("mrr", float("nan"))
+        cov = m.get("coverage", None)
+        r5 = m.get("recallAtK", {}).get("5", float("nan"))
+        r10 = m.get("recallAtK", {}).get("10", float("nan"))
+        lat = pt.get("latencyMs", float("nan"))
+        cov_cell = f"{cov:.4f}" if isinstance(cov, (int, float)) else "—"
+        lines.append(
+            f"| `{rid}` | {mrr_v:.4f} | {cov_cell} | {r5:.4f} | {r10:.4f} | {lat:.1f} |"
+        )
+    lines.append("")
+    # Structural invariant
+    ladder = next((p for p in payload["points"] if p["retrieverId"] == "ladder"), None)
+    bm25 = next((p for p in payload["points"] if p["retrieverId"] == "bm25only"), None)
+    if ladder and bm25:
+        delta = ladder["metrics"]["mrr"] - bm25["metrics"]["mrr"]
+        verdict = "PASS" if delta >= -0.02 else "FAIL"
+        lines.append(f"**Structural invariant (ladder ≥ bm25only − 0.02):** ladder_mrr − bm25only_mrr = {delta:+.4f} → **{verdict}**")
+    return "\n".join(lines)
+
+
 ABS_DELTA_FLOOR = 0.005
 """Below this absolute Δmetric/Δknob on every point, the axis is considered
 flat and no elbow is proposed. Field-validated against STARmem 9.5 false
@@ -1510,6 +1647,10 @@ def main(
                 --local-out docs/bench/runs
             → also mirrors report.md + result.json to the host dir
               (independent of the Modal Volume copy at /data/runs/<ts>-<sweep>/)
+
+        modal run bench/modal/sweep_app.py --mode run-baselines --local-out docs/bench/baselines
+            → fans out 4 baseline retrievers to parallel Modal containers,
+              writes {ts}-baselines.{md,json} to host dir
     """
     if mode == "hello":
         print(json.dumps(hello.remote(), indent=2))
@@ -1528,6 +1669,21 @@ def main(
                 f"<!-- mirrored to host: {out / stem}.json -->",
                 file=__import__("sys").stderr,
             )
+    elif mode == "run-baselines":
+        baselines_out = run_baselines.remote()
+        report = baselines_out["report"]
+        result_json_str = baselines_out["result_json"]
+        run_dir = baselines_out["run_dir"]
+        print(report)
+        print(f"\n<!-- saved to Modal Volume: {run_dir} -->", file=__import__("sys").stderr)
+        if local_out:
+            from pathlib import Path as _Path
+            out = _Path(local_out).expanduser()
+            out.mkdir(parents=True, exist_ok=True)
+            stem = os.path.basename(run_dir)
+            (out / f"{stem}.md").write_text(report)
+            (out / f"{stem}.json").write_text(result_json_str)
+            print(f"<!-- mirrored to host: {out / stem}.{{md,json}} -->", file=__import__("sys").stderr)
     elif mode == "run-sweep":
         sweep_out = run_sweep.remote(sweep_name, synthetic)
         report = sweep_out["report"]
@@ -1545,4 +1701,4 @@ def main(
             (out / f"{stem}.json").write_text(result_json_str)
             print(f"<!-- mirrored to host: {out / stem}.{{md,json}} -->", file=__import__("sys").stderr)
     else:
-        print(f"Unknown mode: {mode!r}. Expected 'hello', 'run-point', or 'run-sweep'.")
+        print(f"Unknown mode: {mode!r}. Expected 'hello', 'run-point', 'run-baselines', or 'run-sweep'.")
