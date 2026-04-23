@@ -186,7 +186,7 @@ def run_baseline_point(retriever_id: str) -> str:
     image=image,
     volumes={"/data": volume},
     secrets=[env_secret],
-    timeout=600,
+    timeout=1800,
     memory=4096,
 )
 def run_batchsize_point(conv_idx: int, batch_size: int) -> str:
