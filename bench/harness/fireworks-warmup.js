@@ -316,8 +316,8 @@ async function runContinue(auth, submissionId) {
     const newJobId = `${manifest.submissionId}-c${continueN}`;
     const newOutputDatasetId = `${newJobId}-out`;
 
-    // Create output dataset
-    await createDataset(auth, newOutputDatasetId);
+    // Do NOT pre-create the output dataset — Fireworks creates it when the
+    // continuation job completes. See advanceFromUploaded comment.
 
     // Create job with continueFrom
     await createJob(auth, newJobId, {
@@ -351,7 +351,9 @@ async function runContinue(auth, submissionId) {
 async function advanceFromEnumerated(auth, manifest) {
     // Upload JSONL
     const jsonlPath = path.join(submissionDir(manifest.submissionId), 'input.jsonl');
-    await createDataset(auth, manifest.inputDatasetId);
+    // exampleCount is required by Fireworks on dataset create for userUploaded
+    // datasets and must match the JSONL row count of the subsequent upload.
+    await createDataset(auth, manifest.inputDatasetId, { exampleCount: manifest.batchCount });
     await uploadJsonl(auth, manifest.inputDatasetId, jsonlPath);
 
     manifest.state = nextState('enumerated');
@@ -365,7 +367,9 @@ async function advanceFromUploaded(auth, manifest) {
     const jobId = manifest.submissionId;
     const outputDatasetId = `${jobId}-out`;
 
-    await createDataset(auth, outputDatasetId);
+    // Do NOT pre-create the output dataset. Fireworks batch jobs create it
+    // themselves on successful completion; pre-creating as userUploaded-empty
+    // fails validation later. We just reserve the name.
     await createJob(auth, jobId, {
         model: manifest.model,
         inputDatasetId: manifest.inputDatasetId,

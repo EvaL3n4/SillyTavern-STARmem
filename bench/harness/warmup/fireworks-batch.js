@@ -101,11 +101,43 @@ async function _request(auth, path, opts = {}) {
  * @param {string} datasetId
  * @returns {Promise<any>}
  */
-export async function createDataset(auth, datasetId) {
+/**
+ * Create a user-uploaded dataset placeholder that a subsequent uploadJsonl
+ * call will populate.
+ *
+ * Fireworks requires `exampleCount` on dataset create (confirmed via 400
+ * `error validating dataset: example_count is required for uploaded datasets`
+ * on 2026-04-24). The count must match the number of JSONL rows uploaded
+ * next, or validation during the batch job's VALIDATING state fails.
+ *
+ * @param {{accountId: string, apiKey: string}} auth
+ * @param {string} datasetId
+ * @param {object} [opts]
+ * @param {number} [opts.exampleCount]  Required for user-uploaded datasets; the
+ *     JSONL row count. Fireworks rejects the create otherwise.
+ */
+export async function createDataset(auth, datasetId, opts = {}) {
+    const { exampleCount } = opts;
+    if (exampleCount !== undefined
+        && (!Number.isInteger(exampleCount) || exampleCount <= 0)) {
+        throw new Error(
+            `fireworks-batch.createDataset: exampleCount must be a positive integer, got ${exampleCount}`,
+        );
+    }
+    /** @type {Record<string, unknown>} */
+    const dataset = { userUploaded: {} };
+    /** @type {Record<string, unknown>} */
+    const body = { datasetId, dataset };
+    if (exampleCount !== undefined) {
+        // Fireworks wants exampleCount at the TOP LEVEL of the request body
+        // (mirrors gatewayDataset.exampleCount in the OpenAPI schema);
+        // transmitted as a stringified int64 per proto convention.
+        body.exampleCount = String(exampleCount);
+    }
     return _request(auth, `/accounts/${auth.accountId}/datasets`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ datasetId, dataset: { userUploaded: {} } }),
+        body: JSON.stringify(body),
     });
 }
 

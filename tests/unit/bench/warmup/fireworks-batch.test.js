@@ -34,7 +34,7 @@ describe('fireworks-batch client', () => {
             };
         });
 
-        await createDataset(AUTH, 'my-dataset');
+        await createDataset(AUTH, 'my-dataset', { exampleCount: 42 });
 
         expect(calls).toHaveLength(1);
         expect(calls[0].url).toBe('https://api.fireworks.ai/v1/accounts/test-account/datasets');
@@ -43,6 +43,20 @@ describe('fireworks-batch client', () => {
         const body = JSON.parse(calls[0].opts.body);
         expect(body.datasetId).toBe('my-dataset');
         expect(body.dataset).toEqual({ userUploaded: {} });
+        // Fireworks requires exampleCount on user-uploaded dataset create.
+        // Transmitted as a stringified int64 per the gRPC proto schema.
+        expect(body.exampleCount).toBe('42');
+    });
+
+    test('createDataset rejects invalid exampleCount', async () => {
+        global.fetch = jest.fn();
+        await expect(
+            createDataset(AUTH, 'x', { exampleCount: 0 }),
+        ).rejects.toThrow(/positive integer/);
+        await expect(
+            createDataset(AUTH, 'x', { exampleCount: 'two' }),
+        ).rejects.toThrow(/positive integer/);
+        expect(global.fetch).not.toHaveBeenCalled();
     });
 
     test('createDataset throws retryable=false on 4xx', async () => {
