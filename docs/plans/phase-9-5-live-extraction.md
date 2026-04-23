@@ -1260,7 +1260,19 @@ Use `memory` or `hindsight_retain` to record:
 
 ---
 
-**Task 8 — full bm25 sweep (16 points) — complete. Three findings:**
+**Task 9 — full-LoCoMo baseline comparison — complete. Three findings:**
+
+1. **Structural invariant PASS decisively.** ladder MRR 0.8057 > bm25only 0.6898 > recency 0.2703 > random 0.2690. ΔMRR ladder-vs-bm25only = +0.1159, ~6× the 0.02 amendment threshold. Decision 8's invariant-gate is satisfied with enormous headroom. No Phase 11 scorer-chain investigation needed.
+
+2. **Per-category ordering is uniform.** Every one of 5 QA categories reproduces `ladder > bm25only > {recency, random}`. Category 4 (841 items, biggest) drives most of the overall delta; Category 3 (96 items) is hardest for everyone (ladder 0.684 vs synthetic-predicted 0.7+). Nowhere does bm25only beat ladder — exactly what "ladder is structurally correct" looks like.
+
+3. **9.4.8 numbers reconfirmed within noise.** baseline.json's `headlineMetrics.ladder` had MRR 0.81 from the 9.4.8 validation config; full-live gives 0.8057. Δ < 0.005, well within measurement noise. Live extraction on full LoCoMo does not materially change the ladder's ranking quality — it just populates tags (per Task 8) and produces different extraction distribution (per Task 4/7) without disturbing the retrieval layer's elbow surface.
+
+**Red flag for Phase 11:** wall-clock was 30+ min, not 5-10 as the plan predicted. Sequential over 4 retrievers × 1986 QA × full-LoCoMo seed. Modal parallelization across 4 containers would cut it to ~8 min — filed above.
+
+---
+
+
 
 1. **Tags populated at 100% under live Gemma** (up from 0% under rule-based). Tags-populated-rate probe confirms 227/227 episodic entries carry non-empty tags. `TAG_BOOST` is no longer structurally blind — the scorer has something to score against. If the knob is flat, it's because ranking genuinely doesn't care, not because there's nothing to rank.
 
@@ -1310,6 +1322,7 @@ Phase 11 candidates identified during 9.5 dispatch. Task 11's retro expands thes
 - **BATCH_SIZE consolidation round — budget-aware redesign.** 9.5 attempted the deferred 9.4.9 round twice under live extraction (run_point timeout=600s and 1500s). Both hit `FunctionTimeoutError` — first at ~470 live Nano-GPT calls, second at ~1200+. Every BATCH_SIZE grid value materializes ~94 conversations × batched live extraction at ~1.3s/call; 9.4.9's "~20% miss rate" budget estimate was wrong by ~10× (cache-key change = 100% miss for that seed pass, not 20%). No cache writes persisted either time — `volume.commit()` only fires at run_point exit, and SIGKILL skips the error path. Redesign options: (a) mid-subprocess periodic commits via threading (commit every 60s so SIGKILL loses ≤1 min); (b) conversation-level splitting so each Modal call is bounded (5 convs × 5 BATCH_SIZE values = 25 containers); (c) cheaper stress-test model (Gemma 4 1B A1B for 10× speedup if the dedup signal is the only question). Field-surfaced 2026-04-22 during Task 7 first and second dispatches.
 
 - **`--local-out` parity for `run-point` mode.** `bench/modal/sweep_app.py`'s `@app.local_entrypoint()` handles `--local-out` only under `mode == "run-sweep"` (lines ~1311–1325). Single-point diagnostic runs via `run-point` discard the JSON payload to stdout and don't mirror to `docs/bench/runs/`. ~8 LOC fix: extend the `run-point` branch to write `run-point-YYYY-MM-DDThh-mm-ssZ.json` when `local_out` is set. Keeps the "every Modal dispatch includes `--local-out`" convention durable against future Azure-hiccup retries. Field-surfaced 2026-04-22 during Task 4 smoke.
+- **Baselines sweep onto Modal substrate.** 9.5 Task 9 baseline comparison took 30+ min wall-clock running locally (sequential over 4 retrievers × 1986 QA items × full-LoCoMo seed). Modal parallelization across 4 containers would cut wall-clock to ~8 min. Requires a new `SWEEP_CONFIGS["baselines"]` entry or a distinct `--mode run-baselines` dispatch since baselines aren't a parameter sweep — they're a retriever-function swap. Field-surfaced 2026-04-23 during Task 9.
 - **Scorer-chain investigation** (conditional on Task 9 inversion — see Decision 8).
 - **Coverage-weighted retrieval metric** (inherited from 9.4.9; `recall@k × coverage` or similar to neutralize subset-selection bias on graph-structure knobs).
 - **Tier 2 gating demolition** (inherited from 9.4.8/9.4.9; `TIER2_TAU_GAP=10` effectively disables Tier 2; ladder could simplify to always-Tier-3-as-Tier-2-seed).
@@ -1326,7 +1339,7 @@ Phase 11 candidates identified during 9.5 dispatch. Task 11's retro expands thes
 - [x] Task 6: Graph sweep (6 rounds) live writeup, per-round verdicts. *(27 points across 6 rounds, 2026-04-22T19-35-03Z. λ1/λ2 inert third-time repro. beam=3 borderline clean. seeds_k/edge_cap/cooccurrence all coverage-bias HOLD'd. Zero amendments shipped — coverage guard did its job.)*
 - [x] Task 7: Consolidation sweep + EXTRACT_MAX_TOKENS observation. *(DEDUP round 2026-04-22T19-46-24Z — Branch C fires fourth-time, updateRate 0.007-0.045 across thresholds. BATCH_SIZE round deferred to Phase 11 after Branch D fired twice. EXTRACT_MAX_TOKENS observation pending — can be done from warm cache.)*
 - [x] Task 8: BM25 sweep with tags-populated-rate reported. *(16 points, 2026-04-23T04-27-08Z. Tags 100% populated under live Gemma. Grid Branch-C flat (MRR spread 0.0065 < 0.02). Elbow detector false-positive reproduces — bug filed for Phase 11.)*
-- [ ] Task 9: Baseline comparison with structural invariant verdict.
+- [x] Task 9: Baseline comparison with structural invariant verdict. *(4 retrievers, full LoCoMo, 2026-04-23 at commit f02b1a5. ladder 0.8057 > bm25only 0.6898 > recency 0.2703 > random 0.2690. Invariant PASS by +0.1159 MRR, 6× threshold. 30+ min wall-clock — Modal parallelization filed for Phase 11.)*
 - [ ] Task 10: New hops + relw sweep drivers + writeups.
 - [ ] Task 11: `baseline.json` status=measured, retro written, all artifacts committed.
 - [ ] No tests regress from 9.4.9 close (816 tests green minimum).
