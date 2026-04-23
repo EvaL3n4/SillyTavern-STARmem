@@ -182,17 +182,26 @@ export async function uploadJsonl(auth, datasetId, localPath) {
 export async function createJob(auth, jobId, opts) {
     const { model, inputDatasetId, outputDatasetId, inferenceParameters, continueFromJobId } = opts;
 
+    // Fireworks' gateway keeps proto field names on the wire (snake_case).
+    // The documented field is `inferenceParameters` in OpenAPI but the proto
+    // name is `inference_parameters`; same story for nested fields
+    // (`max_tokens`, `top_p`, `top_k`). Confirmed during dataset-create
+    // smoke triage on 2026-04-24. See bench/harness/warmup/fireworks-batch.js
+    // createDataset docstring for the same class of drift.
     const body = {
         model,
-        inputDatasetId: `accounts/${auth.accountId}/datasets/${inputDatasetId}`,
-        outputDatasetId: `accounts/${auth.accountId}/datasets/${outputDatasetId}`,
+        input_dataset_id: `accounts/${auth.accountId}/datasets/${inputDatasetId}`,
+        output_dataset_id: `accounts/${auth.accountId}/datasets/${outputDatasetId}`,
     };
 
     if (inferenceParameters) {
-        body.inferenceParameters = inferenceParameters;
+        // Caller passes a proto-shape object (snake_case keys: max_tokens,
+        // temperature, top_p, top_k, n). We forward it as-is so caller
+        // mistakes surface as Fireworks 400s, not silent defaults.
+        body.inference_parameters = inferenceParameters;
     }
     if (continueFromJobId) {
-        body.continueFrom = `accounts/${auth.accountId}/batchInferenceJobs/${continueFromJobId}`;
+        body.continue_from = `accounts/${auth.accountId}/batchInferenceJobs/${continueFromJobId}`;
     }
 
     return _request(auth, `/accounts/${auth.accountId}/batchInferenceJobs?batchInferenceJobId=${jobId}`, {

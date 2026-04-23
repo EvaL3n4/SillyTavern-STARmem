@@ -164,8 +164,9 @@ describe('fireworks-batch client', () => {
         expect(calls[0].opts.method).toBe('POST');
         const body = JSON.parse(calls[0].opts.body);
         expect(body.model).toBe('accounts/fireworks/models/llama-v3p3-70b-instruct');
-        expect(body.inputDatasetId).toBe('accounts/test-account/datasets/input-ds');
-        expect(body.outputDatasetId).toBe('accounts/test-account/datasets/output-ds');
+        // Fireworks proto uses snake_case on the wire.
+        expect(body.input_dataset_id).toBe('accounts/test-account/datasets/input-ds');
+        expect(body.output_dataset_id).toBe('accounts/test-account/datasets/output-ds');
     });
 
     test('createJob with continueFromJobId includes fully-qualified continueFrom ref', async () => {
@@ -188,7 +189,8 @@ describe('fireworks-batch client', () => {
         });
 
         const body = JSON.parse(calls[0].opts.body);
-        expect(body.continueFrom).toBe('accounts/test-account/batchInferenceJobs/prev-job-789');
+// Fireworks proto uses snake_case: continue_from, not continueFrom.
+        expect(body.continue_from).toBe('accounts/test-account/batchInferenceJobs/prev-job-789');
     });
 
     test('getJob returns parsed JSON on 200', async () => {

@@ -319,12 +319,18 @@ async function runContinue(auth, submissionId) {
     // Do NOT pre-create the output dataset — Fireworks creates it when the
     // continuation job completes. See advanceFromUploaded comment.
 
-    // Create job with continueFrom
+    // Create job with continueFrom. Same inferenceParameters pinning as
+    // advanceFromUploaded — the continuation job is a fresh job on Fireworks
+    // and carries its own job-level defaults.
     await createJob(auth, newJobId, {
         model: manifest.model,
         inputDatasetId: manifest.inputDatasetId,
         outputDatasetId: newOutputDatasetId,
         continueFromJobId: last.jobId,
+        inferenceParameters: {
+            max_tokens: manifest.maxTokens,
+            temperature: 0,
+        },
     });
 
     // Append to jobChain
@@ -370,10 +376,21 @@ async function advanceFromUploaded(auth, manifest) {
     // Do NOT pre-create the output dataset. Fireworks batch jobs create it
     // themselves on successful completion; pre-creating as userUploaded-empty
     // fails validation later. We just reserve the name.
+    //
+    // inferenceParameters pins temperature=0 at the JOB level as defense in
+    // depth. Our per-row body already sets max_tokens + temperature=0, but
+    // the job-level defaults surface in the Fireworks dashboard as "Not set"
+    // if omitted, and any future code path that drops the per-row override
+    // would fall back to Fireworks' default (~1.0) — silently breaking the
+    // deterministic-extraction contract. Proto-shape keys (snake_case).
     await createJob(auth, jobId, {
         model: manifest.model,
         inputDatasetId: manifest.inputDatasetId,
         outputDatasetId,
+        inferenceParameters: {
+            max_tokens: manifest.maxTokens,
+            temperature: 0,
+        },
     });
 
     manifest.jobChain.push({
