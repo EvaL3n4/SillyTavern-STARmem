@@ -2159,77 +2159,300 @@ hot-fix)."
 
 ## Task 6: First live 4-retriever baselines on both corpora
 
-**Objective:** Execute the first live dispatch of Phase 11's `--mode run-baselines` Modal surface on both LoCoMo and LongMemEval-S. Document numbers, compare against Phase 11's headline metrics, land a `docs/bench/baseline.json` refresh with per-corpus entries.
+**Objective:** Execute the first live 4-retriever baselines dispatch on LongMemEval-S via Phase 11's `--mode run-baselines` Modal surface, and refresh `docs/bench/baseline.json` into a multi-corpus shape. LoCoMo baselines already landed pre-Task 3 at commit `0e9c17d` (see `docs/bench/baselines/2026-04-23-comparison.md` + the existing `headlineMetrics` block in `baseline.json`); Task 6's real work is the LongMemEval-S dispatch + the JSON restructure.
 
-**Owner:** Eva (Modal dispatch) + Controller (synthesis, baseline.json write, commits). Parallel dispatch pattern: Eva's LoCoMo baselines run is already in flight from earlier in the conversation; Task 6 waits on it + dispatches LongMemEval-S baselines once Task 5 lands.
+**Owner:** Eva (Modal dispatch) + Controller (synthesis, baseline.json write, commits).
+
+**Execution status (2026-04-23 preflight, 9 Task-1-to-5 commits deep):**
+- [x] LoCoMo baselines already landed at commit `0e9c17d`, report at `docs/bench/baselines/2026-04-23-comparison.md`, numbers already written to `baseline.json`'s `headlineMetrics` + `structuralInvariants` blocks. No re-dispatch needed.
+- [ ] LongMemEval-S baselines dispatch (cold extraction cache, see Finding 2 below).
+- [ ] `baseline.json` multi-corpus restructure (no validator changes — LoCoMo values stay at root, LongMemEval-S gets a new `perCorpus.longmemevalS` block).
 
 **Files:**
-- Create: `docs/bench/baselines/2026-04-XX-locomo-live.md` — 4-retriever baselines report for LoCoMo
-- Create: `docs/bench/baselines/2026-04-XX-longmemeval-s-live.md` — 4-retriever baselines report for LongMemEval-S (includes `byTaskType` slice)
-- Modify: `docs/bench/baseline.json` — Add `perCorpus: { 'locomo': {...}, 'longmemeval-s': {...} }` structure; preserve existing `ladder`/`bm25only`/`recency`/`random` at root for backward compat with the schema validator at `tests/integration/bench/baseline-json.test.js`
+- Create: `docs/bench/baselines/2026-04-XX-longmemeval-s-live.md` — 4-retriever baselines report for LongMemEval-S (includes `byTaskType` slice from Task 4's renderer work)
+- Modify: `docs/bench/baseline.json` — Update `corpus` + `statusReason` to reflect multi-corpus; add `perCorpus.longmemevalS.{ladder,bm25only,recency,random}` block; keep LoCoMo values at `headlineMetrics` + `structuralInvariants` root for schema validator compatibility (no validator edit needed).
+- **Not needed (preflight-verified):**
+  - ~~LoCoMo report creation~~ — already exists as `docs/bench/baselines/2026-04-23-comparison.md`.
+  - ~~`tests/integration/bench/baseline-json.test.js` extension~~ — validator asserts `headlineMetrics.{4 retrievers}` + `structuralInvariants.{ladderVsRandom, ladderVsBm25Only}`; keeping LoCoMo at those paths leaves all assertions passing. Adding a sibling `perCorpus` key doesn't violate any assertion (it's an additional property, not a replacement).
 
 **Preflight:**
 
-1. **Eva's LoCoMo baselines dispatch status.** If still running, wait. If complete, download the report from Modal Volume or locally-mirrored output.
-2. **LongMemEval-S cache warming.** Before dispatching baselines, warm the extraction cache one conversation at a time:
+1. **Confirm LoCoMo artifact is intact.** `ls docs/bench/baselines/2026-04-23-comparison.md` should resolve; the file is 101 lines, contains overall + per-category tables. Numbers in the current `baseline.json::headlineMetrics` must match the report's top-line row (ladder MRR 0.8057, bm25only 0.6898, recency 0.2703, random 0.2690). If they drift, fix the report before proceeding — `baseline.json` is source of truth after Phase 11 close.
 
-```bash
-# From Eva's environment, NOT agent sandbox:
-modal run bench/modal/sweep_app.py --mode run-point --corpus longmemeval-s --overrides-json '{}' --local-out docs/bench/runs
-# This populates bench/.cache/extractions/ with LongMemEval-S-shaped keys on first run
-# (Modal Volume persists across dispatches).
-# Expected: slow first dispatch (9+ hours of container-seconds sharded over 32 containers ≈ 15-30 min wall-clock)
-# Subsequent runs hit the cache (~1-2 min wall-clock).
+2. **LongMemEval-S has no extraction cache yet.** This corpus is being introduced in Phase 12; the `bench/.cache/extractions/` entries from 9.4.8 onward are LoCoMo-keyed (on `sha256(model|messages|maxTokens)` where the message content is LoCoMo-shaped). Dispatching `run-baselines` cold will trigger live Nano-GPT extraction for every LongMemEval-S item on the first retriever to hit a given (conversation, fact-batch) tuple; subsequent retrievers within the same dispatch hit the Volume-persisted cache.
+
+   **Budget arithmetic (corrected from Decision 10's LoCoMo-shaped estimate):**
+   - Corpus size: 500 items (Decision 8 flatten-to-single-session shape).
+   - Expected extraction calls per item: ~3–5 (varies by session length after flatten; closer to LoCoMo's per-item shape than its per-conversation shape because each LongMemEval-S item is treated as a single conversation).
+   - `run_baseline_point` runs in a single Modal container with `timeout=1800s` (confirmed at `bench/modal/sweep_app.py` line ~143). Extraction happens *inside* this container via the `node bench/baselines/_modal-point.js` subprocess — **not** parallelized across Modal containers at extraction time. This is a serial per-container run, fanning out only across the 4 retriever IDs via `run_baseline_point.map()`.
+   - At ~4 calls/item × 500 items × ~1.3s/call ≈ 2600s of live-Nano-GPT time in the worst case. **This blows the 1800s container timeout.**
+
+   **Two workable options, pick before dispatch:**
+
+   (a) **Warm the cache first via a `run-point` pre-pass.** One `modal run --mode run-point --corpus longmemeval-s --overrides-json '{}'` seeds the cache for `bm25only`/`recency`/`random` (which reuse the same extraction output as `ladder`). `run_point` has its own `timeout=1800s` but the same single-container-serial constraint applies, so even this pre-pass may timeout on a 500-item corpus. Consider splitting the corpus into halves via a temporary `overrides-json` slicing knob, or adjusting `timeout` on `run_point` to 3600s for the one-shot warm-up dispatch.
+
+   (b) **Pre-warm via a conversation-split sweep** (Phase 11 Task 6's Option B pattern). Add an ephemeral `run_longmemeval_warmup_point(item_idx)` that extracts for a single item in a bounded container, `.map()` over `[0..499]`, let Modal parallelize across 32 free-tier containers. Expected wall-clock: ~2–4 min. Durable if the timeout hits mid-stream because per-item containers land Volume commits on clean per-item exit.
+
+   **Decision (2026-04-23 preflight):** Option (b) — matches the Phase-11-validated pattern (commit `e28b598` + hot-fixes `344e88f`/`6c7fbaa`), per-item Volume commits survive SIGKILL, and the ~30 LOC becomes reusable infrastructure for any future corpus that needs fresh cache warming without blowing a `run_point` timeout. Full sketch below.
+
+**Pre-step: Cache warm-up via conversation-level split (Option B sketch)**
+
+**Files to add:**
+- `bench/modal/sweep_app.py` — new `run_longmemeval_warmup_point` (decorated per-cell) + `run_longmemeval_warmup` (decorated top-level orchestrator, called via `modal run ... --mode warmup-longmemeval`).
+- `bench/harness/_modal-warmup-point.js` — Node per-item extraction script. Reuses Task 3's `longmemeval-s` adapter + Task 2's `CorpusAdapter` loading path; runs extraction only, emits stats to stdout.
+
+**`bench/modal/sweep_app.py` additions** (insert near `run_baseline_point` / `run_batchsize_point` so the sibling pattern is visually adjacent):
+
+```python
+@app.function(
+    image=image,
+    volumes={"/data": volume},
+    secrets=[env_secret],
+    timeout=600,   # per-item; ~5 LLM calls × ~1.3s ≈ 7s in the worst realistic case, huge headroom for network jitter
+    memory=4096,
+)
+def run_longmemeval_warmup_point(item_idx: int) -> str:
+    """Warm the extraction cache for a single LongMemEval-S item.
+
+    Executes extraction (no retrieval) on one item via Task 3's adapter
+    path, landing cache entries on /data/extractions/ via the repo-cache
+    symlink. Commits the Volume before return so the write survives any
+    later container crash in the fan-out.
+
+    Per sweep-cache-invalidation-audit Option A + B combined: per-item
+    granularity (Option B) + per-cell commit on clean exit (Option A) =
+    maximum durability under SIGKILL.
+
+    Returns:
+        JSON string { itemIdx, extractionCalls, cacheHits, cacheMisses,
+                      factCount, wallMs }.
+    """
+    import os
+    import subprocess
+
+    repo_cache = "/repo/bench/.cache"
+    os.makedirs(repo_cache, exist_ok=True)
+
+    # Mirror run_baseline_point's symlink setup — same path both for
+    # consistency with siblings and because the adapter probes the
+    # repo-cache paths.
+    corpus_link = os.path.join(repo_cache, "locomo10.json")
+    if not os.path.exists(corpus_link):
+        os.symlink("/data/locomo10.json", corpus_link)
+    longmemeval_link = os.path.join(repo_cache, "longmemeval_s_cleaned.json")
+    if not os.path.exists(longmemeval_link):
+        os.symlink("/data/longmemeval_s_cleaned.json", longmemeval_link)
+    cache_link = os.path.join(repo_cache, "extractions")
+    if not os.path.exists(cache_link):
+        os.symlink("/data/extractions", cache_link)
+
+    env = os.environ.copy()
+    env["STARMEM_BENCH_CORPUS"] = "longmemeval-s"
+    env["STARMEM_WARMUP_ITEM_IDX"] = str(item_idx)
+
+    result = subprocess.run(
+        ["node", "bench/harness/_modal-warmup-point.js"],
+        cwd="/repo",
+        capture_output=True,
+        text=True,
+        check=False,
+        env=env,
+    )
+
+    # Commit cache writes BEFORE returning the payload. If the next point
+    # in the fan-out SIGKILLs, this item's extractions still survive on
+    # the Volume. Matches the Option A pattern from the skill.
+    volume.commit()
+
+    if result.returncode != 0:
+        import json as _json
+        return _json.dumps({
+            "error": "warmup subprocess failed",
+            "itemIdx": item_idx,
+            "returncode": result.returncode,
+            "stderr": result.stderr,
+            "stdout_tail": result.stdout[-2000:] if result.stdout else "",
+        }, indent=2)
+    return result.stdout.strip()
+
+
+@app.function(
+    image=image,
+    volumes={"/data": volume},
+    secrets=[env_secret],
+    timeout=1800,
+    memory=4096,
+)
+def run_longmemeval_warmup(corpus_size: int = 500) -> dict:
+    """Fan out per-item LongMemEval-S cache warm-up across bounded containers.
+
+    Top-level Modal entry (decorated): called via
+    `modal run bench/modal/sweep_app.py --mode warmup-longmemeval`.
+
+    Not a sub-orchestrator — does NOT match the Phase 11 Task 6 hot-fix
+    pattern that removed @app.function from run_graph_sweep et al. Those
+    are called from INSIDE run_sweep's open container context; this one
+    is the entry itself and must be a modal.Function so Modal spawns
+    the container that will drive the .map() fan-out.
+
+    Args:
+        corpus_size: number of LongMemEval-S items to warm.
+                     Default 500 = full corpus post-flatten (Decision 8).
+
+    Returns:
+        Summary dict with { warmedCount, failedCount, wallMs,
+                            totalExtractionCalls, totalCacheHits,
+                            failures: [...] }.
+    """
+    import json
+    import time
+
+    t0 = time.time()
+    results_raw = list(run_longmemeval_warmup_point.map(range(corpus_size)))
+
+    warmed = []
+    failed = []
+    total_calls = 0
+    total_hits = 0
+    for raw in results_raw:
+        parsed = json.loads(raw)
+        if "error" in parsed:
+            failed.append(parsed)
+        else:
+            warmed.append(parsed)
+            total_calls += parsed.get("extractionCalls", 0)
+            total_hits += parsed.get("cacheHits", 0)
+
+    return {
+        "warmedCount": len(warmed),
+        "failedCount": len(failed),
+        "totalExtractionCalls": total_calls,
+        "totalCacheHits": total_hits,
+        "wallMs": int((time.time() - t0) * 1000),
+        "failures": failed[:10],  # cap for log legibility on Modal's output tail
+    }
 ```
 
-Per Decision 10 preflight arithmetic (§Task 3): cold first-pass extraction is ~9 hours of A10G container-seconds sharded over 32 free-tier containers. Eva budgets for this.
+**Main CLI hook** in the existing `if mode == ...` block (insert alongside `run-baselines` / `run-sweep`):
 
-3. **Schema validator compatibility.** Before editing `baseline.json`, read `tests/integration/bench/baseline-json.test.js` to confirm the existing validator schema (Phase 9's); extend it in Task 6's test-update step if the new `perCorpus` nesting fails validation.
-
-**Step 1: Execute LoCoMo baselines dispatch**
-
-(Eva's ongoing dispatch; controller passive.)
-
-```bash
-modal run bench/modal/sweep_app.py --mode run-baselines --corpus locomo --local-out docs/bench/baselines
+```python
+elif mode == "warmup-longmemeval":
+    result = run_longmemeval_warmup.remote(corpus_size=corpus_size or 500)
+    print(json.dumps(result, indent=2))
 ```
 
-Expected artifact: `docs/bench/baselines/<timestamp>-baselines.md` + `.json` pair. Rename to `2026-04-XX-locomo-live.md`/`.json` (consistent with existing sweep naming convention).
+Plumb `corpus_size` through the same argparse path as `corpus` / `sweep_name`.
+
+**`bench/harness/_modal-warmup-point.js`** (new file, ~40 LOC):
+
+```js
+/**
+ * Warmup point for LongMemEval-S extraction cache.
+ *
+ * Reads one item by index, runs the adapter's extraction path (no
+ * retrieval), and emits cache stats. Meant to be fanned out via
+ * run_longmemeval_warmup_point.map(range(500)) so Modal parallelizes
+ * the first-pass live-LLM cost across 32 free-tier containers.
+ *
+ * Env:
+ *   STARMEM_BENCH_CORPUS=longmemeval-s  (enforced)
+ *   STARMEM_WARMUP_ITEM_IDX=<int>       (0-indexed into the post-flatten corpus)
+ */
+
+import { getAdapter } from '../adapters/registry.js';                   // Task 2
+import { seedConversation } from './seeder.js';                          // existing; longmemeval-s adapter feeds it conversation-shaped items
+import { resetExtractionCacheStats, getExtractionCacheStats } from './extractionCache.js';
+
+const corpus = process.env.STARMEM_BENCH_CORPUS;
+const itemIdx = Number(process.env.STARMEM_WARMUP_ITEM_IDX);
+
+if (corpus !== 'longmemeval-s') {
+    console.error(`warmup-point requires STARMEM_BENCH_CORPUS=longmemeval-s, got '${corpus}'`);
+    process.exit(2);
+}
+if (!Number.isInteger(itemIdx) || itemIdx < 0) {
+    console.error(`warmup-point requires STARMEM_WARMUP_ITEM_IDX as non-negative integer, got '${process.env.STARMEM_WARMUP_ITEM_IDX}'`);
+    process.exit(2);
+}
+
+const t0 = Date.now();
+resetExtractionCacheStats();
+
+const adapter = getAdapter('longmemeval-s');
+const items = await adapter.loadCorpus();
+
+if (itemIdx >= items.length) {
+    console.error(`STARMEM_WARMUP_ITEM_IDX ${itemIdx} out of range (corpus has ${items.length} items)`);
+    process.exit(3);
+}
+
+const item = items[itemIdx];
+
+// Use the same per-item seeding primitive the baselines runner uses — that
+// guarantees cache-key identity between warm-up and subsequent read paths.
+// If Task 3's adapter exposes a different per-item seed entry, swap it in here.
+const seedResult = await seedConversation(item, {
+    chatIdPrefix: `warmup-longmemeval-${itemIdx}`,
+    keepBackend: false,  // discard state; we only care about cache side-effects
+});
+
+const stats = getExtractionCacheStats();
+const wallMs = Date.now() - t0;
+
+process.stdout.write(JSON.stringify({
+    itemIdx,
+    extractionCalls: stats.calls,
+    cacheHits: stats.hits,
+    cacheMisses: stats.misses,
+    factCount: seedResult.factCount ?? null,
+    wallMs,
+}, null, 2) + '\n');
+```
+
+**Preflight notes for the sketch (verify before dispatch):**
+
+1. **Verify `seedConversation` accepts LongMemEval-S-shaped items.** Task 3's adapter should emit conversation-shaped objects (messages[], id, etc.) that `seedConversation` can consume. If the adapter emits a different shape (e.g. `{ sessions: [...] }`), either the warmup should call a different per-item entry or Task 3's adapter needs a `.toConversation(item)` normalizer. **Grep the Task 3 commit (`5cd7e93`) to confirm the emitted shape; the skill rule is "read the actual function signature, don't trust the plan's assumption."**
+2. **Verify `extractionCache.js` exports `resetExtractionCacheStats`/`getExtractionCacheStats`.** These were added in 9.4.8's Modal warm-cache work (per preflight Finding 1 in the Phase 12 retro audit); if the names drift, pick the real export names from `bench/harness/extractionCache.js`.
+3. **Smoke the warmup on 1 item before full fan-out.** Run `modal run bench/modal/sweep_app.py --mode warmup-longmemeval --corpus-size 1` first; confirm non-zero `extractionCalls` + a cache-files-delta on the Volume (can be checked via the existing `hello` mode's `cacheFiles` counter). If calls=0 or the cache-files-delta is 0, the cache-key identity is off and the subsequent 500-item fan-out would be wasted.
+4. **Per-item timeout headroom.** Declared at 600s. LongMemEval-S items post-flatten are typically ≤20 turns with ≤5 extraction calls at ~1.3s each = ~7s expected; even a 3× worst-case stays well under 600s. No need to inflate. Log the observed per-item wallMs in the summary dict to build a real distribution for Phase 13+.
+
+**Expected wall-clock for the full warmup:** 500 items / 32 parallel containers = 16 waves; at ~15-20s per wave (cold-start dominated, not per-item compute) = **~4-5 min total**.
+
+**Expected Nano-GPT cost:** ~500 items × ~4 calls/item × Gemma 4 26B A4B token pricing. Check the current Nano-GPT rate before full dispatch; smoke run's `totalExtractionCalls` × (cost/call) extrapolates to the full corpus budget.
+
+3. **Budget visibility — Nano-GPT API cost.** Live extraction on ~500 items × ~4 calls × Gemma 4 26B A4B pricing is the real-dollar cost driver for this task. Eva runs a small smoke first (≤5 items) to validate the `longmemeval-s` adapter is emitting well-formed extraction inputs before committing the full corpus budget.
+
+**Step 1: LoCoMo baselines — already done**
+
+Pre-Task 3 landing at `0e9c17d`. Report lives at `docs/bench/baselines/2026-04-23-comparison.md`. Existing `baseline.json::headlineMetrics` + `baseline.json::structuralInvariants` carry the numbers. Skip dispatch; proceed to Step 2.
 
 **Step 2: Execute LongMemEval-S baselines dispatch**
 
-After Task 5 lands and cache warming completes:
+After cache-warming option is chosen and executed (see Preflight §2):
 
 ```bash
 modal run bench/modal/sweep_app.py --mode run-baselines --corpus longmemeval-s --local-out docs/bench/baselines
 ```
 
-Expected artifact: report + json pair with per-task-type slice included per Task 5's renderer work.
+Expected artifact: `docs/bench/baselines/<timestamp>-baselines.md` + `.json` pair. Rename to `2026-04-XX-longmemeval-s-live.md` / `.json` (consistent with existing naming).
 
-**Step 3: Write synthesis report**
+Expected wall-clock: ~2–5 min once the cache is warm (4 retrievers × single-container serial retrieval at cache-hit latency).
 
-Controller writes a short prose synthesis at the top of each baseline report before the Modal-rendered body. Template:
+**Step 3: Write synthesis report (LongMemEval-S only)**
+
+Controller writes a short prose synthesis at the top of the LongMemEval-S baseline report before the Modal-rendered body. The LoCoMo report (`2026-04-23-comparison.md`) already has its own prose and does not need re-drafting. Template for LongMemEval-S:
 
 ```markdown
-# 4-retriever baselines — <corpus> (live extraction, 2026-04-XX)
+# 4-retriever baselines — LongMemEval-S (live extraction, 2026-04-XX)
 
-**Run command:** `modal run bench/modal/sweep_app.py --mode run-baselines --corpus <corpus> --local-out docs/bench/baselines`
+**Run command:** `modal run bench/modal/sweep_app.py --mode run-baselines --corpus longmemeval-s --local-out docs/bench/baselines`
 **Extractor:** `google/gemma-4-26b-a4b-it` via Nano-GPT, temperature=0 (Phase 11 default)
-**Wall-clock:** ~X min (Modal free-tier, 4 containers in parallel × 4 retrievers)
+**Wall-clock:** ~X min (Modal free-tier, 4 containers in parallel × 4 retrievers; cache pre-warmed via <option a | option b>)
 
 ## Summary
 
-<For LoCoMo:>
-First live 4-retriever baselines dispatch via the Phase 11 surface. Headline numbers:
-- Ladder MRR: X vs Phase 11 baseline.json 0.8057 (Δ = ±X)
-- bm25only MRR: X vs Phase 11 0.6898
-- recency MRR: X vs Phase 11 0.2703
-- random MRR: X vs Phase 11 0.2690
-
-<Commentary on any drift. Expected: within 0.005 MRR noise; larger delta is a regression to investigate.>
-
-<For LongMemEval-S:>
 First LongMemEval-S baselines under the Phase 12 adapter. 500 items, 6 task types analyzed separately.
+
 Headline aggregated MRR (excluding abstention):
 - Ladder: X
 - bm25only: X
@@ -2248,46 +2471,69 @@ Whatever the numbers actually show goes in the retro as evidence (or falsificati
 
 **Step 4: Update `docs/bench/baseline.json`**
 
-Introduce `perCorpus` nesting. Preserve the root-level `ladder`/`bm25only`/`recency`/`random` fields for LoCoMo to avoid breaking the Phase 9 schema validator; duplicate into `perCorpus.locomo` for consistency:
+The current schema (validated at `tests/integration/bench/baseline-json.test.js`) requires `headlineMetrics.{ladder,bm25only,recency,random}` + `structuralInvariants.{ladderVsRandom, ladderVsBm25Only}` at the top level. Phase 12 extends this by **adding** a sibling `perCorpus` block for LongMemEval-S; LoCoMo values stay at the top-level `headlineMetrics` for validator compatibility (and because LoCoMo is still the primary regression target):
 
 ```json
 {
     "asOf": "2026-04-XX",
-    "gitSha": "<phase-12-commit>",
-    "corpus": "multi-corpus (locomo + longmemeval-s)",
+    "gitSha": "<phase-12-task-6-commit>",
+    "corpus": "multi-corpus (locomo + longmemeval-s). locomo at top-level headlineMetrics/structuralInvariants; longmemeval-s under perCorpus.longmemevalS.",
     "nodeVersion": "v20.20.2",
     "scorerId": "default",
     "status": "measured",
-    "statusReason": "Phase 12 multi-corpus expansion. LongMemEval-S (500 items, 6 task types) added alongside LoCoMo-10. Tier 2 demolition landed (ladder.js), retrieval surface simplified. First live baselines dispatch on both corpora via Phase 11's run-baselines surface. <Describe signal: which retriever dominates which task types, whether hypothesis-pre-registered patterns held.>",
+    "statusReason": "Phase 12 multi-corpus expansion. LongMemEval-S (500 items, 6 task types) added alongside the existing LoCoMo-10 measurement. Tier 2 demolition landed in Task 1; CorpusAdapter + LongMemEval-S adapter in Tasks 2-3; task-type propagation through metrics in Task 4; --corpus wired through Modal dispatch in Task 5. Task 6: first live LongMemEval-S baselines via the Phase 11 run-baselines surface. LoCoMo numbers unchanged from Phase 11 close (Tier 2 demolition was a no-op on the live metric because τ_gap=10 already suppressed Tier 2's shortcut — confirmed by the unchanged 824+2 regression test in Task 1). <Describe LongMemEval-S signal: whether the ST-single-session hypothesis held, which task types tanked vs held, and whether any structural invariant (ladder >> random) held on this corpus.>",
     "knownIssues": [
         // ... preserve all Phase 11 entries unchanged ...
-        "Phase 12: LongMemEval-S flatten-to-single-session shape (Decision 8) collapses multi-session structure by design, testing whether ST's single-session UX collapses retrieval quality on cross-session task types. <Describe actual delta per the report>."
+        "Phase 12: LongMemEval-S flatten-to-single-session shape (Decision 8) collapses multi-session structure by design, testing whether ST's single-session UX collapses retrieval quality on cross-session task types. <Describe actual delta per the report, per task-type>."
     ],
-    "ladder":   { /* LoCoMo ladder — unchanged from Phase 11 unless drift detected */ },
-    "bm25only": { /* LoCoMo bm25only — unchanged */ },
-    "recency":  { /* LoCoMo recency — unchanged */ },
-    "random":   { /* LoCoMo random — unchanged */ },
+    "tuned": { /* preserve Phase 11's tuned block unchanged — LoCoMo-specific knobs */ },
+    "headlineMetrics": {
+        /* UNCHANGED — LoCoMo-10 live-extraction numbers from Phase 11 close */
+        "ladder":   { "recallAt1": 0.5317, "recallAt5": 0.9363, "recallAt10": 1.0, "mrr": 0.8057, "p50LatencyMs": 3.65, "p95LatencyMs": 5.15 },
+        "bm25only": { /* ... */ },
+        "recency":  { /* ... */ },
+        "random":   { /* ... */ }
+    },
+    "structuralInvariants": {
+        /* UNCHANGED — LoCoMo ladder vs random / ladder vs bm25only */
+        "ladderVsRandom": { /* ... */ },
+        "ladderVsBm25Only": { /* ... */ }
+    },
     "perCorpus": {
-        "locomo":        { /* duplicate of root, explicit for multi-corpus consumers */ },
-        "longmemeval-s": {
-            "ladder":   { "recallAt1": X, "recallAt5": X, "recallAt10": X, "mrr": X, "coverage": X, "p50LatencyMs": X, "p95LatencyMs": X,
-                          "byTaskType": { /* 6-type breakdown */ },
-                          "abstentionCount": N },
-            "bm25only": { /* same shape */ },
-            "recency":  { /* same shape */ },
-            "random":   { /* same shape */ }
+        "longmemevalS": {
+            "corpus": "longmemeval-s (500 items, flattened per Decision 8 to single-session shape)",
+            "source": "baselines/2026-04-XX-longmemeval-s-live.md",
+            "headlineMetrics": {
+                "ladder":   { "recallAt1": X, "recallAt5": X, "recallAt10": X, "mrr": X, "coverage": X, "p50LatencyMs": X, "p95LatencyMs": X,
+                              "byTaskType": { /* 6-type breakdown from Task 4 renderer */ },
+                              "abstentionCount": N },
+                "bm25only": { /* same shape */ },
+                "recency":  { /* same shape */ },
+                "random":   { /* same shape */ }
+            },
+            "structuralInvariants": {
+                "ladderVsRandom":   { "threshold": 0.02, "measuredMrrDelta": X, "status": "<PASS|FAIL>", "note": "<one-line rationale>" },
+                "ladderVsBm25Only": { "threshold": 0.02, "measuredMrrDelta": X, "status": "<PASS|FAIL>", "note": "<one-line rationale>" }
+            }
         }
     },
-    "tuned": { /* preserve Phase 11's tuned block unchanged */ }
+    "provenance": {
+        /* preserve; add baselineComparisonLongmemevalS entry pointing at the new report */
+    }
 }
 ```
 
-**Step 5: Update schema validator if needed**
+Note: the validator does **not** require `perCorpus` to exist or be shaped any particular way — it's a free-form extension. The contract it enforces is only at the top level. See the "Not needed (preflight-verified)" line in this task's Files block.
 
-Check `tests/integration/bench/baseline-json.test.js`. If validator rejects the new `perCorpus` key, add a forward-compatible assertion: `perCorpus` is optional but when present, must have `locomo` and/or `longmemeval-s` subkeys with the standard retriever shape.
+**Step 5: Validator runs unchanged**
 
-Run: `npx jest tests/integration/bench/baseline-json.test.js -v`
-Expected: existing tests pass; if extended, new assertions pass too.
+```bash
+npx jest tests/integration/bench/baseline-json.test.js -v
+```
+
+Expected: all assertions pass. No edits needed to the validator.
+
+If any top-level assertion now fails (e.g. `structuralInvariants.ladderVsBm25Only` because the `headlineMetrics` values drift), that's a regression-report bug in LoCoMo's entries, not a Phase 12 schema issue — fix the LoCoMo values, don't edit the validator.
 
 **Step 6: Full suite regression**
 
@@ -2302,32 +2548,35 @@ Expected: test counts unchanged from Task 5 (Task 6 is artifact-land + JSON edit
 **Step 7: Commit**
 
 ```bash
-git add docs/bench/baselines/ docs/bench/baseline.json tests/integration/bench/baseline-json.test.js
-git commit -m "docs(bench): first live 4-retriever baselines on both corpora (Phase 12 Task 6)
+git add docs/bench/baselines/2026-04-XX-longmemeval-s-live.md docs/bench/baseline.json
+git commit -m "docs(bench): first live LongMemEval-S 4-retriever baselines (Phase 12 Task 6)
 
-Dispatches Phase 11's --mode run-baselines Modal surface for the first
-time, across both LoCoMo (regression control) and LongMemEval-S
-(multi-corpus expansion). Documents:
-- docs/bench/baselines/2026-04-XX-locomo-live.md — 4-retriever report,
-  within 0.005 MRR noise of Phase 11 baseline.json headline (or:
-  <describe any drift>)
+Dispatches Phase 11's --mode run-baselines surface on LongMemEval-S for
+the first time via the new --corpus Modal parameter (Task 5). LoCoMo
+baselines already landed pre-Task 3 at 0e9c17d; this task adds the
+multi-corpus half. Documents:
 - docs/bench/baselines/2026-04-XX-longmemeval-s-live.md — 4-retriever
-  report with per-task-type slice (6 LongMemEval types).
+  report with per-task-type slice (6 LongMemEval types) from Task 4's
+  renderer extension.
 
-baseline.json gains perCorpus nesting; Phase 9 schema preserved at root
-for locomo; longmemeval-s-specific fields (byTaskType, abstentionCount)
-under perCorpus['longmemeval-s']. Tests extended if schema validator
-required it.
+baseline.json gains a sibling perCorpus.longmemevalS block (headlineMetrics
++ structuralInvariants, same shape as top-level LoCoMo). Top-level schema
+unchanged: LoCoMo stays at headlineMetrics/structuralInvariants for
+regression-control and validator compatibility. No edits to
+tests/integration/bench/baseline-json.test.js — the validator's contract
+is satisfied as-is.
 
-<Summarize ST-mismatch hypothesis signal: 'confirmed' / 'falsified' / 'mixed' with one-line rationale referencing the per-task-type numbers.>"
+<Summarize ST-single-session-mismatch hypothesis signal: 'confirmed' /
+'falsified' / 'mixed' with one-line rationale referencing the per-task-type
+numbers; flag which task types fell below ladderVsRandom=0.02 if any.>"
 ```
 
 **Done-when:**
-- [ ] LoCoMo baselines report landed under `docs/bench/baselines/`
+- [x] LoCoMo baselines report already landed (`docs/bench/baselines/2026-04-23-comparison.md` @ `0e9c17d`) — no re-dispatch
 - [ ] LongMemEval-S baselines report landed with byTaskType table
-- [ ] `baseline.json` gains `perCorpus` structure; Phase 9 schema preserved at root
-- [ ] Schema validator extended if needed; tests green
-- [ ] Synthesis narrative flagging ST-mismatch hypothesis signal in each report
+- [ ] `baseline.json` gains `perCorpus.longmemevalS` block with `headlineMetrics` + `structuralInvariants`; top-level LoCoMo values preserved
+- [ ] Validator runs unchanged (no schema edits)
+- [ ] Synthesis narrative in the LongMemEval-S report flagging ST-mismatch hypothesis signal
 - [ ] Commit landed
 
 ---
