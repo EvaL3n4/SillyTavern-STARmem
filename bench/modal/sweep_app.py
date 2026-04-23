@@ -410,7 +410,11 @@ def run_batchsize_point(conv_idx: int, batch_size: int, corpus: str = "locomo") 
                     # Phase 11 Task 6 pattern.
     memory=4096,
 )
-def run_longmemeval_warmup_point(item_idx: int, extractor_model: str = "") -> str:
+def run_longmemeval_warmup_point(
+    item_idx: int,
+    extractor_model: str = "",
+    warmup_concurrency: int = 10,
+) -> str:
     """Warm the extraction cache for a single LongMemEval-S item.
 
     Executes extraction (no retrieval) on one item via Task 3's adapter
@@ -460,11 +464,17 @@ def run_longmemeval_warmup_point(item_idx: int, extractor_model: str = "") -> st
     # so switching models partitions the cache rather than corrupting it.
     if extractor_model:
         env["STARMEM_BENCH_LLM_MODEL"] = extractor_model
-    # K parallel extraction calls per item. Nano-GPT tolerates unbounded
-    # concurrent calls; K is bounded only by per-item RAM and per-container
-    # socket ceiling. Default 16. Override by exporting
-    # STARMEM_WARMUP_CONCURRENCY on the driver before `modal run`.
-    env["STARMEM_WARMUP_CONCURRENCY"] = os.environ.get("STARMEM_WARMUP_CONCURRENCY", "16")
+    # K parallel extraction calls per item. Default 10 matches Fireworks
+    # serverless's 10-concurrent-request cap. Nano-GPT tolerates higher
+    # (we successfully ran K=16 on LongMemEval-S prior to the Fireworks
+    # pivot). Override via --warmup-concurrency on the CLI; the Python
+    # orchestrator passes it through here explicitly rather than relying
+    # on env-var inheritance, because Modal containers don't inherit
+    # driver-process env vars by default (caught 2026-04-23 Fireworks
+    # smoke: prefix-style `STARMEM_WARMUP_CONCURRENCY=10 modal run` was
+    # silently ignored, K defaulted to 16, Fireworks returned 429 on 94
+    # of 106 batches).
+    env["STARMEM_WARMUP_CONCURRENCY"] = str(warmup_concurrency)
 
     # Start a background thread that commits the Volume every 60s while
     # the subprocess runs. Without this, a FunctionTimeoutError SIGKILLs
@@ -549,6 +559,7 @@ def run_longmemeval_warmup(
     extractor_model: str = "",
     stratified_sample: int = 0,
     stratify_seed: int = 2026,
+    warmup_concurrency: int = 10,
 ) -> dict:
     """Fan out per-item LongMemEval-S cache warm-up across bounded containers.
 
@@ -663,12 +674,12 @@ def run_longmemeval_warmup(
     volume.commit()  # durable before fan-out reads it
 
     t0 = time.time()
-    # starmap passes each tuple as (item_idx, extractor_model). Using
-    # starmap (not map) keeps extractor_model out of the primary range
-    # key so Modal's Function-level caching still considers two items
-    # with different extractor_model as distinct inputs.
+    # starmap passes each tuple as (item_idx, extractor_model, warmup_concurrency).
+    # Threading warmup_concurrency through the tuple keeps it explicit
+    # per-cell instead of relying on container env inheritance (which
+    # Modal does NOT provide — caught on Fireworks smoke, 2026-04-23).
     results_raw = list(run_longmemeval_warmup_point.starmap(
-        ((i, extractor_model) for i in sampled_indices)
+        ((i, extractor_model, warmup_concurrency) for i in sampled_indices)
     ))
 
     warmed = []
@@ -680,6 +691,17 @@ def run_longmemeval_warmup(
     first_item_errors = []  # firstError from each all-failed item, for fast triage
     models_seen = set()
     urls_seen = set()
+    # Collect firstError across ALL items with any failures, not just
+    # allFailed ones. A partial-failure item (e.g. 94/106 rate-limited
+    # on a Fireworks K=16 vs K=10 cap mismatch) is the exact case the
+    # operator needs visibility on — the item isn't flagged allFailed
+    # because some batches got through, but the cache is structurally
+    # wrong for baselines. Caught 2026-04-23 on Fireworks Llama 3.3 70B
+    # smoke: failures=94/106 on item 0 produced `firstItemErrors: []`
+    # in the summary because allFailed was false. Fix: aggregate any
+    # firstError seen, flag as partialFailure too.
+    partial_failed_items = []  # items where failures > 0 but not all
+    first_batch_errors = []  # firstError samples across any failing item
     for raw in results_raw:
         parsed = json.loads(raw)
         if "error" in parsed:
@@ -693,13 +715,31 @@ def run_longmemeval_warmup(
                 models_seen.add(parsed["modelResolved"])
             if parsed.get("urlHost"):
                 urls_seen.add(parsed["urlHost"])
+            failure_count = parsed.get("failureCount", 0) or 0
+            batch_count = parsed.get("batchCount", 0) or 0
             if parsed.get("allFailed"):
                 all_failed_items.append(parsed["itemIdx"])
-                if parsed.get("firstError") and len(first_item_errors) < 3:
-                    first_item_errors.append({
-                        "itemIdx": parsed["itemIdx"],
-                        "firstError": parsed["firstError"],
-                    })
+            elif failure_count > 0:
+                partial_failed_items.append({
+                    "itemIdx": parsed["itemIdx"],
+                    "failures": failure_count,
+                    "batches": batch_count,
+                })
+            # Sample firstError across any failing item (all or partial),
+            # cap at 3 samples to keep the summary legible.
+            if failure_count > 0 and parsed.get("firstError") and len(first_batch_errors) < 3:
+                first_batch_errors.append({
+                    "itemIdx": parsed["itemIdx"],
+                    "failures": failure_count,
+                    "batches": batch_count,
+                    "firstError": parsed["firstError"],
+                })
+            # Keep the original allFailed-only channel for backward compat.
+            if parsed.get("allFailed") and parsed.get("firstError") and len(first_item_errors) < 3:
+                first_item_errors.append({
+                    "itemIdx": parsed["itemIdx"],
+                    "firstError": parsed["firstError"],
+                })
 
     volume.reload()  # pick up the fan-out's commits
     cache_files_after = len(os.listdir(cache_dir))
@@ -725,6 +765,14 @@ def run_longmemeval_warmup(
         "failures": failed[:10],  # cap for log legibility on Modal's output tail
         "allFailedItems": all_failed_items[:20],
         "firstItemErrors": first_item_errors,
+        # Partial-failure visibility — items where some batches succeeded
+        # and some failed (rate-limits, transient 5xx, single-batch
+        # timeouts). Surfaces the exact triage info operators need when
+        # `allFailed` is false but the cache still has holes.
+        "partialFailedItems": partial_failed_items[:20],
+        "partialFailedCount": len(partial_failed_items),
+        "firstBatchErrors": first_batch_errors,
+        "warmupConcurrency": warmup_concurrency,
         # Stratified-sample provenance — downstream baselines read this
         # same indices file so the two runs stay aligned.
         "stratified": stratified,
@@ -2527,6 +2575,7 @@ def main(
     extractor_model: str = "",   # NEW: --extractor-model override for warmup/baselines
     stratified_sample: int = 0,   # NEW: --stratified-sample N for LongMemEval-S subset
     stratify_seed: int = 2026,   # NEW: --stratify-seed N for determinism across runs
+    warmup_concurrency: int = 10,   # NEW: --warmup-concurrency K (Fireworks-safe default)
 ):
     """Dispatch entrypoint for Modal bench functions.
 
@@ -2660,6 +2709,7 @@ def main(
             extractor_model=extractor_model,
             stratified_sample=stratified_sample,
             stratify_seed=stratify_seed,
+            warmup_concurrency=warmup_concurrency,
         )
         print(json.dumps(result, indent=2))
     else:
