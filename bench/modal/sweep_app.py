@@ -131,6 +131,12 @@ def run_point(overrides_json: str) -> str:
     return result.stdout.strip()
 
 
+ABS_DELTA_FLOOR = 0.005
+"""Below this absolute Δmetric/Δknob on every point, the axis is considered
+flat and no elbow is proposed. Field-validated against STARmem 9.5 false
+positives — see docs/plans/phase-11-infrastructure-hardening.md Task 1."""
+
+
 def _detect_elbow(points, knobs, primary_metric):
     """Python port of _driver.js detectElbow.
 
@@ -141,6 +147,13 @@ def _detect_elbow(points, knobs, primary_metric):
 
     Returns:
         dict with 'overrides' and 'rationale'.
+
+    Phase 11 Task 1: zero-axis-Δ guard. When the primary axis has no
+    meaningful variation (maxΔ/Δknob < ABS_DELTA_FLOOR across the whole
+    point set), return spec defaults with a "held at spec" rationale
+    instead of the sort-first-corner artifact. Field-validated against
+    3 false positives in 9.5 (TIER2_TAU_CONFIDENCE, bm25 TAG×SUBJECT
+    grid, relw axis).
     """
     ELBOW_RATIO = 0.1
 
@@ -180,8 +193,35 @@ def _detect_elbow(points, knobs, primary_metric):
                 elbows.append(elbow)
 
     if not elbows:
+        # No slice surfaced an elbow. Two sub-cases distinguished by the
+        # axis-wide maxΔ/Δknob:
+        #   (1) Axis is flat (maxΔ < ABS_DELTA_FLOOR) — honest answer is
+        #       "held at spec defaults, knob flat on this corpus."
+        #   (2) Real data but no elbow shape — keep the pre-Phase-11
+        #       fallback to highest-metric for backward compatibility.
+        # Default overrides = first value of every knob. Convention
+        # verified at Phase 11 plan-time for tau/bm25/hops/relw: each
+        # SWEEP_CONFIGS entry lists the spec default first in `values`.
+        default_overrides = {k["name"]: k["values"][0] for k in knobs}
+        sorted_all = sorted(points, key=lambda p: p["overrides"][primary_knob["name"]])
+        all_metrics = [accessor(p["metrics"]) for p in sorted_all]
+        all_values = [p["overrides"][primary_knob["name"]] for p in sorted_all]
+        all_deltas = []
+        for i in range(len(all_metrics) - 1):
+            dk = all_values[i + 1] - all_values[i]
+            all_deltas.append(0 if dk == 0 else (all_metrics[i + 1] - all_metrics[i]) / dk)
+        axis_max_delta = max((abs(d) for d in all_deltas), default=0.0)
         best = max(points, key=lambda p: accessor(p["metrics"]))
         best_metric = accessor(best["metrics"])
+        if axis_max_delta < ABS_DELTA_FLOOR:
+            return {
+                "overrides": default_overrides,
+                "rationale": (
+                    f"Axis flat (maxΔ/Δknob = {axis_max_delta:.6f} ≤ {ABS_DELTA_FLOOR}); "
+                    f"held at spec on {primary_knob['name']}. Highest observed "
+                    f"{primary_metric} = {best_metric:.4f}."
+                ),
+            }
         return {
             "overrides": best["overrides"],
             "rationale": f"No clear elbow detected; fallback to highest {primary_metric} = {best_metric:.4f}.",
@@ -207,6 +247,15 @@ def _elbow_on_slice(sorted_pts, primary_name, accessor, ratio):
         deltas.append(0 if delta_knob == 0 else (metrics[i + 1] - metrics[i]) / delta_knob)
 
     max_delta = max(abs(d) for d in deltas)
+
+    # Zero-axis-Δ guard (Phase 11 Task 1). If the axis has no meaningful
+    # variation, the sort-first corner is not an elbow — it's an artifact
+    # of the ratio=0.1×max_delta threshold collapsing to ~1e-12. Return
+    # None so _detect_elbow's "no elbows found" branch surfaces a
+    # flat-axis rationale instead of a false amendment.
+    if max_delta < ABS_DELTA_FLOOR:
+        return None
+
     threshold = ratio * max_delta + 1e-12
 
     for i, d in enumerate(deltas):
