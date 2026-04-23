@@ -1353,7 +1353,7 @@ Phase 11 candidates identified during 9.5 dispatch. Task 11's retro expands thes
 - [x] Task 8: BM25 sweep with tags-populated-rate reported. *(16 points, 2026-04-23T04-27-08Z. Tags 100% populated under live Gemma. Grid Branch-C flat (MRR spread 0.0065 < 0.02). Elbow detector false-positive reproduces — bug filed for Phase 11.)*
 - [x] Task 9: Baseline comparison with structural invariant verdict. *(4 retrievers, full LoCoMo, 2026-04-23 at commit f02b1a5. ladder 0.8057 > bm25only 0.6898 > recency 0.2703 > random 0.2690. Invariant PASS by +0.1159 MRR, 6× threshold. 30+ min wall-clock — Modal parallelization filed for Phase 11.)*
 - [x] Task 10: New hops + relw sweep drivers + writeups. *(hops smoked pre-Task-5 with 2-row preview; relw 5 points 2026-04-23T05-09-11Z. relw is structurally inert to 4dp across all values — third edge-weight knob confirmed inert on LoCoMo. Third reproduction of elbow-detector false-positive in 9.5.)*
-- [ ] Task 11: `baseline.json` status=measured, retro written, all artifacts committed.
-- [ ] No tests regress from 9.4.9 close (816 tests green minimum).
-- [ ] No secrets-guard redactions in plan or retro.
-- [ ] Phase 11 scope documented if scorer-chain investigation is warranted.
+- [x] Task 11: `baseline.json` status=measured, retro written, all artifacts committed. *(Three-commit landing: 18c0df3 publishes sweep artifacts, 04d76f1 refreshes baseline.json with 9.5 numbers + new entries, 59bced1 writes retro.)*
+- [x] No tests regress from 9.4.9 close (816 tests green minimum). *(75/816 pass, schema validator 7/7.)*
+- [x] No secrets-guard redactions in plan or retro.
+- [x] Phase 11 scope documented if scorer-chain investigation is warranted. *(Invariant PASS by 6× — no scorer-chain investigation needed. Six other Phase 11 candidates documented in retro §5.)*
