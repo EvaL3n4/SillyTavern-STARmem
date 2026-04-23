@@ -234,14 +234,16 @@ export async function getJob(auth, jobId) {
  * @returns {Promise<{resultsPath: string, errorsPath: string|null}>}
  */
 export async function downloadResults(auth, datasetId, destDir) {
+    // Node's undici fetch implements the fetch spec strictly: GET/HEAD
+    // requests with a body throw `Request with GET/HEAD method cannot have
+    // body.`. The Fireworks docs' curl snippet shows `-d '{}'` on this
+    // endpoint, but curl's `-d` coerces GET → POST silently, so that snippet
+    // never actually sent a GET+body. The real endpoint works with a plain
+    // GET and no Content-Type header.
     const endpoint = await _request(
         auth,
         `/accounts/${auth.accountId}/datasets/${datasetId}:getDownloadEndpoint`,
-        {
-            method: 'GET',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({}),
-        },
+        { method: 'GET' },
     );
 
     const map = endpoint?.filenameToSignedUrls || {};
