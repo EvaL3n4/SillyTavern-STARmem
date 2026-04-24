@@ -6,7 +6,7 @@
  * @see docs/specs/2026-04-20-starmem-v2-design.md §3.1
  */
 
-import { createHash } from 'node:crypto';
+import { sha256Hex } from '../vendor/sha256.js';
 import { isScope, isMaturity, isEdgeType } from '../core/schema.js';
 
 /** Scope → id prefix. */
@@ -26,7 +26,7 @@ const SCOPE_PREFIX = Object.freeze({
  * @returns {string}
  */
 function contentSuffix(seed) {
-    return createHash('sha256').update(seed).digest('hex').slice(0, 12);
+    return sha256Hex(seed).slice(0, 12);
 }
 
 /**
