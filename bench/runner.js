@@ -23,6 +23,7 @@ import { getScorerId } from '../src/retrieval/scorer.js';
 import { retrieve } from '../src/retrieval/ladder.js';
 import { seedConversation } from './harness/seeder.js';
 import { computeMetrics } from './metrics/retrieval.js';
+import { traceRetrieve } from './harness/trace.js';
 
 /**
  * Resolve the current commit SHA for envSnapshot reproducibility.
@@ -95,6 +96,17 @@ export async function runHarness({
 }) {
     const restore = overrides ? setConstantOverrides(overrides) : () => {};
 
+    // Wrap the retriever once up-front. When Weave has been initialized
+    // by the entry point (e.g. bench/baselines/_modal-point.js calling
+    // initWeave('STARmem')), each call becomes a replayable W&B trace.
+    // Otherwise the wrap is a no-op — traceRetrieve returns the original
+    // function when Weave is not ready, so bench-side semantics never
+    // change regardless of whether observability is active.
+    const activeRetriever = traceRetrieve(
+        retriever ?? retrieve,
+        { name: retriever?.name ?? 'ladder' },
+    );
+
     try {
         /** @type {HarnessRun[]} */
         const runs = [];
@@ -108,7 +120,13 @@ export async function runHarness({
 
             for (const qa of conv.qa) {
                 const t0 = performance.now();
-                const result = (retriever ?? retrieve)(seededState, qa.question, { k: 10 });
+                // Weave's op() always returns a Promise, regardless of whether
+                // the wrapped fn is sync. traceRetrieve passes through the
+                // original (sync) fn when Weave is not initialized, but to
+                // keep one code path here we await unconditionally. A synchronous
+                // value passes through await cleanly (becomes Promise.resolve),
+                // so this is safe in both no-op and traced modes.
+                const result = await activeRetriever(seededState, qa.question, { k: 10 });
                 const latencyMs = performance.now() - t0;
 
                 const goldTurns = qa.evidenceTurns.map(ti => ({

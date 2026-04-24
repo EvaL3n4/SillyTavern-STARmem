@@ -18,6 +18,7 @@ import { bm25only } from './bm25only.js';
 import { recency } from './recency.js';
 import { random } from './random.js';
 import { BASELINE_IDS } from './index.js';
+import { initWeave } from '../harness/trace.js';
 
 // Route all harness log output to stderr so stdout is reserved for the
 // JSON payload that Modal's run_baseline_point will json.loads().
@@ -72,6 +73,14 @@ async function main() {
     }
 
     const wallT0 = performance.now();
+
+    // Opt-in Weave tracing. When WANDB_API_KEY is present (via Modal's
+    // wandb-secret or host ~/.netrc), every retrieve() call inside
+    // runHarness becomes a replayable W&B op — the spec §2.3 "honest
+    // instrumentation" requirement. When absent, traceRetrieve falls
+    // through to the original retriever with zero overhead.
+    await initWeave('STARmem');
+
     const { runs, metrics, envSnapshot } = await runHarness({
         corpus,
         retriever,

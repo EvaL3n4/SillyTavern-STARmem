@@ -15,6 +15,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { runHarness } from './runner.js';
 import { getAdapter } from './corpora/index.js';
+import { initWeave } from './harness/trace.js';
 
 /**
  * Parse process.argv into a simple key/value map.
@@ -87,6 +88,10 @@ async function main() {
         maxItems: args['max-items'] ? Number(args['max-items']) : undefined,  // LongMemEval
         offline,
     });
+
+    // Opt-in Weave tracing. No-op when WANDB_API_KEY / ~/.netrc absent,
+    // or when WEAVE_DISABLED=1 is set. See bench/harness/trace.js.
+    await initWeave('STARmem');
 
     const result = await runHarness({
         corpus,
