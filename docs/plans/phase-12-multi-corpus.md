@@ -3110,4 +3110,18 @@ A running list of architectural dead weight surfaced during Phase 12 work. To be
 
 ---
 
+## Deferred bugs
+
+Low-urgency issues to resolve at a future phase boundary. Not blocking Phase 12 tasks.
+
+- **`bench/modal/tests/` collection errors on `FilePatternMatcher` import** (flagged 2026-04-24). Running `pytest bench/modal/tests/` on a machine without the real `modal` PyPI package fails at collection with `ImportError: cannot import name 'FilePatternMatcher' from 'modal' (unknown location)`. All 5 test files error out; zero tests actually run.
+    - **Root cause:** `bench/modal/sweep_app.py::3` does `from modal import FilePatternMatcher` at module scope. Each test file stubs `sys.modules["modal"]` before importing `sweep_app`, but the stubs (see e.g. `test_detect_elbow.py::20-59`) only populate `_modal.App`, `.Image`, `.Volume`, `.Secret` — `FilePatternMatcher` was added to `sweep_app.py` after the stubs were written and never got back-filled into them.
+    - **Fix (pick one):**
+        1. Add `_modal.FilePatternMatcher = lambda *a, **kw: MagicMock()` to each of the 5 test files. Targeted, repeats the existing per-file pattern.
+        2. Extract the stub into a `bench/modal/tests/conftest.py` with a `_install_modal_stub()` helper — DRYs the 5 copies, gives one place to keep the stub in sync with `sweep_app.py` imports. Preferred.
+        3. Move `from modal import FilePatternMatcher` inside the function that uses it (`image = ...` block) so it's only evaluated when Modal is actually invoked. Cleanest in principle but changes runtime semantics — would need verification that the image build still works end-to-end.
+    - **Scope:** ~15 LOC in conftest form (option 2). Not blocking Phase 12 tasks — these tests cover `_detect_elbow`, `_elbow_on_slice`, `run_baselines`, batchsize-split, `stratified_longmemeval_indices`, `corpus` param routing; all of those are stable and have known-green points earlier in Phase 11. Fold into Task 8 retro housekeeping or a dedicated pre-Phase-13 commit.
+
+---
+
 **End of plan.**
