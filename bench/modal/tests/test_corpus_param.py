@@ -4,70 +4,15 @@ Don't dispatch real Modal; import sweep_app and exercise the pure
 helpers (render_by_task_type) plus main()'s validation / kwarg
 threading via the stubbed @app.function decorator pattern.
 """
-import sys
-import types
-from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
-
-# Stub the real `modal` package. sweep_app.py imports modal at top level
-# and calls modal.App(...), modal.Image.debian_slim(...) at import time;
-# unit tests don't need the real package because we only exercise pure
-# helpers + main()'s dispatch logic. We use a real ModuleType with
-# selectively-stubbed attributes (not a bare MagicMock) so pytest's
-# sys.modules introspection — which probes for attributes like
-# pytest_plugins — doesn't fire on phantom attributes and trip a
-# UsageError. Matches the pattern from test_baselines_mode.py.
-if "modal" not in sys.modules or not hasattr(sys.modules["modal"], "App"):
-    _modal = types.ModuleType("modal")
-
-    def _identity_decorator(*args, **kwargs):
-        def _wrap(fn):
-            return fn
-        if len(args) == 1 and callable(args[0]) and not kwargs:
-            return args[0]
-        return _wrap
-
-    _app = MagicMock()
-    _app.function = _identity_decorator
-    _app.local_entrypoint = _identity_decorator
-    _modal.App = lambda *a, **kw: _app
-
-    _image = MagicMock()
-    _image.run_commands.return_value = _image
-    _image.add_local_dir.return_value = _image
-
-    class _Image:
-        @staticmethod
-        def debian_slim(*a, **kw):
-            return _image
-
-    _modal.Image = _Image
-
-    class _Volume:
-        @staticmethod
-        def from_name(*a, **kw):
-            return MagicMock()
-
-    _modal.Volume = _Volume
-
-    class _Secret:
-        @staticmethod
-        def from_dotenv(*a, **kw):
-            return MagicMock()
-
-    _modal.Secret = _Secret
-
-    sys.modules["modal"] = _modal
-
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import sweep_app
 from sweep_app import render_by_task_type
 
-
 # --- main() validation + threading ---------------------------------------
+
 
 def test_main_rejects_unknown_corpus():
     """--corpus foo must raise, not silently default to locomo."""
@@ -123,8 +68,8 @@ def test_warmup_longmemeval_threads_stratified_sample():
         assert kwargs.get("stratified_sample") == 50
         assert kwargs.get("stratify_seed") == 2026
 
-
 # --- render_by_task_type -------------------------------------------------
+
 
 def test_render_by_task_type_empty_returns_placeholder():
     """Empty byTaskType dict shows informational message."""

@@ -5,66 +5,12 @@ the LongMemEval-S corpus balanced across the 6 question_type task types.
 See docs/plans/phase-12-task-6-extraction-cost-decision.md.
 """
 import json
-import sys
 import tempfile
-import types
 from collections import Counter
-from pathlib import Path
-from unittest.mock import MagicMock
 
 import pytest
 
-# Stub the real `modal` package. sweep_app.py imports modal at top level
-# and calls modal.App(...), modal.Image.debian_slim(...) at import time;
-# see test_corpus_param.py for the same pattern. We use a real
-# ModuleType with selectively-stubbed attributes (not a bare MagicMock)
-# so pytest's sys.modules introspection doesn't trip on phantom attrs.
-if "modal" not in sys.modules or not hasattr(sys.modules["modal"], "App"):
-    _modal = types.ModuleType("modal")
-
-    def _identity_decorator(*args, **kwargs):
-        def _wrap(fn):
-            return fn
-        if len(args) == 1 and callable(args[0]) and not kwargs:
-            return args[0]
-        return _wrap
-
-    _app = MagicMock()
-    _app.function = _identity_decorator
-    _app.local_entrypoint = _identity_decorator
-    _modal.App = lambda *a, **kw: _app
-
-    _image = MagicMock()
-    _image.run_commands.return_value = _image
-    _image.add_local_dir.return_value = _image
-
-    class _Image:
-        @staticmethod
-        def debian_slim(*a, **kw):
-            return _image
-
-    _modal.Image = _Image
-
-    class _Volume:
-        @staticmethod
-        def from_name(*a, **kw):
-            return MagicMock()
-
-    _modal.Volume = _Volume
-
-    class _Secret:
-        @staticmethod
-        def from_dotenv(*a, **kw):
-            return MagicMock()
-
-    _modal.Secret = _Secret
-
-    sys.modules["modal"] = _modal
-
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-
 from sweep_app import stratified_longmemeval_indices
-
 
 # --- Fixtures -----------------------------------------------------------
 
@@ -97,8 +43,8 @@ def _write_corpus_to_tmp(corpus: list, tmp_path) -> str:
     p.write_text(json.dumps(corpus))
     return str(p)
 
-
 # --- Determinism --------------------------------------------------------
+
 
 def test_same_seed_same_indices(tmp_path):
     """Same (corpus, n, seed) always produces identical indices."""
@@ -128,8 +74,8 @@ def test_returned_list_is_sorted(tmp_path):
     picked = stratified_longmemeval_indices(path, n=50, seed=2026)
     assert picked == sorted(picked)
 
-
 # --- Balance -----------------------------------------------------------
+
 
 def test_even_split_across_types_at_n50(tmp_path):
     """n=50 across 6 balanced types: each type gets 8 or 9 picks."""
@@ -163,8 +109,8 @@ def test_full_corpus_returns_all_indices(tmp_path):
     picked = stratified_longmemeval_indices(path, n=60, seed=2026)
     assert picked == list(range(60))
 
-
 # --- Boundary and error cases ------------------------------------------
+
 
 def test_n_too_large_raises(tmp_path):
     """n > len(corpus) raises ValueError with a helpful message."""
