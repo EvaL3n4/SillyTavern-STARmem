@@ -11,6 +11,7 @@ Subcommands:
     python bench/analyze/runs.py sweeps --knob TIER3_LAMBDA_1
     python bench/analyze/runs.py sweeps --sweep-name graph --since 2026-04-22
     python bench/analyze/runs.py sweeps --format csv > sweeps.csv
+    python bench/analyze/runs.py sweeps --format html > sweeps.html
     python bench/analyze/runs.py runs               # tabulate per-call retrievals
     python bench/analyze/runs.py runs --run 2026-04-21-21-37-46
     python bench/analyze/runs.py diff <sweep-a> <sweep-b>  # ΔMRR on shared knob values
@@ -295,6 +296,237 @@ def load_runs(runs_dir: Path = DEFAULT_RUNS_DIR, run_id: str | None = None) -> p
 # Output formatters
 # --------------------------------------------------------------------------
 
+# --------------------------------------------------------------------------
+# Column formatting — shared by md + html emitters
+# --------------------------------------------------------------------------
+
+# Per-column display rules. Missing columns pass through as str().
+# Goal: terse, tabular-nums friendly, mobile-pasteable.
+_FLOAT_FMT = {
+    "mrr": ".4f",
+    "coverage": ".4f",
+    "mrr_min": ".4f",
+    "mrr_max": ".4f",
+    "mrr_span": ".4f",
+    "coverage_mean": ".4f",
+    "latency_p50": ".2f",
+    "latency_p95": ".2f",
+    "delta_mrr": "+.4f",
+    "delta_coverage": "+.4f",
+    "top_score": ".4f",
+    "top_score_mean": ".4f",
+    "mrr_a": ".4f",
+    "mrr_b": ".4f",
+    "coverage_a": ".4f",
+    "coverage_b": ".4f",
+}
+
+# Numeric columns get tabular-nums alignment + right-justified in HTML.
+_NUMERIC_COLS = set(_FLOAT_FMT.keys()) | {
+    "n", "n_points", "n_scored", "n_skipped", "n_calls", "n_retrieved",
+}
+
+
+def _fmt_cell(col: str, val) -> str:
+    """Render one cell for md/html output."""
+    if val is None:
+        return ""
+    if isinstance(val, bool):
+        return "✓" if val else ""
+    if isinstance(val, float):
+        spec = _FLOAT_FMT.get(col)
+        if spec:
+            return format(val, spec)
+        return format(val, ".4g")
+    if col == "file" and isinstance(val, str) and val.endswith(".json"):
+        # Strip the .json extension; it's noise in every row.
+        val = val[:-5]
+    if col == "timestamp" and isinstance(val, str) and len(val) >= 17:
+        # "2026-04-24T08-23-48Z" → "04-24 08:23" (date + HH:MM, drop year + secs).
+        # The full stamp is already in the filename; here we just need orientation.
+        try:
+            return f"{val[5:10]} {val[11:13]}:{val[14:16]}"
+        except Exception:  # noqa: BLE001
+            return str(val)
+    return str(val)
+
+
+def _df_to_cells(df: pl.DataFrame) -> tuple[list[str], list[list[str]]]:
+    cols = df.columns
+    rows = [[_fmt_cell(c, v) for c, v in zip(cols, row)] for row in df.iter_rows()]
+    return cols, rows
+
+
+# --------------------------------------------------------------------------
+# Output formatters
+# --------------------------------------------------------------------------
+
+def _emit_md(df: pl.DataFrame) -> None:
+    """GitHub-flavoured pipe table. Paste-clean in chat, Obsidian, and GitHub."""
+    cols, rows = _df_to_cells(df)
+    # Header.
+    print("| " + " | ".join(cols) + " |")
+    # Alignment row: right-align numeric, left-align text.
+    aligns = ["---:" if c in _NUMERIC_COLS else "---" for c in cols]
+    print("| " + " | ".join(aligns) + " |")
+    for row in rows:
+        # Escape pipes in cell values so they don't break the table.
+        print("| " + " | ".join(cell.replace("|", "\\|") for cell in row) + " |")
+
+
+def _emit_html(df: pl.DataFrame) -> None:
+    """Single self-contained HTML file. Mobile: stacks into cards. Desktop: table.
+
+    No CDN, no JS. Auto light/dark via prefers-color-scheme. System fonts.
+    Matches the Claude-Code minimal aesthetic: matte surfaces, subtle borders,
+    tabular-nums for the numeric columns, left-border accent on is_winner rows.
+    """
+    cols, rows = _df_to_cells(df)
+    winner_idx = cols.index("is_winner") if "is_winner" in cols else -1
+
+    # Find the first string column to use as the card heading on mobile.
+    # Preference order: sweep_name > knob > run > file > first column.
+    heading_col = next(
+        (c for c in ("sweep_name", "knob", "run", "file") if c in cols),
+        cols[0] if cols else "",
+    )
+    heading_idx = cols.index(heading_col) if heading_col in cols else 0
+
+    def esc(s: str) -> str:
+        return (s.replace("&", "&amp;").replace("<", "&lt;")
+                 .replace(">", "&gt;").replace('"', "&quot;"))
+
+    # Build <tbody> rows. Each row carries both a table-row layout (desktop)
+    # and a definition-list fallback (mobile, via CSS media query).
+    body_html: list[str] = []
+    for row in rows:
+        is_winner = winner_idx >= 0 and row[winner_idx] == "✓"
+        cls = ' class="winner"' if is_winner else ""
+        # Desktop: <tr><td>...</td></tr>
+        tds = "".join(
+            f'<td class="num">{esc(cell)}</td>' if cols[i] in _NUMERIC_COLS
+            else f'<td>{esc(cell)}</td>'
+            for i, cell in enumerate(row)
+        )
+        # Mobile: a card with a heading + <dl> pairs for the rest.
+        dl_pairs = "".join(
+            f'<dt>{esc(cols[i])}</dt><dd class="{"num" if cols[i] in _NUMERIC_COLS else ""}">'
+            f'{esc(cell)}</dd>'
+            for i, cell in enumerate(row) if i != heading_idx
+        )
+        heading_val = row[heading_idx] if 0 <= heading_idx < len(row) else ""
+        card = (
+            f'<div class="card-head">{esc(heading_val) or "&nbsp;"}</div>'
+            f'<dl>{dl_pairs}</dl>'
+        )
+        body_html.append(f'<tr{cls}>{tds}</tr>')
+        body_html.append(f'<div class="card{cls}">{card}</div>')
+
+    ths = "".join(
+        f'<th class="num">{esc(c)}</th>' if c in _NUMERIC_COLS
+        else f'<th>{esc(c)}</th>'
+        for c in cols
+    )
+
+    # Palette: matte dark (#0f1115 / #e6e6e6), light mode mirrors.
+    # Winner accent: muted amber, not red — success, not alert.
+    html = f"""<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>STARmem bench</title>
+<style>
+  :root {{
+    --bg: #ffffff; --fg: #1a1a1a;
+    --muted: #6b7280; --border: #e5e7eb; --surface: #f8f9fa;
+    --accent: #b45309; --winner-bg: #fef3c7;
+  }}
+  @media (prefers-color-scheme: dark) {{
+    :root {{
+      --bg: #0f1115; --fg: #e6e6e6;
+      --muted: #9ca3af; --border: #2a2e37; --surface: #161923;
+      --accent: #f59e0b; --winner-bg: #2a2418;
+    }}
+  }}
+  * {{ box-sizing: border-box; }}
+  html, body {{ margin: 0; padding: 0; background: var(--bg); color: var(--fg); }}
+  body {{
+    font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+    padding: 16px;
+    max-width: 1400px; margin: 0 auto;
+  }}
+  .num {{
+    font-variant-numeric: tabular-nums;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  }}
+  /* Desktop table */
+  table {{
+    width: 100%; border-collapse: collapse;
+    font-size: 13px;
+  }}
+  thead th {{
+    position: sticky; top: 0; background: var(--surface);
+    text-align: left; font-weight: 600;
+    padding: 8px 10px; border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+  }}
+  th.num, td.num {{ text-align: right; }}
+  tbody td {{
+    padding: 6px 10px; border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+  }}
+  tbody tr:hover {{ background: var(--surface); }}
+  tr.winner td {{
+    background: var(--winner-bg);
+  }}
+  tr.winner td:first-child {{
+    border-left: 3px solid var(--accent);
+    padding-left: 7px;
+  }}
+  /* Mobile cards — hidden on desktop */
+  .cards {{ display: none; }}
+  .card {{
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 8px; padding: 12px 14px; margin-bottom: 10px;
+  }}
+  .card.winner {{
+    border-left: 3px solid var(--accent);
+  }}
+  .card-head {{
+    font-weight: 600; font-size: 15px; margin-bottom: 8px;
+    padding-bottom: 6px; border-bottom: 1px solid var(--border);
+  }}
+  .card dl {{
+    display: grid;
+    grid-template-columns: max-content 1fr;
+    gap: 4px 12px; margin: 0;
+  }}
+  .card dt {{ color: var(--muted); font-size: 12px; }}
+  .card dd {{ margin: 0; font-size: 13px; }}
+  @media (max-width: 640px) {{
+    body {{ padding: 10px; font-size: 13px; }}
+    table {{ display: none; }}
+    .cards {{ display: block; }}
+  }}
+</style>
+</head>
+<body>
+<table>
+<thead><tr>{ths}</tr></thead>
+<tbody>
+{''.join(r for r in body_html if r.startswith('<tr'))}
+</tbody>
+</table>
+<div class="cards">
+{''.join(r for r in body_html if r.startswith('<div class="card'))}
+</div>
+</body>
+</html>
+"""
+    sys.stdout.write(html)
+
+
 def emit(df: pl.DataFrame, fmt: str) -> None:
     if df.is_empty():
         print("# (empty)")
@@ -306,14 +538,11 @@ def emit(df: pl.DataFrame, fmt: str) -> None:
         sys.stdout.write(df.write_json())
         sys.stdout.write("\n")
         return
-    # markdown (default) — use Polars' table repr, with all cols unelided.
-    with pl.Config(
-        tbl_rows=df.height,
-        tbl_cols=df.width,
-        tbl_width_chars=180,
-        fmt_str_lengths=60,
-    ):
-        print(df)
+    if fmt == "html":
+        _emit_html(df)
+        return
+    # Default: GitHub pipe-table markdown. Paste-clean in any markdown viewer.
+    _emit_md(df)
 
 
 # --------------------------------------------------------------------------
@@ -433,8 +662,8 @@ def main(argv: list[str] | None = None) -> int:
         help=f"Directory holding bench artifacts (default: {DEFAULT_RUNS_DIR})",
     )
     parser.add_argument(
-        "--format", choices=["md", "csv", "json"], default="md",
-        help="Output format (default: md — Polars table repr)",
+        "--format", choices=["md", "csv", "json", "html"], default="md",
+        help="Output format (default: md — GitHub pipe-table; html writes a mobile-friendly page)",
     )
 
     sub = parser.add_subparsers(dest="cmd", required=True)
