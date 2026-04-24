@@ -11,6 +11,7 @@ image = (
         "curl -fsSL https://deb.nodesource.com/setup_20.x | bash -",
         "apt-get install -y nodejs",
     )
+    .pip_install("wandb>=0.17", "weave>=0.51")
     .add_local_dir(
         "/home/opus/.hermes/profiles/hanami/home/SillyTavern/public/scripts/extensions/third-party/SillyTavern-STARmem",
         "/repo",
@@ -50,6 +51,47 @@ volume = modal.Volume.from_name("starmem-bench-data", create_if_missing=True)
 # rule-based extraction, producing systematically fewer episodic facts.
 # .env.bench is read from the host's cwd (repo root) at `modal run` time.
 env_secret = modal.Secret.from_dotenv(filename=".env.bench")
+
+# W&B observability — Phase 12+ instrumentation.
+# Created once via: modal secret create wandb-secret WANDB_API_KEY=<key>
+# Project: "STARmem". Entity inherits from the API key's default workspace.
+# Attached only to orchestrators (run_baselines, run_sweep) — the per-cell
+# point functions stay un-instrumented to avoid 4 (baselines) + 25 (batchsize)
+# noisy runs flooding the dashboard. Aggregate-level only for week 1.
+wandb_secret = modal.Secret.from_name("wandb-secret")
+WANDB_PROJECT = "STARmem"
+
+
+def _wandb_init(*, job_type: str, group: str, config: dict, tags: list):
+    """Initialize a W&B run inside a Modal container.
+
+    Returns the run object, or None if wandb is unavailable / WANDB_DISABLED
+    is set. Caller is responsible for run.finish() — wrap in try/finally so
+    Modal's ephemeral container teardown doesn't mark the run as crashed.
+
+    Defensive: never let a logging failure kill a benchmark. Catches
+    everything and falls through to None.
+    """
+    import os
+
+    if os.environ.get("WANDB_DISABLED") == "1":
+        return None
+    try:
+        import wandb
+    except ImportError:
+        return None
+    try:
+        return wandb.init(
+            project=WANDB_PROJECT,
+            job_type=job_type,
+            group=group,
+            config=config,
+            tags=tags,
+            reinit=True,
+        )
+    except Exception as exc:  # noqa: BLE001 — never crash bench on logging
+        print(f"[wandb] init failed, continuing without logging: {exc}")
+        return None
 
 
 def _install_volume_symlink(link_path: str, target_path: str) -> None:
@@ -815,7 +857,7 @@ BATCHSIZE_CONV_INDICES = [0, 1, 2, 3, 4]
 @app.function(
     image=image,
     volumes={"/data": volume},
-    secrets=[env_secret],
+    secrets=[env_secret, wandb_secret],
     timeout=1800,
     memory=4096,
 )
@@ -910,6 +952,80 @@ def run_baselines(
         f.write(report)
 
     volume.commit()
+
+    # W&B logging — per-retriever summary + artifact upload.
+    # Metrics are logged as a wandb.Table so the dashboard renders the
+    # 4-retriever comparison as a sortable table out of the box. Each
+    # retriever also gets a flat scalar log (retriever/<id>/<metric>)
+    # so the run summary panel surfaces them without a query.
+    wb_run = _wandb_init(
+        job_type="baselines",
+        group=corpus,
+        config={
+            "corpus": corpus,
+            "extractor_model": extractor_model or None,
+            "stratified_sample": stratified_sample or None,
+            "stratify_seed": stratify_seed if stratified_sample else None,
+            "retrievers": BASELINE_IDS,
+        },
+        tags=["phase-12", "baselines", corpus],
+    )
+    if wb_run is not None:
+        try:
+            import wandb
+
+            table = wandb.Table(
+                columns=["retriever", "mrr", "coverage", "n", "n_scored", "latency_ms_avg", "status"]
+            )
+            n_failed = 0
+            for pt in points:
+                rid = pt.get("retrieverId", "?")
+                if "metrics" not in pt:
+                    n_failed += 1
+                    table.add_data(rid, None, None, None, None, None, "ERROR")
+                    wandb.log({f"retriever/{rid}/status": "error"})
+                    continue
+                m = pt.get("metrics") or {}
+                lat = pt.get("latencyMs") or {}
+                lat_avg = lat.get("avg") if isinstance(lat, dict) else lat
+                if not isinstance(lat_avg, (int, float)):
+                    lat_avg = None
+                table.add_data(
+                    rid,
+                    m.get("mrr"),
+                    m.get("coverage"),
+                    m.get("n"),
+                    m.get("n_scored"),
+                    lat_avg,
+                    "ok",
+                )
+                # Flat scalars per retriever for summary panel + sweeps later
+                wandb.log({
+                    f"retriever/{rid}/mrr": m.get("mrr"),
+                    f"retriever/{rid}/coverage": m.get("coverage"),
+                    f"retriever/{rid}/n": m.get("n"),
+                    f"retriever/{rid}/latency_ms_avg": lat_avg,
+                })
+            wandb.log({"baselines/comparison": table})
+            wandb.summary["n_retrievers"] = len(points)
+            wandb.summary["n_failed"] = n_failed
+
+            artifact = wandb.Artifact(
+                name=f"baselines-{corpus}{stem_suffix}",
+                type="bench-result",
+                metadata={
+                    "corpus": corpus,
+                    "timestamp": ts,
+                    "retrievers": BASELINE_IDS,
+                },
+            )
+            artifact.add_file(f"{run_dir}/result.json")
+            artifact.add_file(f"{run_dir}/report.md")
+            wb_run.log_artifact(artifact)
+        except Exception as exc:  # noqa: BLE001
+            print(f"[wandb] logging failed mid-run: {exc}")
+        finally:
+            wb_run.finish()
 
     return {
         "report": report,
@@ -2299,6 +2415,72 @@ def run_consolidation_batchsize_sweep() -> dict:
         f.write(report)
 
     volume.commit()
+
+    # W&B logging — BATCH_SIZE is the x-axis here. Log per-value scalars
+    # against define_metric so the dashboard auto-builds line charts.
+    wb_run = _wandb_init(
+        job_type="batchsize-sweep",
+        group="consolidation",
+        config={
+            "sweep": "batchsize",
+            "values": BATCHSIZE_VALUES,
+            "convs_sampled": BATCHSIZE_CONV_INDICES,
+        },
+        tags=["phase-11", "sweep", "batchsize"],
+    )
+    if wb_run is not None:
+        try:
+            import wandb
+
+            wandb.define_metric("BATCH_SIZE")
+            wandb.define_metric("sweep/*", step_metric="BATCH_SIZE")
+
+            table = wandb.Table(
+                columns=["BATCH_SIZE", "mrr", "coverage", "update_rate", "n", "n_scored"]
+            )
+            for pt in points:
+                bs = pt["overrides"]["BATCH_SIZE"]
+                m = pt["metrics"]
+                wandb.log({
+                    "BATCH_SIZE": bs,
+                    "sweep/mrr": m.get("mrr"),
+                    "sweep/coverage": m.get("coverage"),
+                    "sweep/update_rate": m.get("updateRate"),
+                    "sweep/n": m.get("n"),
+                })
+                table.add_data(
+                    bs,
+                    m.get("mrr"),
+                    m.get("coverage"),
+                    m.get("updateRate"),
+                    m.get("n"),
+                    m.get("n_scored"),
+                )
+            wandb.log({"sweep/table": table})
+
+            if elbow:
+                wandb.summary["elbow/BATCH_SIZE"] = (elbow.get("overrides") or {}).get("BATCH_SIZE")
+                wandb.summary["elbow/rationale"] = elbow.get("rationale")
+
+            artifact = wandb.Artifact(
+                name=f"batchsize-sweep-{ts}",
+                type="bench-sweep",
+                metadata={
+                    "sweep": "batchsize",
+                    "timestamp": ts,
+                    "values": BATCHSIZE_VALUES,
+                    "convs_sampled": BATCHSIZE_CONV_INDICES,
+                    "elbow": elbow,
+                },
+            )
+            artifact.add_file(f"{run_dir}/result.json")
+            artifact.add_file(f"{run_dir}/report.md")
+            wb_run.log_artifact(artifact)
+        except Exception as exc:  # noqa: BLE001
+            print(f"[wandb] logging failed mid-run: {exc}")
+        finally:
+            wb_run.finish()
+
     return {"report": report, "result_json": result_json_str, "run_dir": run_dir}
 
 
@@ -2433,7 +2615,7 @@ def _cartesian_product(knobs):
     return result
 
 
-@app.function(image=image, volumes={"/data": volume}, secrets=[env_secret], timeout=1800, memory=4096)
+@app.function(image=image, volumes={"/data": volume}, secrets=[env_secret, wandb_secret], timeout=1800, memory=4096)
 def run_sweep(sweep_name: str, synthetic: bool = False, corpus: str = "locomo") -> dict:
     """Run a full parameter sweep in parallel via Modal.
 
