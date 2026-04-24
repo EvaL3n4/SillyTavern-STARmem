@@ -25,6 +25,30 @@ import { seedConversation } from './harness/seeder.js';
 import { computeMetrics } from './metrics/retrieval.js';
 
 /**
+ * Resolve the current commit SHA for envSnapshot reproducibility.
+ *
+ * Falls back through: STARMEM_BENCH_GIT_SHA env var, `git rev-parse HEAD`,
+ * or the literal string 'unknown' if neither is available. Never throws —
+ * a missing .git directory should not kill a baseline run (this happened
+ * on 2026-04-24 when Modal's add_local_dir was configured to exclude .git
+ * and execSync's spawn propagated the git error up through the harness).
+ *
+ * @returns {string}
+ */
+function resolveGitSha() {
+    const fromEnv = process.env.STARMEM_BENCH_GIT_SHA;
+    if (fromEnv && fromEnv.trim()) return fromEnv.trim();
+    try {
+        return execSync('git rev-parse HEAD', {
+            encoding: 'utf8',
+            stdio: ['ignore', 'pipe', 'ignore'],
+        }).trim();
+    } catch {
+        return 'unknown';
+    }
+}
+
+/**
  * @typedef {import('./loaders/locomo.js').CorpusConversation} CorpusConversation
  * @typedef {import('./metrics/retrieval.js').MetricsResult} MetricsResult
  * @typedef {import('../src/retrieval/trace.js').Trace} Trace
@@ -131,7 +155,7 @@ export async function runHarness({
             constants: { ...RETRIEVAL, ...CONSOLIDATION },
             scorerId: scorerId ?? getScorerId(),
             nodeVersion: process.version,
-            gitSha: execSync('git rev-parse HEAD', { encoding: 'utf8' }).trim(),
+            gitSha: resolveGitSha(),
         };
 
         return { runs, metrics, envSnapshot };

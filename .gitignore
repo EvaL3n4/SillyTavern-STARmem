@@ -45,3 +45,4 @@ __pycache__/
 # and Modal --local-out mirrors are ephemeral. The Modal Volume
 # (/data/runs/) holds durable copies.
 docs/bench/runs/
+*.log

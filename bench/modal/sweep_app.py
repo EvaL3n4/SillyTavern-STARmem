@@ -1,5 +1,6 @@
 import modal
 import json
+from modal import FilePatternMatcher
 
 app = modal.App("starmem-bench")
 
@@ -13,6 +14,30 @@ image = (
     .add_local_dir(
         "/home/opus/.hermes/profiles/hanami/home/SillyTavern/public/scripts/extensions/third-party/SillyTavern-STARmem",
         "/repo",
+        # Exclude ephemeral + churning paths from the image build hash.
+        # docs/bench/runs/ is actively written by fireworks-warmup.log etc.
+        # during Fireworks jobs; if add_local_dir hashes a file that's
+        # simultaneously being modified, Modal aborts with
+        # "file was modified during build process". .gitignore is NOT
+        # respected by Modal — must use FilePatternMatcher (a plain list
+        # passed to ignore= errors with 'expected str, bytes or os.PathLike
+        # object, not tuple' because Modal tuple-unpacks the sequence
+        # internally).
+        # bench/.cache is also excluded since _install_volume_symlink
+        # replaces it with a Volume symlink at runtime anyway.
+        #
+        # Do NOT exclude .git/: bench/runner.js calls `git rev-parse HEAD`
+        # at runtime to stamp envSnapshot.gitSha for reproducibility, and
+        # without .git the whole baseline run errors out. The JS side has
+        # a defensive fallback now, but shipping .git in the image keeps
+        # artifact metadata accurate. .git is only ~few MB for this repo.
+        ignore=FilePatternMatcher(
+            "docs/bench/runs/**",
+            "bench/.cache/**",
+            "**/*.log",
+            "node_modules/**",
+            ".jest-cache/**",
+        ),
     )
 )
 
@@ -848,7 +873,7 @@ def run_baselines(
         )
         sample_indices_json = json.dumps(indices)
 
-    point_results = list(run_baseline_point.map(
+    point_results = list(run_baseline_point.starmap(
         [(rid, corpus, extractor_model, sample_indices_json) for rid in BASELINE_IDS]
     ))
     points = [json.loads(pr) for pr in point_results]
@@ -898,14 +923,43 @@ def render_baselines_report(payload):
 
     Columns: retriever, MRR, Coverage, R@5, R@10, latency.
     Coverage comes from Task 4; if unavailable, emit '—'.
+
+    Defensive: when a point has no 'metrics' key (i.e. the upstream
+    run_baseline_point hit the error path and returned {"error": ...}),
+    render an ERROR row with the stderr tail and skip it from invariant
+    calculations. The structural invariant check requires both ladder
+    and bm25only to have completed successfully; if either failed, the
+    check is reported as N/A with the failing retriever called out.
     """
     lines = []
     lines.append(f"# Baselines comparison — {payload['timestamp']}")
     lines.append("")
+
+    # Surface failed points first so they're impossible to miss.
+    failed = [p for p in payload["points"] if "error" in p or "metrics" not in p]
+    if failed:
+        lines.append("## ⚠️  Failed retrievers")
+        lines.append("")
+        for pt in failed:
+            rid = pt.get("retrieverId", "?")
+            err = pt.get("error", "no metrics returned")
+            rc = pt.get("returncode", "?")
+            stderr_tail = (pt.get("stderr") or "")[-1000:]
+            lines.append(f"### `{rid}` — {err} (returncode={rc})")
+            lines.append("")
+            if stderr_tail:
+                lines.append("```")
+                lines.append(stderr_tail.strip())
+                lines.append("```")
+                lines.append("")
+
     lines.append("| Retriever | MRR | Coverage | R@5 | R@10 | Latency (ms) |")
     lines.append("|---|---|---|---|---|---|")
     for pt in payload["points"]:
-        rid = pt["retrieverId"]
+        rid = pt.get("retrieverId", "?")
+        if "metrics" not in pt:
+            lines.append(f"| `{rid}` | ERROR | — | — | — | — |")
+            continue
         m = pt.get("metrics", {})
         mrr_v = m.get("mrr", float("nan"))
         cov = m.get("coverage", None)
@@ -913,17 +967,29 @@ def render_baselines_report(payload):
         r10 = m.get("recallAtK", {}).get("10", float("nan"))
         lat = pt.get("latencyMs", float("nan"))
         cov_cell = f"{cov:.4f}" if isinstance(cov, (int, float)) else "—"
+        # Latency may be a dict ({avg, p50, p95, ...}) or a float depending on
+        # which Node code path produced it. Coerce to a float for the cell.
+        lat_val = lat.get("avg") if isinstance(lat, dict) else lat
+        if not isinstance(lat_val, (int, float)):
+            lat_val = float("nan")
         lines.append(
-            f"| `{rid}` | {mrr_v:.4f} | {cov_cell} | {r5:.4f} | {r10:.4f} | {lat:.1f} |"
+            f"| `{rid}` | {mrr_v:.4f} | {cov_cell} | {r5:.4f} | {r10:.4f} | {lat_val:.1f} |"
         )
     lines.append("")
-    # Structural invariant
-    ladder = next((p for p in payload["points"] if p["retrieverId"] == "ladder"), None)
-    bm25 = next((p for p in payload["points"] if p["retrieverId"] == "bm25only"), None)
-    if ladder and bm25:
+    # Structural invariant — only computable when both points succeeded.
+    ladder = next((p for p in payload["points"] if p.get("retrieverId") == "ladder"), None)
+    bm25 = next((p for p in payload["points"] if p.get("retrieverId") == "bm25only"), None)
+    if ladder and bm25 and "metrics" in ladder and "metrics" in bm25:
         delta = ladder["metrics"]["mrr"] - bm25["metrics"]["mrr"]
         verdict = "PASS" if delta >= -0.02 else "FAIL"
         lines.append(f"**Structural invariant (ladder ≥ bm25only − 0.02):** ladder_mrr − bm25only_mrr = {delta:+.4f} → **{verdict}**")
+    else:
+        missing = []
+        if not ladder or "metrics" not in (ladder or {}):
+            missing.append("ladder")
+        if not bm25 or "metrics" not in (bm25 or {}):
+            missing.append("bm25only")
+        lines.append(f"**Structural invariant:** N/A — missing successful run for {', '.join(missing)}")
     report = "\n".join(lines)
     # Append per-task-type slice if any point carries it
     for pt in payload["points"]:
@@ -2475,7 +2541,7 @@ def run_sweep(sweep_name: str, synthetic: bool = False, corpus: str = "locomo") 
 
     # Fan out to parallel containers
     overrides_jsons = [json.dumps(point) for point in grid]
-    point_results = list(run_point.map([(oj, corpus) for oj in overrides_jsons]))
+    point_results = list(run_point.starmap([(oj, corpus) for oj in overrides_jsons]))
 
     points = [json.loads(pr) for pr in point_results]
 
