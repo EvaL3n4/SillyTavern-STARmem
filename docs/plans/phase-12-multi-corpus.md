@@ -3100,4 +3100,14 @@ Run this checklist at the end:
 
 ---
 
+## Phase 13 removal candidates
+
+A running list of architectural dead weight surfaced during Phase 12 work. To be migrated into the Phase 12 retro + ROADMAP "Notes for Phase 13" section at phase close.
+
+- **`TIER2_TAU_CONFIDENCE` and `TIER2_TAU_GAP`** — architecturally dead after Task 1's Tier 2 demolition. The `t2.hit` short-circuit they gated no longer exists; Tier 2 is purely a BM25 seed provider for Tier 3. Kept in `src/core/constants.js` + `_SWEPT_RETRIEVAL_KEYS` for command-template durability and to avoid re-wiring the tau sweep during Phase 12. Also retained: the tau sweep itself (`bench/sweeps/tau.js`, `bench/modal/sweep_app.py::render_tau_report`) is vacuous-by-construction post-demolition (logs flat lines over a dead knob — the exact pattern `detecting-vacuous-metrics` v1.1.0 warns against) and is a removal candidate alongside the constants.
+    - Dropped as a W&B wiring target for that reason (2026-04-24): wiring tau into the dashboard would be a logged-flat-line exercise with zero signal. Graph sweep wired instead.
+    - Removal surface: 2 constant exports, 2 entries in `_SWEPT_RETRIEVAL_KEYS`, `bench/sweeps/tau.js`, `render_tau_report` + its dispatch branch in `run_sweep`, any `TIER2_TAU_GAP=10` entries in `GRAPH_BASE_OVERRIDES` / `RELW_BASE_OVERRIDES` / similar (no longer semantically meaningful after demolition).
+
+---
+
 **End of plan.**
