@@ -148,30 +148,24 @@ export async function starmemInterceptor(chat, _contextSize, _abort, _type) {
             return;
         }
 
-        // Load state + run ladder. retrieve() is pure: returns the new state
-        // with access events applied and the retrieval trace logged. We
-        // persist the new state under the write lock so concurrent
-        // consolidation/retrieval don't interleave.
-        const state = await loadState(chatId);
-        const result = retrieve(state, query, { now: new Date() });
-        const entries = Array.isArray(result?.entries) ? result.entries : [];
+        // Atomically load → retrieve → persist under the write lock so
+        // concurrent consolidation/persona-rebuild commits don't get
+        // overwritten by our stale snapshot (finding #12). retrieve() is
+        // pure; we keep trace persistence for the zero-entry case because
+        // the ladder logs a trace even when no entries survive.
+        const entries = await withWriteLock(chatId, async () => {
+            const state = await loadState(chatId);
+            const result = retrieve(state, query, { now: new Date() });
+            if (result?.state) {
+                await persistState(chatId, result.state);
+            }
+            return Array.isArray(result?.entries) ? result.entries : [];
+        });
 
         if (entries.length === 0) {
-            // Even zero-entry retrievals log a trace — persist it so the
-            // Traces tab reflects the call.
-            if (result?.state) {
-                await withWriteLock(chatId, async () => {
-                    await persistState(chatId, result.state);
-                });
-            }
             log.debug('retrieval returned zero entries');
             return;
         }
-
-        // Persist the state returned by retrieve() (access events + trace).
-        await withWriteLock(chatId, async () => {
-            await persistState(chatId, result.state);
-        });
 
         // Splice into chat.
         const body = formatMemoryMessage(entries);
