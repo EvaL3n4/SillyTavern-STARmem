@@ -2085,6 +2085,110 @@ def run_graph_sweep(synthetic: bool = False) -> dict:
         f.write(report)
     volume.commit()
 
+    # W&B logging — graph coordinate descent. Each round is logged as its
+    # own step_metric so the dashboard renders six separate line charts
+    # (one per knob) instead of collapsing them onto a shared x-axis.
+    # Per-round winners land in wandb.summary; full points land as a
+    # wandb.Table for cross-round inspection. Artifact upload mirrors
+    # the batchsize sweep pattern (9.4.9-Phase-11-Task-7 precedent).
+    wb_run = _wandb_init(
+        job_type="graph-sweep",
+        group="retrieval",
+        config={
+            "sweep": "graph",
+            "synthetic": synthetic,
+            "rounds": [r["knob"] for r in rounds_out],
+            "base_overrides": GRAPH_BASE_OVERRIDES,
+        },
+        tags=["phase-12", "sweep", "graph", "coordinate-descent"],
+    )
+    if wb_run is not None:
+        try:
+            import wandb
+
+            # One step_metric per round, so each knob gets its own x-axis.
+            # Round scalars are namespaced under round/<knob>/ so the
+            # dashboard auto-groups the six line charts.
+            for r in rounds_out:
+                knob = r["knob"]
+                wandb.define_metric(knob)
+                wandb.define_metric(f"round/{knob}/*", step_metric=knob)
+
+            # Cross-round comparison table. One row per point across all
+            # rounds. knob column lets you filter in the UI.
+            table = wandb.Table(
+                columns=[
+                    "round", "knob", "value",
+                    "mrr", "coverage", "n", "n_scored", "n_skipped",
+                    "is_winner",
+                ]
+            )
+
+            n_failed = 0
+            for r in rounds_out:
+                knob = r["knob"]
+                winner_value = r["winner"]["value"]
+                for pt in r["points"]:
+                    value = pt["overrides"].get(knob)
+                    m = pt.get("metrics") or {}
+                    mrr = m.get("mrr")
+                    if mrr is None:
+                        n_failed += 1
+
+                    # Per-round step log — drives the round/<knob>/ line charts.
+                    wandb.log({
+                        knob: value,
+                        f"round/{knob}/mrr": mrr,
+                        f"round/{knob}/coverage": m.get("coverage"),
+                        f"round/{knob}/n_scored": m.get("n_scored"),
+                    })
+
+                    table.add_data(
+                        r["name"],
+                        knob,
+                        value,
+                        mrr,
+                        m.get("coverage"),
+                        m.get("n"),
+                        m.get("n_scored"),
+                        m.get("n_skipped"),
+                        value == winner_value,
+                    )
+
+                # Per-round winner summary.
+                wandb.summary[f"winner/{knob}/value"] = winner_value
+                wandb.summary[f"winner/{knob}/mrr"] = r["winner"]["mrr"]
+
+            wandb.log({"graph/points": table})
+
+            # Composite elbow = stack of all round winners.
+            wandb.summary["composite/overrides"] = json.dumps(
+                payload["composite_elbow"]["overrides"]
+            )
+            wandb.summary["composite/rationale"] = payload["composite_elbow"]["rationale"]
+            wandb.summary["n_rounds"] = len(rounds_out)
+            wandb.summary["n_failed"] = n_failed
+
+            artifact = wandb.Artifact(
+                name=f"graph-sweep-{ts}",
+                type="bench-sweep",
+                metadata={
+                    "sweep": "graph",
+                    "timestamp": ts,
+                    "synthetic": synthetic,
+                    "rounds": [r["knob"] for r in rounds_out],
+                    "base_overrides": GRAPH_BASE_OVERRIDES,
+                    "composite_overrides": payload["composite_elbow"]["overrides"],
+                },
+            )
+            artifact.add_file(os.path.join(run_dir, "result.json"))
+            artifact.add_file(os.path.join(run_dir, "report.md"))
+            wb_run.log_artifact(artifact)
+        except Exception as exc:  # noqa: BLE001
+            print(f"[wandb] logging failed mid-run: {exc}")
+        finally:
+            wb_run.finish()
+
     return {
         "report": report,
         "result_json": result_json_str,
