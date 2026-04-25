@@ -282,7 +282,7 @@ to Llama 3.3."
 
 1. **Decorator pattern check.** This is a single-function app with no orchestrator-calling-per-cell shape. Only one function gets `@app.function`. There is no `.map()` / `.starmap()` fan-out to mismatch.
 
-2. **Per-cell timeout arithmetic.** Worst case: 10,800 batches × ~400 out tok = 4.32M out tok. Conservative aggregate throughput on H100 for 3B-active MoE = 1.5K out tok/s (worst plausible; AA single-stream is 190 tok/s but vLLM continuous batching multiplies by ~10×). 4.32M / 1.5K = ~48 min. With 1.5× safety = ~72 min. **`timeout=3600` is tight against the worst plausible**; bump to `timeout=5400` (90 min) for headroom. If aggregate falls below 1K out tok/s mid-run, abort and escalate before retry.
+2. **Per-cell timeout arithmetic.** Worst case (re-derived 2026-04-25 against verified BS=15 enumeration): 16,682 batches × ~400 out tok = 6.67M out tok. Conservative aggregate throughput on H100 for 3B-active MoE with CUTLASS FP8 (DeepGEMM disabled defensively) = 1.5K out tok/s. 6.67M / 1.5K = ~74 min. With 1.5× safety + engine cold-start: **`timeout=14400` (4h)**. See Decision 8 for full re-derivation. If aggregate falls below 1K out tok/s mid-run, abort and escalate before retry.
 
 3. **Volume non-empty path trap (modal skill §13).** Cache files at `/data/extractions/<sha>.json` already exist from prior LoCoMo extraction work; this function APPENDS, never overwrites unconditionally. The skip-if-exists check in the per-batch loop is the mitigation: every batch checks `os.path.exists(cache_path)` before adding to the dispatch list. Rerun-safe by construction.
 
