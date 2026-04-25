@@ -70,9 +70,17 @@ app = modal.App("starmem-bench-vllm-warmup")
 image = (
     modal.Image.from_registry(
         "vllm/vllm-openai:nightly",
+        # The vllm/vllm-openai image ships only `python3` on PATH (no `python`
+        # symlink). Modal's image probe requires `python` to determine the
+        # version; without this, build fails with `ConflictError: We were
+        # unable to determine the version of Python installed in the Image`.
+        # setup_dockerfile_commands run BEFORE Modal's version check, fixing it.
         # NO add_python: the image already has Python (3.12) with vllm
-        # installed system-wide. Adding a fresh Python 3.11 would shadow
-        # the image's interpreter and produce ModuleNotFoundError: vllm.
+        # installed system-wide. add_python would shadow it and produce
+        # ModuleNotFoundError: vllm.
+        setup_dockerfile_commands=[
+            "RUN ln -sf $(command -v python3) /usr/local/bin/python",
+        ],
     )
     .entrypoint([])  # vLLM image's default entrypoint is `vllm serve`; we run our own fn
     .env({
