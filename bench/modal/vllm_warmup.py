@@ -275,24 +275,27 @@ def warmup(
 
     # Initialize the engine. language_model_only skips the vision encoder;
     # gpu_memory_utilization=0.92 leaves headroom for KV cache spike.
-    # max_model_len capped at 8192 -- extraction prompts are ~1.2K in,
-    # ~400 out, so 8K is comfortable and frees memory for larger batches.
+    # max_model_len=40960 -- LongMemEval-S items are dense per-turn (~3x
+    # LoCoMo), and BS=15 sometimes pushes total prompt past 8K. Empirical
+    # check on the actual enumerator output (2026-04-25, /tmp/full-warmup.jsonl,
+    # 16,682 batches): worst-case prompt is ~26K tokens (~92K chars / 3.5
+    # tokens-per-char). Going to 40K = 26K worst + ~14K headroom for the
+    # extraction output (capped at 2048 anyway). Qwen3.6-35B-A3B natively
+    # supports 32K but the precompiled chat template handles longer.
+    # On H100 80GB with FP8 weights (~35GB) and gpu_memory_utilization=0.92
+    # we have ~39GB for KV cache, comfortable at 40K context for offline
+    # batch dispatch (no concurrent serving).
     # attention_backend=flashinfer + async_scheduling=True per Modal's
     # vLLM throughput guide (modal.com/docs/examples/vllm_throughput).
-    # moe_backend=deep_gemm forces DeepGEMM for the FP8 MoE matmul -- vLLM
-    # auto-selection put MoE on TRITON in the first smoke run while linear
-    # FP8 picked DeepGEMM; for an A3B model the MoE is dominant compute,
-    # so explicitly pinning DeepGEMM is the meaningful win.
-    # gdn_prefill_backend=triton skips the FlashInfer GDN JIT compile step
-    # (~minutes on first chat call); the small throughput penalty is worth
-    # it for predictable wall-clock on warmup runs.
+    # moe_backend=deep_gemm forces DeepGEMM for the FP8 MoE matmul.
+    # gdn_prefill_backend=triton skips the FlashInfer GDN JIT compile.
     llm = LLM(
         model=model,
         dtype="auto",
         trust_remote_code=False,
         language_model_only=True,
         gpu_memory_utilization=0.92,
-        max_model_len=8192,
+        max_model_len=40960,
         enforce_eager=False,
         attention_backend="flashinfer",
         async_scheduling=True,
