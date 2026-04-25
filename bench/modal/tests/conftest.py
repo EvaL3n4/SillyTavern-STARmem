@@ -66,10 +66,16 @@ def _install_modal_stub() -> None:
     _image.run_commands.return_value = _image
     _image.add_local_dir.return_value = _image
     _image.pip_install.return_value = _image
+    _image.entrypoint.return_value = _image
+    _image.env.return_value = _image
 
     class _Image:
         @staticmethod
         def debian_slim(*a, **kw):
+            return _image
+
+        @staticmethod
+        def from_registry(*a, **kw):
             return _image
 
     _modal.Image = _Image

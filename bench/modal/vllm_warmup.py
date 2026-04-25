@@ -55,22 +55,28 @@ app = modal.App("starmem-bench-vllm-warmup")
 # known-good dated nightly via `pip_install("vllm==0.X.Y.devNNN", ...)`
 # rather than rolling back to 0.19.0 stable -- see Decision 10.
 #
-# DeepGEMM disabled via VLLM_USE_DEEP_GEMM=0: nightly imports DeepGEMM
-# lazily for FP8 kernels, but the wheel does not bundle it. Building from
-# source via tools/install_deepgemm.sh adds ~3-5 min per cold image. We
-# fall back to CUTLASS FP8 (~10-20% slower than DeepGEMM on H100, but
-# mature and stable). If we ever want to claw back the throughput, swap
-# to a .run_commands() step that invokes install_deepgemm.sh; until then,
-# CUTLASS is the conservative default.
+# Image: vLLM's official nightly Docker image. DeepGEMM, FlashInfer, and
+# EP kernels are pre-built into it (see vllm-project/vllm docker/Dockerfile
+# extensions-build stage); we inherit zero compatibility risk. Modal pulls
+# the image once and caches by content hash. The previous approach
+# (debian_slim + nightly pip wheel) hit `RuntimeError: DeepGEMM backend
+# not available` on FP8 model load -- the wheel does not bundle DeepGEMM,
+# only the Docker image does.
+#
+# JIT-compiled DeepGEMM kernels are cached on a dedicated Volume at
+# /root/.cache/deepgemm so the first run pays the JIT cost (tens of
+# minutes worst case) and subsequent runs hit the cache in seconds. Same
+# pattern Modal's official sglang_vlm.py example uses.
 image = (
-    modal.Image.debian_slim(python_version="3.11")
-    .pip_install(
-        "vllm",
-        "huggingface_hub>=0.24",
-        pre=True,
-        extra_index_url="https://wheels.vllm.ai/nightly",
+    modal.Image.from_registry(
+        "vllm/vllm-openai:nightly",
+        add_python="3.11",
     )
-    .env({"VLLM_USE_DEEP_GEMM": "0"})
+    .entrypoint([])  # vLLM image's default entrypoint is `vllm serve`; we run our own fn
+    .env({
+        "HF_HUB_CACHE": "/root/.cache/huggingface",
+        "HF_XET_HIGH_PERFORMANCE": "1",  # faster HF model transfers
+    })
 )
 
 # Same Volume as sweep_app.py -- mounted at /data, with /data/extractions
@@ -84,6 +90,14 @@ volume = modal.Volume.from_name("starmem-bench-data", create_if_missing=True)
 # Free win for any rewarm / model swap / sweep iteration.
 hf_cache_volume = modal.Volume.from_name(
     "starmem-vllm-hf-cache", create_if_missing=True
+)
+
+# DeepGEMM JIT kernel cache. DeepGEMM compiles FP8 kernels JIT on first
+# use (the precompiled wheel ships only sources); first run pays the
+# build (tens of minutes worst case for a new model arch), subsequent
+# runs hit this Volume in seconds. Same pattern as Modal's sglang_vlm.py.
+deepgemm_cache_volume = modal.Volume.from_name(
+    "starmem-vllm-deepgemm-cache", create_if_missing=True
 )
 
 
@@ -156,6 +170,7 @@ def _write_cache_file(
     volumes={
         "/data": volume,
         "/root/.cache/huggingface": hf_cache_volume,
+        "/root/.cache/deepgemm": deepgemm_cache_volume,
     },
     gpu="H100",
     timeout=14400,  # 4h -- covers BS=15 worst-case ~2-3h + cold-start headroom
