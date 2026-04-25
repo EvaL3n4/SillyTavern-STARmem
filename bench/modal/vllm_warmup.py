@@ -70,7 +70,9 @@ app = modal.App("starmem-bench-vllm-warmup")
 image = (
     modal.Image.from_registry(
         "vllm/vllm-openai:nightly",
-        add_python="3.11",
+        # NO add_python: the image already has Python (3.12) with vllm
+        # installed system-wide. Adding a fresh Python 3.11 would shadow
+        # the image's interpreter and produce ModuleNotFoundError: vllm.
     )
     .entrypoint([])  # vLLM image's default entrypoint is `vllm serve`; we run our own fn
     .env({
