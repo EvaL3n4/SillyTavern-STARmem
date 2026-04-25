@@ -108,6 +108,12 @@ export function parseArgv(argv) {
                     throw new Error('--limit must be a positive integer');
                 }
                 out.limit = val;
+            } else if (flag === '--batch-size') {
+                const val = Number(argv[++i]);
+                if (!Number.isInteger(val) || val <= 0) {
+                    throw new Error('--batch-size must be a positive integer');
+                }
+                out.batchSize = val;
             } else {
                 throw new Error(`unknown flag: ${flag}`);
             }
@@ -247,26 +253,32 @@ async function main() {
 /**
  * Emit enumerated WarmupBatch entries as JSONL (no API calls).
  *
- * @param {{outPath: string, corpora: string[], model: string, limit?: number}} args
+ * @param {{outPath: string, corpora: string[], model: string, limit?: number, batchSize?: number}} args
  */
 export async function runEnumerate(args) {
-    const { outPath, corpora, model, limit } = args;
+    const { outPath, corpora, model, limit, batchSize } = args;
+    // Live-evidenced override: 2026-04-23 BATCH_SIZE sweep showed BS=15
+    // had peak MRR (0.8370 vs 0.8009 at spec default 5), held at spec
+    // only because ΔMRR < 0.02 amendment threshold. For warmup,
+    // explicit --batch-size lets the caller bump without touching
+    // CONSOLIDATION.BATCH_SIZE globally. Falls through to spec default.
+    const effectiveBatchSize = batchSize ?? CONSOLIDATION.BATCH_SIZE;
 
     /** @type {Array<import('./warmup/enumerate.js').WarmupBatch>} */
     let batches = [];
     for (const corpusName of corpora) {
         const adapter = getAdapter(corpusName);
         const items = await adapter.loadConversations({ offline: true });
+
         const corpusBatches = enumerateWarmupBatches(items, {
             model,
             extractMaxTokens: EXTRACT_MAX_TOKENS,
-            batchSize: CONSOLIDATION.BATCH_SIZE,
+            batchSize: effectiveBatchSize,
         });
         // eslint-disable-next-line no-console
-        console.error(`[enumerate] ${corpusName}: ${items.length} items → ${corpusBatches.length} batches`);
+        console.error(`[enumerate] ${corpusName}: ${items.length} items → ${corpusBatches.length} batches (batchSize=${effectiveBatchSize})`);
         batches = batches.concat(corpusBatches);
     }
-
     if (limit) {
         batches = batches.slice(0, limit);
         // eslint-disable-next-line no-console

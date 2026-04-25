@@ -26,4 +26,14 @@ describe('fireworks-warmup enumerate', () => {
         const r = parseArgv(['enumerate', '/tmp/x.jsonl', '--corpora', 'locomo', '--model', 'foo/bar']);
         expect(r.model).toBe('foo/bar');
     });
+
+    test('parseArgv: --batch-size override applies to enumerate', () => {
+        const r = parseArgv(['enumerate', '/tmp/x.jsonl', '--corpora', 'locomo', '--batch-size', '15']);
+        expect(r.batchSize).toBe(15);
+    });
+
+    test('parseArgv: --batch-size rejects non-positive integers', () => {
+        expect(() => parseArgv(['enumerate', '/tmp/x.jsonl', '--corpora', 'locomo', '--batch-size', '0'])).toThrow(/positive integer/);
+        expect(() => parseArgv(['enumerate', '/tmp/x.jsonl', '--corpora', 'locomo', '--batch-size', 'abc'])).toThrow(/positive integer/);
+    });
 });
