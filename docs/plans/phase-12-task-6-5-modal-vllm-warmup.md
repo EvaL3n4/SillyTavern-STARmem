@@ -36,7 +36,7 @@ The Fireworks code is left in place as historical record + working REST client (
 7. **vLLM flags: `language_model_only=True`** to skip the vision encoder (Qwen3.6-35B-A3B-FP8 ships as image-text-to-text per the model card; we want text-only so the encoder mass doesn't reduce KV cache for our text extraction).
 8. **Per-cell timeout: `timeout=3600`.** Worst-case arithmetic: aggregate vLLM throughput on H100 for 3B-active MoE typically ~3-5K out tok/s. 10,800 batches × ~400 out tok = 4.32M out tok ÷ 3K agg = 24 min. 1.5× safety margin = ~36 min. 3600s = 60 min comfortably covers conservative throughput. If aggregate falls below 1K out tok/s, abort + escalate.
 9. **Cost envelope: ~$1.50–$3.00.** H100 base $3.95/hr, regional 1.25× ≈ $4.94/hr effective. 18-36 min wall-clock × $4.94/hr = $1.50–$3.00. Comfortably inside Modal $30 free credit even with 2 reruns. Honest tripwire: if dashboard total exceeds $5, abort and escalate.
-10. **Image: Modal `python:3.11`, `pip_install("vllm>=0.19.0")` + the existing `add_local_dir` pattern.** Standalone `vllm_warmup.py` Modal app; does NOT share the `starmem-bench` app's image build (vLLM is heavy and we do not want every benchmark container loading it). Separate `app = modal.App("starmem-bench-vllm-warmup")`.
+10. **Image: Modal `python:3.11`, vLLM nightly via `pip install -U --pre vllm --extra-index-url https://wheels.vllm.ai/nightly`.** Standalone `vllm_warmup.py` Modal app; does NOT share the `starmem-bench` app's image build (vLLM is heavy and we do not want every benchmark container loading it). Separate `app = modal.App("starmem-bench-vllm-warmup")`. **Nightly chosen over `vllm>=0.19.0` stable** because Qwen3.6 has open reasoning- and tool-call-path bugs in 0.19.0 that affect our `--reasoning-parser qwen3` fallback (Decision 6 belt-and-suspenders); nightly carries the fixes. Trade-off accepted: nightly carries unrelated regression risk, but our path is narrow (single model, single sampling shape, no tool calls, batch-only). If nightly breaks the smoke (Task 4), pin to the latest dated nightly that worked rather than rolling back to 0.19.0 stable.
 
 ---
 
@@ -283,7 +283,7 @@ to Llama 3.3."
 
 3. **Volume non-empty path trap (modal skill §13).** Cache files at `/data/extractions/<sha>.json` already exist from prior LoCoMo extraction work; this function APPENDS, never overwrites unconditionally. The skip-if-exists check in the per-batch loop is the mitigation: every batch checks `os.path.exists(cache_path)` before adding to the dispatch list. Rerun-safe by construction.
 
-4. **`add_local_dir` is terminal trap (modal skill §10).** No `add_local_dir` is needed for this function — vLLM reads `/data/warmup-input.jsonl` from the volume, writes `/data/extractions/<sha>.json` to the volume. Repo source is not needed inside the container. Image stays minimal: `python:3.11` + `pip_install("vllm>=0.19.0", "huggingface_hub")`.
+4. **`add_local_dir` is terminal trap (modal skill §10).** No `add_local_dir` is needed for this function — vLLM reads `/data/warmup-input.jsonl` from the volume, writes `/data/extractions/<sha>.json` to the volume. Repo source is not needed inside the container. Image stays minimal: `python:3.11` + vLLM nightly + `huggingface_hub`. **Use `.pip_install(...)` with `extra_index_url` and `pre=True` rather than a `.run_commands("pip install ...")` for cache-friendliness** — Modal hashes the image layer by the pip args, so respec'ing the install via a single `pip_install` keeps the rebuild deterministic. Important: nightly wheels are pinned to a specific CUDA build (typically cu128 as of late 2026); Modal's GPU containers ship with a compatible CUDA runtime, so the default `--extra-index-url https://wheels.vllm.ai/nightly` works without an explicit cu-tag. If the install fails on missing cuXXX wheel, downshift to `https://wheels.vllm.ai/nightly+cu121` or whichever the Modal H100 image has.
 
 5. **Honest aggregation (modal skill §8).** Output JSON includes per-prompt `success`/`error` arrays plus a top-level `firstError`. NEVER report top-level success without per-prompt validation: empty `outputs[i].outputs[0].text` is treated as a per-prompt failure (the reasoning-model trap from `batch-api-cache-warmup` skill).
 
@@ -341,12 +341,22 @@ app = modal.App("starmem-bench-vllm-warmup")
 
 # Standalone image — does NOT share the starmem-bench app's image.
 # vLLM is heavy (~few GB) and we do not want every benchmark container
-# loading it. Kept minimal: vllm + huggingface_hub for the model snapshot.
+# loading it. Kept minimal: vllm (NIGHTLY — Qwen3.6 has open bugs in
+# 0.19.0 stable on reasoning/tool-call paths that affect our
+# --reasoning-parser qwen3 fallback) + huggingface_hub for the model
+# snapshot.
+#
+# Nightly install via Modal's pip_install with extra_index_url + pre=True.
+# If a future nightly regresses our smoke (Task 4), pin to the last
+# known-good dated nightly via `pip_install("vllm==0.X.Y.devNNN", ...)`
+# rather than rolling back to 0.19.0 stable — see Decision 10.
 image = (
     modal.Image.debian_slim(python_version="3.11")
     .pip_install(
-        "vllm>=0.19.0",
+        "vllm",
         "huggingface_hub>=0.24",
+        pre=True,
+        extra_index_url="https://wheels.vllm.ai/nightly",
     )
 )
 
