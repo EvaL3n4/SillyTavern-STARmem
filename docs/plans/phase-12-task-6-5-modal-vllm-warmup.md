@@ -34,9 +34,12 @@ The Fireworks code is left in place as historical record + working REST client (
 5. **Custom_id invariant: parallel array zipped with prompts.** Never positional ordering of vLLM outputs. The `_modal-warmup-point.js` regression check is the load-bearing proof — if any miss after warmup, the byte-compat write contract drifted; STOP before Phase 12 Task 7.
 6. **Reasoning suppression: `chat_template_kwargs={"enable_thinking": False}`.** Qwen3.6 thinks by default (per the model card; the `/think` `/nothink` soft switch is NOT supported). The chat-template kwarg suppresses the `<think>` block at generation time. Belt-and-suspenders fallback documented in Task 2 if it leaks: `--reasoning-parser qwen3` + post-strip the reasoning channel before writing cache.
 7. **vLLM flags: `language_model_only=True`** to skip the vision encoder (Qwen3.6-35B-A3B-FP8 ships as image-text-to-text per the model card; we want text-only so the encoder mass doesn't reduce KV cache for our text extraction).
-8. **Per-cell timeout: `timeout=3600`.** Worst-case arithmetic: aggregate vLLM throughput on H100 for 3B-active MoE typically ~3-5K out tok/s. 10,800 batches × ~400 out tok = 4.32M out tok ÷ 3K agg = 24 min. 1.5× safety margin = ~36 min. 3600s = 60 min comfortably covers conservative throughput. If aggregate falls below 1K out tok/s, abort + escalate.
-9. **Cost envelope: ~$1.50–$3.00.** H100 base $3.95/hr, regional 1.25× ≈ $4.94/hr effective. 18-36 min wall-clock × $4.94/hr = $1.50–$3.00. Comfortably inside Modal $30 free credit even with 2 reruns. Honest tripwire: if dashboard total exceeds $5, abort and escalate.
-10. **Image: Modal `python:3.11`, vLLM nightly via `pip install -U --pre vllm --extra-index-url https://wheels.vllm.ai/nightly`.** Standalone `vllm_warmup.py` Modal app; does NOT share the `starmem-bench` app's image build (vLLM is heavy and we do not want every benchmark container loading it). Separate `app = modal.App("starmem-bench-vllm-warmup")`. **Nightly chosen over `vllm>=0.19.0` stable** because Qwen3.6 has open reasoning- and tool-call-path bugs in 0.19.0 that affect our `--reasoning-parser qwen3` fallback (Decision 6 belt-and-suspenders); nightly carries the fixes. Trade-off accepted: nightly carries unrelated regression risk, but our path is narrow (single model, single sampling shape, no tool calls, batch-only). If nightly breaks the smoke (Task 4), pin to the latest dated nightly that worked rather than rolling back to 0.19.0 stable.
+8. **Per-cell timeout: `timeout=14400` (4h).** Worst-case arithmetic *re-derived against actual corpus shape* (post-Task 3 enumerate verification, 2026-04-25): LongMemEval-S 500 items × ~250K total turns ÷ BATCH_SIZE=15 = **16,682 batches** (NOT the ~10,800 figure originally cited — that was lifted from stale notes). Aggregate vLLM throughput on H100 for 3B-active MoE: conservative 1.5K out tok/s, plan median 3K out tok/s. 16,682 batches × ~400 out tok = 6.67M out tok ÷ 1.5K agg = ~74 min worst case. With 1.5× safety margin = ~111 min. `timeout=14400` (240 min) covers worst-case-with-headroom comfortably and gives room for cold-start engine init (~5-10 min on H100 for Qwen3.6-35B-A3B-FP8 cold pull). If aggregate falls below 1K out tok/s mid-run, `skip_existing=True` makes any timeout-and-restart cycle work-preserving.
+
+9. **Cost envelope: ~$3–$5.** H100 base $3.95/hr, regional 1.25× ≈ $4.94/hr effective. At 3K agg tok/s median: 6.67M out tok ÷ 3K = 37 min × $4.94/hr = **$3.05**. At 1.5K conservative: 74 min × $4.94/hr = $6.10. Budget reserves: $30 free credit minus dispatch ≈ $24-27 headroom for re-runs and Phase 12 Task 7 work. Honest tripwire: if dashboard total exceeds $8, abort and escalate.
+
+10. **BATCH_SIZE override: `--batch-size 15` for the warmup enumerator.** Live evidence from `docs/bench/sweeps/2026-04-23-batchsize-live.md` shows BS=15 had peak MRR (0.8370 vs 0.8009 at spec default 5), held at spec only because ΔMRR < 0.02 amendment threshold. For the warmup specifically (where we want fewer-but-richer LLM calls), bumping BS=15 cuts dispatch cost 3× without quality regression — the sweep IS the evidence. The cache key is `(model, messages, maxTokens)`, so this BATCH_SIZE choice locks the cache to BS=15-shaped messages. **Phase 12 Task 7 (λ₁ tripwire) must run baselines with `BATCH_SIZE=15` override** or every cache lookup misses (different `messages` array → different `_cacheKey`). Caveat: the BS sweep was on LoCoMo, not LongMemEval-S; LongMemEval-S items are denser per-turn, so BS behavior could differ — but in the same direction (more context = better keywords). If the Task 4 smoke shows degraded extraction quality, fall back to BS=10 (sweep showed coverage peak there: 0.7337) and re-enumerate.
+11. **Image: Modal `python:3.11`, vLLM nightly via `pip install -U --pre vllm --extra-index-url https://wheels.vllm.ai/nightly`.** Standalone `vllm_warmup.py` Modal app; does NOT share the `starmem-bench` app's image build (vLLM is heavy and we do not want every benchmark container loading it). Separate `app = modal.App("starmem-bench-vllm-warmup")`. **Nightly chosen over `vllm>=0.19.0` stable** because Qwen3.6 has open reasoning- and tool-call-path bugs in 0.19.0 that affect our `--reasoning-parser qwen3` fallback (Decision 6 belt-and-suspenders); nightly carries the fixes. Trade-off accepted: nightly carries unrelated regression risk, but our path is narrow (single model, single sampling shape, no tool calls, batch-only). If nightly breaks the smoke (Task 4), pin to the latest dated nightly that worked rather than rolling back to 0.19.0 stable.
 
 ---
 
@@ -434,7 +437,7 @@ def _write_cache_file(
     image=image,
     volumes={"/data": volume},
     gpu="H100",
-    timeout=5400,  # 90 min — covers worst-case ~72 min + headroom
+    timeout=14400,  # 4h — covers worst-case ~74 min × 1.5 safety + cold-start
     memory=32768,
 )
 def warmup(
@@ -1027,12 +1030,12 @@ circuit. vLLM is mocked — no GPU needed in CI."
 
 ```bash
 node bench/harness/fireworks-warmup.js enumerate /tmp/smoke-warmup.jsonl \
-    --corpora longmemeval-s --limit 5
+    --corpora longmemeval-s --limit 5 --batch-size 15
 ```
 
 Expected stderr:
 ```
-[enumerate] longmemeval-s: 500 items → ~10800 batches
+[enumerate] longmemeval-s: 500 items → ~16700 batches (batchSize=15)
 [enumerate] --limit 5 applied → emitting 5 batches
 [enumerate] wrote 5 batches → /tmp/smoke-warmup.jsonl
 ```
@@ -1104,19 +1107,19 @@ If `<think>` leaks survived `_strip_reasoning`: switch to `--reasoning-parser qw
 
 ## Task 5 (manual): Full dispatch
 
-**Objective:** Warm the entire LongMemEval-S + LoCoMo cache via Modal vLLM. ~10,800 batches, ~30-40 min wall-clock, ~$1.50–$3.00.
+**Objective:** Warm the entire LongMemEval-S + LoCoMo cache via Modal vLLM. ~16,700 batches at BS=15, ~37–75 min wall-clock, ~$3–$6.
 
 **Pre-flight check (per writing-plans skill, modal preflight pattern B):**
-- Worst-case wall-clock arithmetic: 4.32M out tok ÷ 1.5K agg out tok/s = 48 min. With 1.5× safety = 72 min. Function timeout = 5400s (90 min). **Comfortable.**
+- Worst-case wall-clock arithmetic: 6.67M out tok ÷ 1.5K agg out tok/s = 74 min. With 1.5× safety = 111 min. Function timeout = 14400s (240 min). **Comfortable, with cold-start headroom.**
 - If the Task 4 smoke reported `sustainedOutTokPerS < 1000`, escalate before this dispatch — the per-cell timeout is at risk.
 
 **Step 1: Enumerate the full set.**
 
 ```bash
 node bench/harness/fireworks-warmup.js enumerate /tmp/warmup-input.jsonl \
-    --corpora locomo,longmemeval-s
+    --corpora locomo,longmemeval-s --batch-size 15
 wc -l /tmp/warmup-input.jsonl
-# expect: ~10,800 (500 LongMemEval-S items × ~21 batches + 10 LoCoMo × ~30)
+# expect: ~16,700 (LongMemEval-S 16,682 + LoCoMo ~30 at BS=15)
 ```
 
 **Step 2: Upload (force-overwrite the smoke's input).**
