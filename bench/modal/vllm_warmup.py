@@ -54,6 +54,14 @@ app = modal.App("starmem-bench-vllm-warmup")
 # If a future nightly regresses our smoke (Task 4), pin to the last
 # known-good dated nightly via `pip_install("vllm==0.X.Y.devNNN", ...)`
 # rather than rolling back to 0.19.0 stable -- see Decision 10.
+#
+# DeepGEMM disabled via VLLM_USE_DEEP_GEMM=0: nightly imports DeepGEMM
+# lazily for FP8 kernels, but the wheel does not bundle it. Building from
+# source via tools/install_deepgemm.sh adds ~3-5 min per cold image. We
+# fall back to CUTLASS FP8 (~10-20% slower than DeepGEMM on H100, but
+# mature and stable). If we ever want to claw back the throughput, swap
+# to a .run_commands() step that invokes install_deepgemm.sh; until then,
+# CUTLASS is the conservative default.
 image = (
     modal.Image.debian_slim(python_version="3.11")
     .pip_install(
@@ -62,12 +70,21 @@ image = (
         pre=True,
         extra_index_url="https://wheels.vllm.ai/nightly",
     )
+    .env({"VLLM_USE_DEEP_GEMM": "0"})
 )
 
 # Same Volume as sweep_app.py -- mounted at /data, with /data/extractions
 # being the canonical cache directory (symlinked into the repo at
 # bench/.cache/extractions by _install_volume_symlink in sweep_app.py).
 volume = modal.Volume.from_name("starmem-bench-data", create_if_missing=True)
+
+# Dedicated HF weight cache. Per Modal's vLLM throughput guide: mounting
+# /root/.cache/huggingface as a Volume keeps the ~35GB FP8 weights warm
+# across runs, dropping cold-start from ~90-120s to ~20-30s on rerun.
+# Free win for any rewarm / model swap / sweep iteration.
+hf_cache_volume = modal.Volume.from_name(
+    "starmem-vllm-hf-cache", create_if_missing=True
+)
 
 
 # ============================================================
@@ -136,9 +153,12 @@ def _write_cache_file(
 
 @app.function(
     image=image,
-    volumes={"/data": volume},
+    volumes={
+        "/data": volume,
+        "/root/.cache/huggingface": hf_cache_volume,
+    },
     gpu="H100",
-    timeout=5400,  # 90 min -- covers worst-case ~72 min + headroom
+    timeout=14400,  # 4h -- covers BS=15 worst-case ~2-3h + cold-start headroom
     memory=32768,
 )
 def warmup(
@@ -229,6 +249,9 @@ def warmup(
     # gpu_memory_utilization=0.92 leaves headroom for KV cache spike.
     # max_model_len capped at 8192 -- extraction prompts are ~1.2K in,
     # ~400 out, so 8K is comfortable and frees memory for larger batches.
+    # attention_backend=flashinfer + async_scheduling=True per Modal's
+    # vLLM throughput guide (modal.com/docs/examples/vllm_throughput) --
+    # combined ~10-15% throughput uplift on offline batch.
     llm = LLM(
         model=model,
         dtype="auto",
@@ -237,6 +260,8 @@ def warmup(
         gpu_memory_utilization=0.92,
         max_model_len=8192,
         enforce_eager=False,
+        attention_backend="flashinfer",
+        async_scheduling=True,
     )
 
     # Build messages_list parallel to dispatch (NEVER rely on positional
