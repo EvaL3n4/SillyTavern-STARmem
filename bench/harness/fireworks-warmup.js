@@ -23,6 +23,7 @@ import { EXTRACT_MAX_TOKENS } from '../../src/consolidation/extractFacts.js';
 import { CONSOLIDATION } from '../../src/core/constants.js';
 
 const DEFAULT_MODEL = 'accounts/fireworks/models/llama-v3p3-70b-instruct';
+const DEFAULT_VLLM_MODEL = 'Qwen/Qwen3.6-35B-A3B-FP8';
 const CACHE_DIR = path.resolve(
     fileURLToPath(new URL('.', import.meta.url)),
     '..', '.cache', 'extractions',
@@ -82,6 +83,40 @@ export function parseArgv(argv) {
             throw new Error(`${command} requires a submission-id positional argument`);
         }
         return { command, submissionId };
+    }
+
+    if (command === 'enumerate') {
+        const outPath = argv[1];
+        if (!outPath || outPath.startsWith('--')) {
+            throw new Error('enumerate requires <out-path> as positional argument');
+        }
+        const out = { command: 'enumerate', outPath, model: DEFAULT_VLLM_MODEL };
+        let i = 2;
+        while (i < argv.length) {
+            const flag = argv[i];
+            if (flag === '--corpora') {
+                const val = argv[++i];
+                if (!val) throw new Error('enumerate requires --corpora <csv>');
+                out.corpora = val.split(',').map(s => s.trim()).filter(Boolean);
+            } else if (flag === '--model') {
+                const val = argv[++i];
+                if (!val) throw new Error('--model requires a value');
+                out.model = val;
+            } else if (flag === '--limit') {
+                const val = Number(argv[++i]);
+                if (!Number.isInteger(val) || val <= 0) {
+                    throw new Error('--limit must be a positive integer');
+                }
+                out.limit = val;
+            } else {
+                throw new Error(`unknown flag: ${flag}`);
+            }
+            i++;
+        }
+        if (!out.corpora || out.corpora.length === 0) {
+            throw new Error('enumerate requires --corpora');
+        }
+        return out;
     }
 
     throw new Error(`unknown command: ${command}`);
@@ -179,15 +214,6 @@ function generateSubmissionId() {
 // ============================================================
 
 async function main() {
-    // Validate env
-    const apiKey = process.env.FIREWORKS_API_KEY;
-    const accountId = process.env.FIREWORKS_ACCOUNT_ID;
-    if (!apiKey || !accountId) {
-        console.error('fireworks-warmup: FIREWORKS_API_KEY and FIREWORKS_ACCOUNT_ID required');
-        process.exit(2);
-    }
-    const auth = { accountId, apiKey };
-
     let parsed;
     try {
         parsed = parseArgv(process.argv.slice(2));
@@ -196,6 +222,19 @@ async function main() {
         process.exit(2);
     }
 
+    if (parsed.command === 'enumerate') {
+        return runEnumerate(parsed);
+    }
+
+    // Validate env — only needed for Fireworks commands
+    const apiKey = process.env.FIREWORKS_API_KEY;
+    const accountId = process.env.FIREWORKS_ACCOUNT_ID;
+    if (!apiKey || !accountId) {
+        console.error('fireworks-warmup: FIREWORKS_API_KEY and FIREWORKS_ACCOUNT_ID required');
+        process.exit(2);
+    }
+    const auth = { accountId, apiKey };
+
     if (parsed.command === 'submit') {
         await runSubmit(auth, parsed);
     } else if (parsed.command === 'resume') {
@@ -203,6 +242,51 @@ async function main() {
     } else if (parsed.command === 'continue') {
         await runContinue(auth, parsed.submissionId);
     }
+}
+
+/**
+ * Emit enumerated WarmupBatch entries as JSONL (no API calls).
+ *
+ * @param {{outPath: string, corpora: string[], model: string, limit?: number}} args
+ */
+export async function runEnumerate(args) {
+    const { outPath, corpora, model, limit } = args;
+
+    /** @type {Array<import('./warmup/enumerate.js').WarmupBatch>} */
+    let batches = [];
+    for (const corpusName of corpora) {
+        const adapter = getAdapter(corpusName);
+        const items = await adapter.loadConversations({ offline: true });
+        const corpusBatches = enumerateWarmupBatches(items, {
+            model,
+            extractMaxTokens: EXTRACT_MAX_TOKENS,
+            batchSize: CONSOLIDATION.BATCH_SIZE,
+        });
+        // eslint-disable-next-line no-console
+        console.error(`[enumerate] ${corpusName}: ${items.length} items → ${corpusBatches.length} batches`);
+        batches = batches.concat(corpusBatches);
+    }
+
+    if (limit) {
+        batches = batches.slice(0, limit);
+        // eslint-disable-next-line no-console
+        console.error(`[enumerate] --limit ${limit} applied → emitting ${batches.length} batches`);
+    }
+
+    await mkdir(path.dirname(outPath), { recursive: true });
+    const lines = batches.map(b => JSON.stringify({
+        customId: b.customId,
+        model: b.model,
+        messages: b.messages,
+        maxTokens: b.maxTokens,
+        itemId: b.itemId,
+        batchIdxInItem: b.batchIdxInItem,
+    }));
+    await writeFile(outPath, lines.join('\n') + '\n', 'utf8');
+
+    // eslint-disable-next-line no-console
+    console.error(`[enumerate] wrote ${batches.length} batches → ${outPath}`);
+    return { batchCount: batches.length, outPath };
 }
 
 async function runSubmit(auth, parsed) {
