@@ -22,10 +22,10 @@ Run from repo root on the host:
     modal volume put starmem-bench-data /tmp/warmup-input.jsonl /warmup-input.jsonl
 
     # 3. Dispatch (or smoke first; see Task 4):
-    modal run bench/modal/vllm_warmup.py::main
+    modal run bench/modal/vllm_warmup.py
 
     # 4. Regression check (Task 6):
-    modal run bench/modal/sweep_app.py::main --mode run-longmemeval-warmup \\
+    modal run bench/modal/sweep_app.py --mode run-longmemeval-warmup \\
         --corpus-size 3 --warmup-concurrency 1
     # -> expect misses=0 on all 3.
 

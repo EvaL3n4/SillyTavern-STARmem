@@ -321,10 +321,10 @@ Run from repo root on the host:
     modal volume put starmem-bench-data /tmp/warmup-input.jsonl /warmup-input.jsonl
 
     # 3. Dispatch (or smoke first; see Task 4):
-    modal run bench/modal/vllm_warmup.py::main
+    modal run bench/modal/vllm_warmup.py
 
     # 4. Regression check (Task 6):
-    modal run bench/modal/sweep_app.py::main --mode run-longmemeval-warmup \\
+    modal run bench/modal/sweep_app.py --mode run-longmemeval-warmup \\
         --corpus-size 3 --warmup-concurrency 1
     # → expect misses=0 on all 3.
 
@@ -1058,7 +1058,7 @@ Expected: `Uploaded` confirmation. `--force` overwrites any prior input file fro
 **Step 3: Dispatch the smoke.**
 
 ```bash
-modal run bench/modal/vllm_warmup.py::main
+modal run bench/modal/vllm_warmup.py
 ```
 
 Expected wall-clock: ~3-5 min (engine cold-start dominates for a 5-row smoke). Cost: ~$0.30.
@@ -1131,7 +1131,7 @@ modal volume put starmem-bench-data /tmp/warmup-input.jsonl /warmup-input.jsonl 
 **Step 3: Dispatch.**
 
 ```bash
-modal run bench/modal/vllm_warmup.py::main
+modal run bench/modal/vllm_warmup.py
 ```
 
 Watch the Modal dashboard for:
@@ -1169,7 +1169,7 @@ Expected end-of-run JSON:
 **Step 1: Run the regression check.**
 
 ```bash
-modal run bench/modal/sweep_app.py::main \
+modal run bench/modal/sweep_app.py \
     --mode run-longmemeval-warmup \
     --corpus-size 3 \
     --warmup-concurrency 1
