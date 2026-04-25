@@ -103,11 +103,14 @@ hf_cache_volume = modal.Volume.from_name(
 )
 
 # DeepGEMM JIT kernel cache. DeepGEMM compiles FP8 kernels JIT on first
-# use (the precompiled wheel ships only sources); first run pays the
-# build (tens of minutes worst case for a new model arch), subsequent
-# runs hit this Volume in seconds. Same pattern as Modal's sglang_vlm.py.
-deepgemm_cache_volume = modal.Volume.from_name(
-    "starmem-vllm-deepgemm-cache", create_if_missing=True
+# use; first run pays the build (tens of minutes worst case for a new
+# model arch), subsequent runs hit this Volume in seconds. vLLM places
+# the cache at ${VLLM_CACHE_ROOT}/deep_gemm (default VLLM_CACHE_ROOT is
+# /root/.cache/vllm), so we mount /root/.cache/vllm whole -- this also
+# captures vLLM's torch.compile artifacts and CUDA graph captures, which
+# are second-tier-but-real cold-start savings.
+vllm_cache_volume = modal.Volume.from_name(
+    "starmem-vllm-cache", create_if_missing=True
 )
 
 
@@ -180,7 +183,7 @@ def _write_cache_file(
     volumes={
         "/data": volume,
         "/root/.cache/huggingface": hf_cache_volume,
-        "/root/.cache/deepgemm": deepgemm_cache_volume,
+        "/root/.cache/vllm": vllm_cache_volume,
     },
     gpu="H100",
     timeout=14400,  # 4h -- covers BS=15 worst-case ~2-3h + cold-start headroom
@@ -275,8 +278,14 @@ def warmup(
     # max_model_len capped at 8192 -- extraction prompts are ~1.2K in,
     # ~400 out, so 8K is comfortable and frees memory for larger batches.
     # attention_backend=flashinfer + async_scheduling=True per Modal's
-    # vLLM throughput guide (modal.com/docs/examples/vllm_throughput) --
-    # combined ~10-15% throughput uplift on offline batch.
+    # vLLM throughput guide (modal.com/docs/examples/vllm_throughput).
+    # moe_backend=deep_gemm forces DeepGEMM for the FP8 MoE matmul -- vLLM
+    # auto-selection put MoE on TRITON in the first smoke run while linear
+    # FP8 picked DeepGEMM; for an A3B model the MoE is dominant compute,
+    # so explicitly pinning DeepGEMM is the meaningful win.
+    # gdn_prefill_backend=triton skips the FlashInfer GDN JIT compile step
+    # (~minutes on first chat call); the small throughput penalty is worth
+    # it for predictable wall-clock on warmup runs.
     llm = LLM(
         model=model,
         dtype="auto",
@@ -287,6 +296,8 @@ def warmup(
         enforce_eager=False,
         attention_backend="flashinfer",
         async_scheduling=True,
+        moe_backend="deep_gemm",
+        gdn_prefill_backend="triton",
     )
 
     # Build messages_list parallel to dispatch (NEVER rely on positional
