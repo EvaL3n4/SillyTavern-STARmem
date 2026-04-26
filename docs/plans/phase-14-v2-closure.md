@@ -6,7 +6,7 @@
 
 **Architecture:** Three independent threads of work, joined by one Modal warmup gate. Tasks 1–4 are pure controller/subagent work (schema addition, dead-code removal, renderer convention, skill writing) — they run in parallel with Eva's Modal warmup (Task 5). Once warmup lands, Task 6 ships the `EXTRACT_MAX_TOKENS` amendment as a single skill-following unit (sweep → LoCoMo regression smoke → amend + baseline refresh). Task 7 mines the chunkWalls data already produced by Task 6 to answer the variance + slowdown questions. Task 8 closes.
 
-**Tech Stack:** STARmem v2 (vanilla JS ES2022 modules, no build step). `bench/modal/sweep_app.py` (Modal serverless dispatch), `bench/modal/vllm_warmup.py` (cache warmup with `--extract-max-tokens` override), `bench/sweeps/*.js` (Node renderers), Python pytest + Jest unit tests. LongMemEval-S corpus on `Qwen/Qwen3.6-35B-A3B-FP8` via Modal vLLM. v2.0 closure means: no architectural shifts, no λ₁ structural fix (deferred to v2.1).
+**Tech Stack:** STARmem v2 (vanilla JS ES2022 modules, no build step). `bench/modal/sweep_app.py` (Modal serverless dispatch), `bench/modal/vllm_warmup.py` (Volume-resident JSONL → vLLM offline batch; substrate-agnostic, takes only `--input-path` + `--max-tokens-override`), `bench/harness/fireworks-warmup.js enumerate` (host-side batch enumerator that hashes `EXTRACT_MAX_TOKENS` from `constants.js` into customIds), `bench/sweeps/*.js` (Node renderers), Python pytest + Jest unit tests. LongMemEval-S corpus on `Qwen/Qwen3.6-35B-A3B-FP8` via Modal vLLM. v2.0 closure means: no architectural shifts, no λ₁ structural fix (deferred to v2.1).
 
 ---
 
@@ -508,32 +508,53 @@ Expected: skill is present.
 **Owner: Eva (Modal dispatch).**
 
 **Files:**
-- Used: `bench/modal/vllm_warmup.py` — accepts `--extract-max-tokens N` (line ~196), passes through as `max_tokens_override` to per-row dispatch (line ~265)
-- Used: existing Phase 12 Task 6.5 corpus enumerator at `BATCH_SIZE=15` shape, `Qwen/Qwen3.6-35B-A3B-FP8` model
+- Used: `node bench/harness/fireworks-warmup.js enumerate` — host-side enumerator. Pulls `EXTRACT_MAX_TOKENS` from `src/core/constants.js` directly (no flag override exists). Output: a JSONL where every row's `customId` hashes `(model, messages, EXTRACT_MAX_TOKENS)` per `extractionCache._cacheKey`.
+- Used: `bench/modal/vllm_warmup.py` — substrate-agnostic Modal warmup. Reads a Volume-resident JSONL (default `/data/warmup-input.jsonl`, `--input-path` overrides). Has no `--corpus` / `--batch-size` / `--extract-max-tokens` flags — those live on the enumerator side. The `--max-tokens-override` flag here only caps `SamplingParams.max_tokens` at dispatch and **does not change customIds**, so it cannot retarget cache writes to a different `EXTRACT_MAX_TOKENS` shard.
+- Used: existing Phase 12 Task 6.5 corpus enumerator at `BATCH_SIZE=15` shape, `Qwen/Qwen3.6-35B-A3B-FP8` model.
 
-**Step 1: Sanity-check the warmup harness still works at 2048 baseline**
+**Cache-key correctness:** because `EXTRACT_MAX_TOKENS` is hashed into `customId` at enumerate time, the warmup must be done in the constant's reality — temporarily edit `src/core/constants.js`, enumerate, upload, run, revert. Three `EXTRACT_MAX_TOKENS` shards = three constants edits = three enumerator runs = three uploads = three Modal warmups. There is no shortcut. (For Phase 15, wire `--extract-max-tokens` through `enumerate.js` to drop this dance — out of scope for v2.0 closure.)
+
+**Step 1: Sanity-check the harness at the current 2048 default**
+
+No constants edit needed; current default is 2048. Tiny enumeration + upload + warmup, ~$0.10, ~3 min. Confirms harness is healthy before committing $10–16 of Modal time.
 
 ```bash
-modal run bench/modal/vllm_warmup.py \
-  --corpus longmemeval-s \
-  --extractor-model "Qwen/Qwen3.6-35B-A3B-FP8" \
+# enumerate 5 batches at the current EXTRACT_MAX_TOKENS=2048 (matching Phase 12 Task 6.5 cache shard)
+node bench/harness/fireworks-warmup.js enumerate /tmp/warmup-input-2048-smoke.jsonl \
+  --corpora longmemeval-s \
   --batch-size 15 \
-  --extract-max-tokens 2048 \
-  --skip-existing \
-  --max-items 5
+  --limit 5
+modal volume put starmem-bench-data /tmp/warmup-input-2048-smoke.jsonl /warmup-input-2048-smoke.jsonl
+modal run bench/modal/vllm_warmup.py \
+  --input-path /data/warmup-input-2048-smoke.jsonl \
+  --skip-existing
 ```
 
-Expected: Reports `warmedCount=0` (5 items already cached at 2048 from Phase 12 Task 6.5), `failedCount=0`. Confirms the harness is healthy before committing $10-16 of Modal time.
+Expected: `warmedCount=0` (5 items already cached at 2048 from Phase 12 Task 6.5), `failedCount=0`. If `warmedCount=5` instead of 0, the Phase 12 cache shard is missing or the enumerator is producing different customIds than Phase 12 — pause and diagnose, don't proceed to Steps 2–3.
 
 **Step 2: Full warmup at 4096**
 
 ```bash
+# 1. Bump the constant locally (NOT committed; reverted at end of step)
+sed -i 's/EXTRACT_MAX_TOKENS: 2048/EXTRACT_MAX_TOKENS: 4096/' src/core/constants.js
+grep -n "EXTRACT_MAX_TOKENS:" src/core/constants.js  # verify the edit landed exactly once
+
+# 2. Enumerate at the new value (customIds will encode 4096)
+node bench/harness/fireworks-warmup.js enumerate /tmp/warmup-input-4096.jsonl \
+  --corpora longmemeval-s \
+  --batch-size 15
+
+# 3. Upload to Modal Volume
+modal volume put starmem-bench-data /tmp/warmup-input-4096.jsonl /warmup-input-4096.jsonl
+
+# 4. Warmup
 modal run bench/modal/vllm_warmup.py \
-  --corpus longmemeval-s \
-  --extractor-model "Qwen/Qwen3.6-35B-A3B-FP8" \
-  --batch-size 15 \
-  --extract-max-tokens 4096 \
+  --input-path /data/warmup-input-4096.jsonl \
   --skip-existing
+
+# 5. Revert constants.js — Task 6 will sweep the value via setConstantOverrides,
+#    not via the constant directly, so the on-disk source stays at 2048 until Task 6's amend.
+git checkout src/core/constants.js
 ```
 
 Expected: ~2-3h wall-clock (Phase 12 Task 6.5 measured ~74-min worst-case at 1.5K out tok/s; 4096 max output is twice the 2048 ceiling but most batches won't hit it — closer to 2× p95 = ~10-15% slowdown on average). `warmedCount=16,682` (full LongMemEval-S × `BATCH_SIZE=15`), `failedCount=0`.
@@ -542,31 +563,43 @@ If `failedCount > 0`, inspect the diagnostics report; common causes are vLLM eng
 
 **Step 3: Full warmup at 6144**
 
+Same shape as Step 2, with `4096` → `6144` everywhere:
+
 ```bash
+sed -i 's/EXTRACT_MAX_TOKENS: 2048/EXTRACT_MAX_TOKENS: 6144/' src/core/constants.js
+grep -n "EXTRACT_MAX_TOKENS:" src/core/constants.js
+
+node bench/harness/fireworks-warmup.js enumerate /tmp/warmup-input-6144.jsonl \
+  --corpora longmemeval-s \
+  --batch-size 15
+
+modal volume put starmem-bench-data /tmp/warmup-input-6144.jsonl /warmup-input-6144.jsonl
+
 modal run bench/modal/vllm_warmup.py \
-  --corpus longmemeval-s \
-  --extractor-model "Qwen/Qwen3.6-35B-A3B-FP8" \
-  --batch-size 15 \
-  --extract-max-tokens 6144 \
+  --input-path /data/warmup-input-6144.jsonl \
   --skip-existing
+
+git checkout src/core/constants.js
 ```
 
 Expected: similar wall to the 4096 warmup or slightly longer (most batches still well under 6144).
 
-**Step 4: Sanity-verify the three caches coexist**
+**Step 4: Sanity-verify the three shards coexist**
 
 ```bash
-modal volume ls starmem-bench-cache extractions/ | head -20
-# Or via a tiny Modal function that lists cache keys by maxTokens
+modal volume ls starmem-bench-cache extractions/ | wc -l
+# Expect: ~3× the per-shard count from Phase 12 Task 6.5. Three customId shards
+# (each shard = one EXTRACT_MAX_TOKENS value) coexist; cache files are
+# customId-keyed so different shards live as different filenames.
 ```
-
-Expected: cache directory holds three distinct `maxTokens` shards. The 2048 shard is preserved from Phase 12; 4096 and 6144 are fresh from this task.
 
 **Step 5: Eva reports back to controller**
 
 Eva pings controller with: total warmup time, cost (Modal dashboard), `warmedCount` / `failedCount` per dispatch, and a one-line pass/fail. Controller proceeds to Task 6 only if both warmups report `failedCount=0`. If `failedCount > 0` in either, Phase 14 pauses for diagnosis (likely a Decision 7-class issue).
 
-**No commit:** Task 5 produces no source-tree changes. Cache state lives on the Modal Volume.
+**Pre-flight tripwire (added 2026-04-26 after the `--corpus`/`--extract-max-tokens`/`--batch-size` flag drift was caught on a `modal run -h` probe):** before each step, `git diff src/core/constants.js` must show the expected one-line bump, and `node bench/harness/fireworks-warmup.js enumerate -h 2>&1 | head` must confirm the enumerator's flag surface hasn't drifted from this plan. The plan's commands are tied to two surfaces (Node enumerator + Modal warmup); a flag rename in either silently re-targets cache writes at zero error signal.
+
+**No commit:** Task 5 produces no source-tree changes. Cache state lives on the Modal Volume. The `git checkout src/core/constants.js` at end of Steps 2 and 3 reverts the temporary local edit.
 
 ---
 
