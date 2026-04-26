@@ -22,6 +22,20 @@ import { getAdapter } from '../corpora/index.js';
 import { EXTRACT_MAX_TOKENS } from '../../src/consolidation/extractFacts.js';
 import { CONSOLIDATION } from '../../src/core/constants.js';
 
+/**
+ * Validate a submissionId is safe to use as a basename under SUBMISSION_ROOT.
+ * Rejects path separators, `..`, and absolute paths. Finding #7.
+ * @param {string} id
+ */
+function assertSafeSubmissionId(id) {
+    if (typeof id !== 'string' || id.length === 0
+        || id.includes('/') || id.includes('\\')
+        || id.includes('..') || path.isAbsolute(id)
+        || id !== path.basename(id)) {
+        throw new Error(`invalid submission-id '${String(id)}' (must be a basename)`);
+    }
+}
+
 const DEFAULT_MODEL = 'accounts/fireworks/models/llama-v3p3-70b-instruct';
 const DEFAULT_VLLM_MODEL = 'Qwen/Qwen3.6-35B-A3B-FP8';
 const CACHE_DIR = path.resolve(
@@ -66,6 +80,7 @@ export function parseArgv(argv) {
                 const val = argv[++i];
                 if (!val) throw new Error('--submission-id requires a value');
                 out.submissionId = val;
+                assertSafeSubmissionId(val);
             } else {
                 throw new Error(`unknown flag: ${flag}`);
             }
@@ -82,6 +97,7 @@ export function parseArgv(argv) {
         if (!submissionId) {
             throw new Error(`${command} requires a submission-id positional argument`);
         }
+        assertSafeSubmissionId(submissionId);
         return { command, submissionId };
     }
 

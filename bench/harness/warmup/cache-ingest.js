@@ -62,6 +62,16 @@ export async function ingestResults(resultsJsonlPath, opts) {
             errors.push({ customId: '(missing)', reason: 'row missing custom_id' });
             continue;
         }
+        // Validate customId: must be a basename (no separators, not absolute).
+        // Finding #8 (Codex 2026-04-24) — otherwise path.join resolves
+        // arbitrary writes outside cacheDir.
+        if (customId.includes('/') || customId.includes('\\')
+            || customId.includes('..') || path.isAbsolute(customId)
+            || customId !== path.basename(customId)) {
+            skipped++;
+            errors.push({ customId, reason: 'invalid custom_id (path separator or traversal)' });
+            continue;
+        }
         // Status-code semantics differ between Fireworks Batch Inference
         // (BIJ) and OpenAI's Batch API. Fireworks' per-row output omits
         // status_code entirely — failures land in a sibling error-data file.
