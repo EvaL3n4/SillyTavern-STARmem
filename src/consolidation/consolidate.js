@@ -37,7 +37,7 @@ import { CONSOLIDATION } from '../core/constants.js';
 import { addEdge, removeEdge, buildEdges } from '../memory/index.js';
 import { applyUpdateEvent } from '../lifecycle/index.js';
 import { invalidateTier0Cache } from '../retrieval/tier0-exact.js';
-import { extractFacts } from './extractFacts.js';
+import { extractFacts, ExtractionParseError } from './extractFacts.js';
 import { findDuplicate } from './dedup.js';
 import { createLogger } from '../core/logger.js';
 
@@ -68,7 +68,7 @@ const { PERSONA_REBUILD_SUGGESTION_THRESHOLD } = CONSOLIDATION;
  *
  * @param {string} chatId
  * @param {ConsolidateOptions} opts
- * @returns {Promise<{ added: number, updated: number, drained: number } | { skipped: true }>}
+ * @returns {Promise<{ added: number, updated: number, drained: number, parseFailures: number, entriesSkipped: number } | { skipped: true }>}
  */
 export async function consolidate(chatId, opts) {
     if (typeof chatId !== 'string' || chatId.length === 0) {
@@ -101,7 +101,7 @@ export async function consolidate(chatId, opts) {
 
         // Empty-buffer fast path
         if (state.workingBuffer.length === 0) {
-            return { added: 0, updated: 0, drained: 0 };
+            return { added: 0, updated: 0, drained: 0, parseFailures: 0, entriesSkipped: 0 };
         }
 
         // Capture the batch *before* any mutation — if extract fails, we never
@@ -121,7 +121,7 @@ export async function consolidate(chatId, opts) {
             log.warn('consolidate: working buffer references missing entries; cleaning stale ids');
             const s1 = { ...state, workingBuffer: state.workingBuffer.slice(r) };
             await persistState(chatId, s1);
-            return { added: 0, updated: 0, drained: r };
+            return { added: 0, updated: 0, drained: r, parseFailures: 0, entriesSkipped: 0 };
         }
 
         // Build the LLM prompt messages from batch entries
@@ -135,7 +135,7 @@ export async function consolidate(chatId, opts) {
         // state.
         let work = { ...state, runtime: { ...state.runtime, consolidating: true } };
 
-        /** @type {import('../core/schema.js').Entry[]} */
+        /** @type {{ entries: import('../core/schema.js').Entry[], skipped: number }} */
         let extracted;
         try {
             extracted = await extractFacts(batchMessages, {
@@ -145,7 +145,32 @@ export async function consolidate(chatId, opts) {
                 now,
             });
         } catch (err) {
-            // Abort: release lock, no mutation persisted. Buffer intact.
+            // Phase 12 Task 7: parse failures are content-level (model
+            // emitted malformed/truncated JSON), not transport-level.
+            // Treat them as "0 facts extracted" rather than aborting:
+            // drain the buffer, persist, return parseFailures=1 so the
+            // bench harness can report rate. Aborting on parse failure
+            // would leave the buffer over-threshold → next turn re-fires
+            // → same cached bad response → infinite loop on cache replay.
+            if (err instanceof ExtractionParseError) {
+                log.warn(
+                    `consolidate: extraction parse failed (responseLength=${err.responseLength ?? '?'}); ` +
+                    `dropping batch of ${batchEntries.length} entries`,
+                );
+                const drained = {
+                    ...state,
+                    workingBuffer: state.workingBuffer.slice(r),
+                    runtime: {
+                        ...state.runtime,
+                        consolidating: false,
+                        lastConsolidation: (now ?? new Date()).toISOString(),
+                    },
+                };
+                await persistState(chatId, drained);
+                return { added: 0, updated: 0, drained: r, parseFailures: 1, entriesSkipped: 0 };
+            }
+            // Transport / validation / unknown — original behavior:
+            // abort, release lock, no mutation persisted, buffer intact.
             log.error('consolidate: extraction failed, aborting batch', /** @type {any} */(err));
             // Clear the consolidating flag on disk in case a prior run left
             // it set. Cheap, idempotent.
@@ -160,7 +185,7 @@ export async function consolidate(chatId, opts) {
         let updated = 0;
         const clock = now ?? new Date();
 
-        for (const newEntry of extracted) {
+        for (const newEntry of extracted.entries) {
             const allExisting = Object.values(work.entries);
             const dup = findDuplicate(newEntry, allExisting);
             if (dup) {
@@ -223,6 +248,6 @@ export async function consolidate(chatId, opts) {
         };
 
         await persistState(chatId, work);
-        return { added, updated, drained: r };
+        return { added, updated, drained: r, parseFailures: 0, entriesSkipped: extracted.skipped };
     });
 }

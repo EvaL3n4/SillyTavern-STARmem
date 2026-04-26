@@ -42,24 +42,37 @@ function aggregateConsolidationStats(runs) {
     if (!runs[0]?.consolidationStats) return null;
 
     const seen = new Set();
-    const totals = { added: 0, updated: 0, drained: 0, batches: 0 };
+    const totals = { added: 0, updated: 0, drained: 0, batches: 0, parseFailures: 0, entriesSkipped: 0 };
     for (const run of runs) {
         if (seen.has(run.conversationId)) continue;
         seen.add(run.conversationId);
         const cs = run.consolidationStats || {};
-        totals.added   += cs.added   || 0;
-        totals.updated += cs.updated || 0;
-        totals.drained += cs.drained || 0;
-        totals.batches += cs.batches || 0;
+        totals.added         += cs.added         || 0;
+        totals.updated       += cs.updated       || 0;
+        totals.drained       += cs.drained       || 0;
+        totals.batches       += cs.batches       || 0;
+        totals.parseFailures += cs.parseFailures || 0;
+        totals.entriesSkipped += cs.entriesSkipped || 0;
     }
-    const updateRate   = totals.updated / Math.max(1, totals.added + totals.updated);
-    const dedupHitRate = totals.updated / Math.max(1, totals.drained);
-    return { ...totals, updateRate, dedupHitRate };
+    const updateRate     = totals.updated / Math.max(1, totals.added + totals.updated);
+    const dedupHitRate   = totals.updated / Math.max(1, totals.drained);
+    const parseFailRate  = totals.parseFailures / Math.max(1, totals.batches);
+    const entrySkipRate  = totals.entriesSkipped / Math.max(1, totals.added + totals.updated + totals.entriesSkipped);
+    return { ...totals, updateRate, dedupHitRate, parseFailRate, entrySkipRate };
 }
 
 async function main() {
     const overrides = JSON.parse(process.env.STARMEM_OVERRIDES || '{}');
     const corpusName = process.env.STARMEM_BENCH_CORPUS ?? 'locomo';
+
+    // [diag-task-7-cache-miss] Echo cache-key inputs as the sweep entry
+    // point sees them. Pairs with runner.js's post-setConstantOverrides
+    // probe to localize whether (a) overrides arrived in env, (b) JSON
+    // contains BATCH_SIZE, (c) the JS side mutated CONSOLIDATION.
+    // Remove once Phase 12 Task 7 cache-miss is resolved.
+    console.error(`[diag] _modal-point env: corpus=${corpusName} ` +
+        `model=${process.env.STARMEM_BENCH_LLM_MODEL ?? '<unset>'} ` +
+        `overrides=${JSON.stringify(overrides)}`);
     const adapter = getAdapter(corpusName);
     const corpus = await adapter.loadConversations({ offline: true });
 

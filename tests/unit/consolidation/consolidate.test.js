@@ -59,7 +59,7 @@ describe('consolidate', () => {
         await seed();
         _setLLMClientForTests(async () => { throw new Error('should not be called'); });
         const result = await consolidate(CHAT, OPTS);
-        expect(result).toEqual({ added: 0, updated: 0, drained: 0 });
+        expect(result).toEqual({ added: 0, updated: 0, drained: 0, parseFailures: 0, entriesSkipped: 0 });
     });
 
     test('drains up to BATCH_SIZE (5) and adds extracted facts', async () => {
@@ -78,7 +78,7 @@ describe('consolidate', () => {
         }));
 
         const r = await consolidate(CHAT, OPTS);
-        expect(r).toEqual({ added: 2, updated: 0, drained: 5 });
+        expect(r).toEqual({ added: 2, updated: 0, drained: 5, parseFailures: 0, entriesSkipped: 0 });
 
         const after = await loadState(CHAT);
         expect(after.workingBuffer).toHaveLength(2);  // 7 - 5 = 2
@@ -111,7 +111,7 @@ describe('consolidate', () => {
         }));
 
         const r = await consolidate(CHAT, OPTS);
-        expect(r).toEqual({ added: 0, updated: 1, drained: 1 });
+        expect(r).toEqual({ added: 0, updated: 1, drained: 1, parseFailures: 0, entriesSkipped: 0 });
 
         const after = await loadState(CHAT);
         // Existing entry's importance should have bumped from 50 → 55 (applyUpdateEvent adds UPDATE_BONUS=5)
@@ -140,8 +140,14 @@ describe('consolidate', () => {
         expect(after.runtime.lastConsolidation).toBeNull();  // never succeeded
     });
 
-    test('parse failure leaves state intact', async () => {
-        const w = [workingEntry('a')];
+    test('parse failure soft-fails and drains the batch', async () => {
+        // Phase 12 Task 7 behavior change: parse failures (truncation,
+        // malformed JSON) are content-level — drain the batch, persist,
+        // return parseFailures=1 so the bench harness reports rate.
+        // Aborting would leave the buffer over-threshold and re-fire on
+        // every turn against the same cached bad response (infinite
+        // loop on cache replay).
+        const w = Array.from({ length: 7 }, (_, i) => workingEntry(`p${i}`));
         await seed({
             entries: Object.fromEntries(w.map(e => [e.id, e])),
             workingBuffer: w.map(e => e.id),
@@ -149,10 +155,37 @@ describe('consolidate', () => {
 
         _setLLMClientForTests(async () => 'not valid json at all');
 
-        await expect(consolidate(CHAT, OPTS)).rejects.toThrow();
+        const result = await consolidate(CHAT, OPTS);
+        expect(result).toEqual({ added: 0, updated: 0, drained: 5, parseFailures: 1, entriesSkipped: 0 });
+
+        const after = await loadState(CHAT);
+        expect(after.workingBuffer).toHaveLength(2);  // 7 - BATCH_SIZE(5) = 2
+        // No new episodic entries from the parse-failed batch — only
+        // the seven Working entries we started with should remain.
+        const episodicCount = Object.values(after.entries)
+            .filter(e => e.scope === 'episodic').length;
+        expect(episodicCount).toBe(0);
+        // Lock released, consolidating flag cleared, state persisted.
+        expect(after.runtime.consolidating).toBe(false);
+    });
+
+    test('LLM transport failure still aborts and leaves state intact', async () => {
+        // Distinguishes from parse-failure behavior above: a transport
+        // / network / 4xx-5xx error is potentially transient, so we
+        // preserve the buffer for natural retry on the next trigger.
+        const w = [workingEntry('a')];
+        await seed({
+            entries: Object.fromEntries(w.map(e => [e.id, e])),
+            workingBuffer: w.map(e => e.id),
+        });
+
+        _setLLMClientForTests(async () => { throw new Error('connection reset'); });
+
+        await expect(consolidate(CHAT, OPTS)).rejects.toThrow('connection reset');
 
         const after = await loadState(CHAT);
         expect(after.workingBuffer).toHaveLength(1);
+        expect(after.runtime.consolidating).toBe(false);
     });
 
     test('invalidates Tier 0 cache after a successful run', async () => {

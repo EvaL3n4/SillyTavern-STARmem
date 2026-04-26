@@ -136,25 +136,31 @@ function renderReport(result, corpus, primaryMetric) {
     // Aggregate consolidation stats per point
     for (const point of result.points) {
         const seen = new Set();
-        const totals = { added: 0, updated: 0, drained: 0, batches: 0 };
+        const totals = { added: 0, updated: 0, drained: 0, batches: 0, parseFailures: 0, entriesSkipped: 0 };
         const allFactLengths = [];
         for (const run of point.runs) {
             if (seen.has(run.conversationId)) continue;
             seen.add(run.conversationId);
-            totals.added   += run.consolidationStats.added;
-            totals.updated += run.consolidationStats.updated;
-            totals.drained += run.consolidationStats.drained;
-            totals.batches += run.consolidationStats.batches;
+            totals.added         += run.consolidationStats.added;
+            totals.updated       += run.consolidationStats.updated;
+            totals.drained       += run.consolidationStats.drained;
+            totals.batches       += run.consolidationStats.batches;
+            totals.parseFailures += run.consolidationStats.parseFailures ?? 0;
+            totals.entriesSkipped += run.consolidationStats.entriesSkipped ?? 0;
             allFactLengths.push(...run.consolidationStats.factLengths);
         }
 
-        const updateRate = totals.updated / Math.max(1, totals.added + totals.updated);
-        const dedupHitRate = totals.updated / Math.max(1, totals.drained);
+        const updateRate    = totals.updated / Math.max(1, totals.added + totals.updated);
+        const dedupHitRate  = totals.updated / Math.max(1, totals.drained);
+        const parseFailRate = totals.parseFailures / Math.max(1, totals.batches);
+        const entrySkipRate = totals.entriesSkipped / Math.max(1, totals.added + totals.updated + totals.entriesSkipped);
 
         point.aggStats = {
             ...totals,
             updateRate,
             dedupHitRate,
+            parseFailRate,
+            entrySkipRate,
             factLengths: percentiles(allFactLengths),
         };
     }

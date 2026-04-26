@@ -188,7 +188,7 @@ async function pushWorking(chatId, content, msgIdx, now) {
  * @param {string} [opts.chatIdPrefix='bench']
  * @param {Date} [opts.now=new Date('2026-04-20T10:00:00Z')]
  * @param {boolean} [opts.keepBackend=false]
- * @returns {Promise<{ chatId: string, stateHash: string, factCount: number, turnsProcessed: number, consolidationStats: { added: number, updated: number, drained: number, batches: number, factLengths: number[] } }>}
+ * @returns {Promise<{ chatId: string, stateHash: string, factCount: number, turnsProcessed: number, consolidationStats: { added: number, updated: number, drained: number, batches: number, parseFailures: number, entriesSkipped: number, factLengths: number[] } }>}
  */
 export async function seedConversation(conv, opts = {}) {
     const {
@@ -215,7 +215,7 @@ export async function seedConversation(conv, opts = {}) {
     // Seed initial empty state
     store.set(chatId, createEmptyState());
 
-    const consolidationStats = { added: 0, updated: 0, drained: 0, batches: 0, factLengths: [] };
+    const consolidationStats = { added: 0, updated: 0, drained: 0, batches: 0, parseFailures: 0, entriesSkipped: 0, factLengths: [] };
 
     try {
         for (let i = 0; i < conv.turns.length; i++) {
@@ -234,9 +234,11 @@ export async function seedConversation(conv, opts = {}) {
                 now,
             });
             if (consResult && typeof consResult === 'object' && !('skipped' in consResult)) {
-                consolidationStats.added   += consResult.added   ?? 0;
-                consolidationStats.updated += consResult.updated ?? 0;
-                consolidationStats.drained += consResult.drained ?? 0;
+                consolidationStats.added         += consResult.added         ?? 0;
+                consolidationStats.updated       += consResult.updated       ?? 0;
+                consolidationStats.drained       += consResult.drained       ?? 0;
+                consolidationStats.parseFailures += consResult.parseFailures ?? 0;
+                consolidationStats.entriesSkipped += consResult.entriesSkipped ?? 0;
                 consolidationStats.batches += 1;
             }
         }
@@ -259,9 +261,11 @@ export async function seedConversation(conv, opts = {}) {
             if (!drainResult || typeof drainResult !== 'object' || ('skipped' in drainResult) || (drainResult.drained ?? 0) === 0) {
                 break;
             }
-            consolidationStats.added   += drainResult.added   ?? 0;
-            consolidationStats.updated += drainResult.updated ?? 0;
-            consolidationStats.drained += drainResult.drained ?? 0;
+            consolidationStats.added         += drainResult.added         ?? 0;
+            consolidationStats.updated       += drainResult.updated       ?? 0;
+            consolidationStats.drained       += drainResult.drained       ?? 0;
+            consolidationStats.parseFailures += drainResult.parseFailures ?? 0;
+            consolidationStats.entriesSkipped += drainResult.entriesSkipped ?? 0;
             consolidationStats.batches += 1;
         }
 

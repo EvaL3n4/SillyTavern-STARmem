@@ -63,29 +63,78 @@ Rules:
  */
 
 /**
+ * Thrown when the model's response is unparseable as JSON (truncation,
+ * malformed output, etc). Distinct from transport / 4xx / 5xx errors so
+ * callers can apply different policies — e.g. `consolidate()` drops a
+ * parse-failed batch and drains the buffer (treats it as "0 facts
+ * extracted") rather than aborting the entire run, which would leave the
+ * buffer over-threshold and re-fire on the next turn.
+ *
+ * Phase 12 Task 7: surfaced when the Modal vLLM warmup wrote
+ * truncated responses to the on-disk cache (EXTRACT_MAX_TOKENS=2048
+ * ceiling hit on dense LongMemEval-S batches), which then fail to parse
+ * on cache replay during sweeps.
+ */
+export class ExtractionParseError extends Error {
+    /**
+     * @param {string} message
+     * @param {{cause?: unknown, responseLength?: number}} [opts]
+     */
+    constructor(message, opts) {
+        super(message);
+        this.name = 'ExtractionParseError';
+        if (opts?.cause !== undefined) this.cause = opts.cause;
+        if (opts?.responseLength !== undefined) this.responseLength = opts.responseLength;
+    }
+}
+
+/**
  * Try to extract a JSON object from a model response. Strips ```json ... ```
  * fences if present, trims whitespace. Does NOT attempt to repair invalid JSON.
  *
  * @param {string} raw
  * @returns {unknown}
+ * @throws {ExtractionParseError} when raw cannot be parsed as JSON.
  */
 export function parseLLMJson(raw) {
     if (typeof raw !== 'string') {
-        throw new Error('parseLLMJson: expected a string');
+        throw new ExtractionParseError('parseLLMJson: expected a string');
     }
     let s = raw.trim();
     // Strip ```json ... ``` or ``` ... ``` fences
     const fenced = s.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/);
     if (fenced) s = fenced[1].trim();
-    return JSON.parse(s);
+    try {
+        return JSON.parse(s);
+    } catch (err) {
+        throw new ExtractionParseError(
+            `parseLLMJson: invalid JSON: ${/** @type {Error} */ (err).message}`,
+            { cause: err, responseLength: raw.length },
+        );
+    }
 }
 
 /**
- * Validate the parsed-JSON shape. Returns the entries array on success;
- * throws on any structural problem.
+ * Validate the parsed-JSON shape. Returns the valid entries plus a count
+ * of entries that were skipped due to per-entry shape problems.
+ *
+ * Phase 12 Task 7 behavior change: per-entry validation failures are
+ * skipped silently with a reason recorded, rather than aborting the
+ * whole batch. Rationale — Qwen3.6 (and other well-behaved extractors)
+ * occasionally emits an `entries: []`-shaped null fact (empty content,
+ * usually for hypothetical / no-extractable-claims turns like logic
+ * puzzles). Dropping those individual entries yields the right number
+ * of facts; aborting the batch loses every other valid extraction in
+ * the same response. Same policy already applies to `contradicts`
+ * relations (reserved per spec §4).
+ *
+ * Root-level shape errors (non-object, missing entries array) still
+ * throw — those signal a model/prompt mismatch we can't recover from
+ * by skipping individuals.
  *
  * @param {unknown} parsed
- * @returns {Array<{content: string, subject: string | null, tags: string[], relations: Array<{type: string, target: string}>}>}
+ * @returns {{ specs: Array<{content: string, subject: string | null, tags: string[], relations: Array<{type: string, target: string}>}>, skipped: number, skipReasons: string[] }}
+ * @throws when the root shape is invalid (not an object, missing entries array).
  */
 export function validateExtractionShape(parsed) {
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
@@ -96,56 +145,59 @@ export function validateExtractionShape(parsed) {
         throw new Error('extractFacts: response.entries must be an array');
     }
     /** @type {Array<{content: string, subject: string | null, tags: string[], relations: Array<{type: string, target: string}>}>} */
-    const out = [];
+    const specs = [];
+    const skipReasons = [];
     for (let i = 0; i < root.entries.length; i++) {
-        const raw = root.entries[i];
-        if (!raw || typeof raw !== 'object') {
-            throw new Error(`extractFacts: entries[${i}] must be an object`);
-        }
-        const e = /** @type {Record<string, unknown>} */ (raw);
-        if (typeof e.content !== 'string' || e.content.length === 0) {
-            throw new Error(`extractFacts: entries[${i}].content must be a non-empty string`);
-        }
-        const subject = e.subject === null || e.subject === undefined
-            ? null
-            : typeof e.subject === 'string'
-                ? e.subject
-                : null;
-        if (e.subject !== null && e.subject !== undefined && typeof e.subject !== 'string') {
-            throw new Error(`extractFacts: entries[${i}].subject must be string or null`);
-        }
-        const tagsRaw = e.tags ?? [];
-        if (!Array.isArray(tagsRaw) || !tagsRaw.every(t => typeof t === 'string')) {
-            throw new Error(`extractFacts: entries[${i}].tags must be string[]`);
-        }
-        const relsRaw = e.relations ?? [];
-        if (!Array.isArray(relsRaw)) {
-            throw new Error(`extractFacts: entries[${i}].relations must be an array`);
-        }
-        /** @type {Array<{type: string, target: string}>} */
-        const rels = [];
-        for (let j = 0; j < relsRaw.length; j++) {
-            const r = /** @type {Record<string, unknown>} */ (relsRaw[j]);
-            if (!r || typeof r !== 'object'
-                || typeof r.type !== 'string'
-                || typeof r.target !== 'string'
-                || r.target.length === 0) {
-                throw new Error(`extractFacts: entries[${i}].relations[${j}] must be { type, target }`);
+        try {
+            const raw = root.entries[i];
+            if (!raw || typeof raw !== 'object') {
+                throw new Error(`entries[${i}] must be an object`);
             }
-            if (!ALL_EDGE_TYPES.includes(/** @type {any} */ (r.type))) {
-                throw new Error(`extractFacts: entries[${i}].relations[${j}].type invalid: ${r.type}`);
+            const e = /** @type {Record<string, unknown>} */ (raw);
+            if (typeof e.content !== 'string' || e.content.length === 0) {
+                throw new Error(`entries[${i}].content must be a non-empty string`);
             }
-            if (r.type === 'contradicts') {
-                // Reserved per spec §4. Drop silently rather than fail — drift
-                // detection is a v2.1 concern; permissive here means a
-                // forward-compatible model doesn't break v2.0.
-                continue;
+            const subject = e.subject === null || e.subject === undefined
+                ? null
+                : typeof e.subject === 'string'
+                    ? e.subject
+                    : null;
+            if (e.subject !== null && e.subject !== undefined && typeof e.subject !== 'string') {
+                throw new Error(`entries[${i}].subject must be string or null`);
             }
-            rels.push({ type: r.type, target: r.target });
+            const tagsRaw = e.tags ?? [];
+            if (!Array.isArray(tagsRaw) || !tagsRaw.every(t => typeof t === 'string')) {
+                throw new Error(`entries[${i}].tags must be string[]`);
+            }
+            const relsRaw = e.relations ?? [];
+            if (!Array.isArray(relsRaw)) {
+                throw new Error(`entries[${i}].relations must be an array`);
+            }
+            /** @type {Array<{type: string, target: string}>} */
+            const rels = [];
+            for (let j = 0; j < relsRaw.length; j++) {
+                const r = /** @type {Record<string, unknown>} */ (relsRaw[j]);
+                if (!r || typeof r !== 'object'
+                    || typeof r.type !== 'string'
+                    || typeof r.target !== 'string'
+                    || r.target.length === 0) {
+                    throw new Error(`entries[${i}].relations[${j}] must be { type, target }`);
+                }
+                if (!ALL_EDGE_TYPES.includes(/** @type {any} */ (r.type))) {
+                    throw new Error(`entries[${i}].relations[${j}].type invalid: ${r.type}`);
+                }
+                if (r.type === 'contradicts') {
+                    // Reserved per spec §4. Drop silently rather than fail.
+                    continue;
+                }
+                rels.push({ type: r.type, target: r.target });
+            }
+            specs.push({ content: e.content, subject, tags: [...tagsRaw], relations: rels });
+        } catch (err) {
+            skipReasons.push(/** @type {Error} */ (err).message);
         }
-        out.push({ content: e.content, subject, tags: [...tagsRaw], relations: rels });
     }
-    return out;
+    return { specs, skipped: skipReasons.length, skipReasons };
 }
 
 /**
@@ -165,12 +217,16 @@ export function renderExtractionPrompt(batch) {
 }
 
 /**
- * Extract facts from a batch. Returns newly-built Episodic Entry objects,
- * ready for dedup + addEdge. Throws on LLM/parse/validation failure.
+ * Extract facts from a batch. Returns newly-built Episodic Entry objects
+ * ready for dedup + addEdge, plus a count of per-entry validation skips.
+ *
+ * Throws on transport / parse / root-shape failure (still aborts batch).
+ * Per-entry validation failures are absorbed silently and surfaced via
+ * the `skipped` counter — see validateExtractionShape for rationale.
  *
  * @param {BatchMessage[]} batch
  * @param {ExtractContext} context
- * @returns {Promise<import('../core/schema.js').Entry[]>}
+ * @returns {Promise<{ entries: import('../core/schema.js').Entry[], skipped: number }>}
  */
 export async function extractFacts(batch, context) {
     if (!Array.isArray(batch) || batch.length === 0) {
@@ -193,19 +249,20 @@ export async function extractFacts(batch, context) {
     const messages = renderExtractionPrompt(batch);
     const raw = await callLLM(profileId, messages, EXTRACT_MAX_TOKENS);
     const parsed = parseLLMJson(raw);
-    const specs = validateExtractionShape(parsed);
+    const { specs, skipped } = validateExtractionShape(parsed);
 
     const clock = now ?? new Date();
-    return specs.map(s => createEntry({
+    const entries = specs.map(s => createEntry({
         scope: 'episodic',
         content: s.content,
         subject: s.subject,
         tags: s.tags,
-        relations: /** @type {any} */ (s.relations),  // validated types narrowed to ALL_EDGE_TYPES above
+        relations: /** @type {any} */ (s.relations),
         provenance: {
             sourceMessages: [...sourceMessageIndices],
             extractor: extractorLabel,
         },
         now: clock,
     }));
+    return { entries, skipped };
 }

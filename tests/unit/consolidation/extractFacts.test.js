@@ -33,7 +33,7 @@ describe('parseLLMJson', () => {
 
 describe('validateExtractionShape', () => {
     test('accepts empty entries list', () => {
-        expect(validateExtractionShape({ entries: [] })).toEqual([]);
+        expect(validateExtractionShape({ entries: [] })).toEqual({ specs: [], skipped: 0, skipReasons: [] });
     });
     test('rejects non-object root', () => {
         expect(() => validateExtractionShape([])).toThrow(/JSON object/);
@@ -43,22 +43,34 @@ describe('validateExtractionShape', () => {
     });
     test('accepts minimal entry (content + subject only)', () => {
         const out = validateExtractionShape({ entries: [{ content: 'x', subject: 'alice' }] });
-        expect(out).toEqual([{ content: 'x', subject: 'alice', tags: [], relations: [] }]);
+        expect(out.specs).toEqual([{ content: 'x', subject: 'alice', tags: [], relations: [] }]);
+        expect(out.skipped).toBe(0);
     });
     test('accepts null subject', () => {
         const out = validateExtractionShape({ entries: [{ content: 'x', subject: null }] });
-        expect(out[0].subject).toBeNull();
+        expect(out.specs[0].subject).toBeNull();
     });
-    test('rejects empty content', () => {
-        expect(() => validateExtractionShape({ entries: [{ content: '', subject: 'a' }] })).toThrow(/content/);
+    test('skips empty content (Phase 12 Task 7: per-entry soft-fail)', () => {
+        const out = validateExtractionShape({ entries: [{ content: '', subject: 'a' }] });
+        expect(out.specs).toEqual([]);
+        expect(out.skipped).toBe(1);
+        expect(out.skipReasons[0]).toMatch(/content/);
     });
-    test('rejects invalid edge type', () => {
-        expect(() => validateExtractionShape({
-            entries: [{
-                content: 'x', subject: 'a',
-                relations: [{ type: 'bogus', target: 't' }],
-            }],
-        })).toThrow(/relations\[0\]\.type invalid/);
+    test('skips entry with invalid edge type (other entries survive)', () => {
+        const out = validateExtractionShape({
+            entries: [
+                { content: 'good', subject: 'a' },
+                {
+                    content: 'bad', subject: 'a',
+                    relations: [{ type: 'bogus', target: 't' }],
+                },
+                { content: 'also good', subject: 'b' },
+            ],
+        });
+        expect(out.specs).toHaveLength(2);
+        expect(out.specs.map(s => s.content)).toEqual(['good', 'also good']);
+        expect(out.skipped).toBe(1);
+        expect(out.skipReasons[0]).toMatch(/relations\[0\]\.type invalid/);
     });
     test('silently drops contradicts relations (reserved per spec §4)', () => {
         const out = validateExtractionShape({
@@ -70,7 +82,8 @@ describe('validateExtractionShape', () => {
                 ],
             }],
         });
-        expect(out[0].relations).toEqual([{ type: 'mentions', target: 'ep_1' }]);
+        expect(out.specs[0].relations).toEqual([{ type: 'mentions', target: 'ep_1' }]);
+        expect(out.skipped).toBe(0);  // contradicts is dropped quietly, not counted as skip
     });
 });
 
@@ -99,16 +112,18 @@ describe('extractFacts (end-to-end with mocked LLM)', () => {
             [{ role: 'user', content: 'i went to marseille' }],
             CTX,
         );
-        expect(out).toHaveLength(1);
-        expect(out[0].scope).toBe('episodic');
-        expect(out[0].content).toBe('alice traveled to marseille');
-        expect(out[0].subject).toBe('alice');
-        expect(out[0].tags).toEqual(['travel']);
-        expect(out[0].relations).toEqual([]);
-        expect(out[0].provenance.sourceMessages).toEqual([0, 1, 2]);
-        expect(out[0].provenance.extractor).toBe('gemma-4-31b@consolidation-v1');
-        expect(out[0].lifecycle.importance).toBe(50);
-        expect(out[0].lifecycle.maturity).toBe('draft');
+        expect(out.entries).toHaveLength(1);
+        expect(out.skipped).toBe(0);
+        const e = out.entries[0];
+        expect(e.scope).toBe('episodic');
+        expect(e.content).toBe('alice traveled to marseille');
+        expect(e.subject).toBe('alice');
+        expect(e.tags).toEqual(['travel']);
+        expect(e.relations).toEqual([]);
+        expect(e.provenance.sourceMessages).toEqual([0, 1, 2]);
+        expect(e.provenance.extractor).toBe('gemma-4-31b@consolidation-v1');
+        expect(e.lifecycle.importance).toBe(50);
+        expect(e.lifecycle.maturity).toBe('draft');
     });
 
     test('propagates LLM errors', async () => {
@@ -123,7 +138,7 @@ describe('extractFacts (end-to-end with mocked LLM)', () => {
             .rejects.toThrow(/JSON/i);
     });
 
-    test('throws on shape-mismatch response', async () => {
+    test('throws on root shape-mismatch response (not an entries array)', async () => {
         _setLLMClientForTests(async () => JSON.stringify({ wrong: 'shape' }));
         await expect(extractFacts([{ role: 'user', content: 'x' }], CTX))
             .rejects.toThrow(/entries must be an array/);
@@ -132,7 +147,25 @@ describe('extractFacts (end-to-end with mocked LLM)', () => {
     test('handles empty-entries response (nothing durable)', async () => {
         _setLLMClientForTests(async () => '{"entries":[]}');
         const out = await extractFacts([{ role: 'user', content: 'lol' }], CTX);
-        expect(out).toEqual([]);
+        expect(out.entries).toEqual([]);
+        expect(out.skipped).toBe(0);
+    });
+
+    test('Phase 12 Task 7: keeps valid entries when one entry has empty content', async () => {
+        _setLLMClientForTests(async () => JSON.stringify({
+            entries: [
+                { content: 'alice likes coffee', subject: 'alice' },
+                { content: '', subject: 'alice' },  // null fact (e.g. logic puzzle turn)
+                { content: 'bob is a chef', subject: 'bob' },
+            ],
+        }));
+        const out = await extractFacts(
+            [{ role: 'user', content: 'mixed' }],
+            CTX,
+        );
+        expect(out.entries).toHaveLength(2);
+        expect(out.skipped).toBe(1);
+        expect(out.entries.map(e => e.content)).toEqual(['alice likes coffee', 'bob is a chef']);
     });
 
     test('rejects bad context (missing profileId)', async () => {
