@@ -245,9 +245,56 @@ def test_render_by_task_type_canonical_order():
 # --- Phase 12 Task 7: extractor_model + lambda1_tripwire wiring ----------
 
 
+def _default_ok_chunk_payload():
+    """Phase 13: minimal ok payload from a chunk run. Capture-style starmap
+    tests need to return this for each arg so the cell aggregator doesn't
+    treat every cell as 'no_chunks_returned' and abort with all-fail
+    RuntimeError. Tests that ONLY care about starmap input shape can use
+    a capture function that returns these for every arg."""
+    import json as _json
+    return _json.dumps({
+        "overrides": {"PLACEHOLDER": 1},
+        "itemIndices": [0],
+        "runs": [],
+        "metrics": {},
+        "latencyMs": {"p50": 0, "p95": 0},
+        "runCount": 0,
+        "wallMs": 0,
+        "aggStats": None,
+    })
+
+
+def _stub_recompute_subprocess():
+    """Phase 13: run_sweep subprocess.run()'s the _recompute-metrics.js
+    helper per cell. Stub it to return a deterministic minimal payload
+    so capture-style tests don't need a real Node binary."""
+    import json as _json
+    import subprocess as _subprocess
+
+    class _StubResult:
+        returncode = 0
+        stdout = _json.dumps({
+            "metrics": {
+                "mrr": 0.0,
+                "coverage": 0.0,
+                "n_scored": 0,
+                "n_skipped": 0,
+                "recallAtK": {"1": 0.0, "3": 0.0, "5": 0.0, "10": 0.0},
+                "precisionAtK": {"1": 0.0, "3": 0.0, "5": 0.0, "10": 0.0},
+            },
+            "aggStats": None,
+        })
+        stderr = ""
+
+    return patch.object(_subprocess, "run", lambda *a, **k: _StubResult())
+
+
 def _patched_run_sweep_env():
     """Common context-managers for run_sweep tests — stubs file I/O and
     the symlink installer so the test stays in pure-helper territory.
+
+    Phase 13: also stubs the _recompute-metrics.js subprocess.run call
+    so capture-style tests don't need Node available.
     """
     return [
         patch.object(sweep_app, "_install_volume_symlink", lambda *a, **k: None),
@@ -255,6 +302,7 @@ def _patched_run_sweep_env():
         patch.object(sweep_app, "volume", MagicMock()),
         patch("os.makedirs", lambda *a, **k: None),
         patch("builtins.open", MagicMock()),
+        _stub_recompute_subprocess(),
     ]
 
 
@@ -282,13 +330,17 @@ def test_run_sweep_threads_extractor_model_to_starmap():
     captured_starmap_args = []
 
     def _capture_starmap(args_iter):
-        captured_starmap_args.extend(list(args_iter))
-        return iter([])
+        args_list = list(args_iter)
+        captured_starmap_args.extend(args_list)
+        # Phase 13: return one ok-chunk payload per arg so the cell
+        # aggregator gets a non-empty per-cell chunk list and the test
+        # doesn't trip the all-fail RuntimeError before its assertions run.
+        return [_default_ok_chunk_payload() for _ in args_list]
 
-    mock_run_point = MagicMock()
-    mock_run_point.starmap = _capture_starmap
+    mock_run_point_chunk = MagicMock()
+    mock_run_point_chunk.starmap = _capture_starmap
 
-    ctxs = [patch.object(sweep_app, "run_point", mock_run_point)] + _patched_run_sweep_env()
+    ctxs = [patch.object(sweep_app, "run_point_chunk", mock_run_point_chunk)] + _patched_run_sweep_env()
     _enter_all(ctxs)
     try:
         # lambda1_tripwire is the production target, but any sweep_name in
@@ -302,19 +354,23 @@ def test_run_sweep_threads_extractor_model_to_starmap():
     finally:
         _exit_all(ctxs)
 
-    # Expect 5 grid points (TIER3_LAMBDA_1 ∈ [0.5, 0.75, 1.0, 1.25, 1.5])
-    assert len(captured_starmap_args) == 5, (
-        f"expected 5 starmap tuples for lambda1_tripwire grid, got {len(captured_starmap_args)}"
+    # Phase 13: 5 grid points × 6 chunks (heuristic for 500-item corpus) = 30
+    assert len(captured_starmap_args) == 30, (
+        f"expected 5 cells × 6 chunks = 30 starmap tuples for lambda1_tripwire grid, got {len(captured_starmap_args)}"
     )
     for tup in captured_starmap_args:
-        # Tuple shape: (overrides_json, corpus, extractor_model)
-        assert len(tup) == 3, (
-            f"starmap tuple must be 3-ary (was 2 before this commit); got {len(tup)}: {tup}"
+        # Phase 13 tuple shape: (overrides_json, corpus, extractor_model, item_indices_json)
+        assert len(tup) == 4, (
+            f"starmap tuple must be 4-ary (Phase 13 added item_indices_json); got {len(tup)}: {tup}"
         )
         assert tup[1] == "longmemeval-s"
         assert tup[2] == "Qwen/Qwen3.6-35B-A3B-FP8", (
             f"extractor_model (3rd element) must be threaded into every starmap tuple; got {tup[2]!r}"
         )
+        # Item indices must parse as a non-empty JSON array
+        import json as _json
+        indices = _json.loads(tup[3])
+        assert isinstance(indices, list) and len(indices) > 0
 
 
 def test_run_sweep_extractor_model_default_empty_string():
@@ -327,13 +383,17 @@ def test_run_sweep_extractor_model_default_empty_string():
     captured_starmap_args = []
 
     def _capture_starmap(args_iter):
-        captured_starmap_args.extend(list(args_iter))
-        return iter([])
+        args_list = list(args_iter)
+        captured_starmap_args.extend(args_list)
+        # Phase 13: return one ok-chunk payload per arg so the cell
+        # aggregator gets a non-empty per-cell chunk list and the test
+        # doesn't trip the all-fail RuntimeError before its assertions run.
+        return [_default_ok_chunk_payload() for _ in args_list]
 
-    mock_run_point = MagicMock()
-    mock_run_point.starmap = _capture_starmap
+    mock_run_point_chunk = MagicMock()
+    mock_run_point_chunk.starmap = _capture_starmap
 
-    ctxs = [patch.object(sweep_app, "run_point", mock_run_point)] + _patched_run_sweep_env()
+    ctxs = [patch.object(sweep_app, "run_point_chunk", mock_run_point_chunk)] + _patched_run_sweep_env()
     _enter_all(ctxs)
     try:
         sweep_app.run_sweep(
@@ -346,6 +406,7 @@ def test_run_sweep_extractor_model_default_empty_string():
 
     assert len(captured_starmap_args) >= 1
     for tup in captured_starmap_args:
+        # Phase 13 tuple shape: (overrides_json, corpus, extractor_model, item_indices_json)
         assert tup[2] == "", (
             f"extractor_model defaults to '' (sentinel for env_secret inheritance); got {tup[2]!r}"
         )
@@ -363,13 +424,17 @@ def test_run_sweep_lambda1_tripwire_inlines_batch_size_and_tau_gap():
     captured_starmap_args = []
 
     def _capture_starmap(args_iter):
-        captured_starmap_args.extend(list(args_iter))
-        return iter([])
+        args_list = list(args_iter)
+        captured_starmap_args.extend(args_list)
+        # Phase 13: return one ok-chunk payload per arg so the cell
+        # aggregator gets a non-empty per-cell chunk list and the test
+        # doesn't trip the all-fail RuntimeError before its assertions run.
+        return [_default_ok_chunk_payload() for _ in args_list]
 
-    mock_run_point = MagicMock()
-    mock_run_point.starmap = _capture_starmap
+    mock_run_point_chunk = MagicMock()
+    mock_run_point_chunk.starmap = _capture_starmap
 
-    ctxs = [patch.object(sweep_app, "run_point", mock_run_point)] + _patched_run_sweep_env()
+    ctxs = [patch.object(sweep_app, "run_point_chunk", mock_run_point_chunk)] + _patched_run_sweep_env()
     _enter_all(ctxs)
     try:
         sweep_app.run_sweep(
@@ -403,13 +468,17 @@ def test_run_sweep_hops_unchanged_after_table_refactor():
     captured_starmap_args = []
 
     def _capture_starmap(args_iter):
-        captured_starmap_args.extend(list(args_iter))
-        return iter([])
+        args_list = list(args_iter)
+        captured_starmap_args.extend(args_list)
+        # Phase 13: return one ok-chunk payload per arg so the cell
+        # aggregator gets a non-empty per-cell chunk list and the test
+        # doesn't trip the all-fail RuntimeError before its assertions run.
+        return [_default_ok_chunk_payload() for _ in args_list]
 
-    mock_run_point = MagicMock()
-    mock_run_point.starmap = _capture_starmap
+    mock_run_point_chunk = MagicMock()
+    mock_run_point_chunk.starmap = _capture_starmap
 
-    ctxs = [patch.object(sweep_app, "run_point", mock_run_point)] + _patched_run_sweep_env()
+    ctxs = [patch.object(sweep_app, "run_point_chunk", mock_run_point_chunk)] + _patched_run_sweep_env()
     _enter_all(ctxs)
     try:
         sweep_app.run_sweep(sweep_name="hops", synthetic=False, corpus="locomo")
@@ -464,16 +533,21 @@ def test_run_point_sets_llm_model_env_when_extractor_model_passed():
 
     captured_envs = []
 
-    class _StubResult:
-        returncode = 0
-        stdout = '{"overrides": {}, "metrics": {}, "latencyMs": 0, "runCount": 0, "wallMs": 0, "aggStats": null}'
-        stderr = ""
+    # Phase 12 Task 7 (commit ee1d563): run_point now uses subprocess.Popen
+    # (live stderr streaming) instead of subprocess.run. Stub the Popen
+    # surface that run_point actually consumes: __init__ captures the env,
+    # communicate() returns (stdout, stderr) tuple, returncode attribute
+    # is read after.
+    class _StubProc:
+        def __init__(self, *args, **kwargs):
+            captured_envs.append(dict(kwargs.get("env") or _os.environ))
+            self.returncode = 0
+            self._stdout = '{"overrides": {}, "metrics": {}, "latencyMs": 0, "runCount": 0, "wallMs": 0, "aggStats": null}'
 
-    def _capture_run(*args, **kwargs):
-        captured_envs.append(dict(kwargs.get("env") or _os.environ))
-        return _StubResult()
+        def communicate(self):
+            return (self._stdout, "")
 
-    with patch.object(_subprocess, "run", side_effect=_capture_run), \
+    with patch.object(_subprocess, "Popen", _StubProc), \
          patch.object(sweep_app, "_install_volume_symlink", lambda *a, **k: None), \
          patch.object(sweep_app, "volume", MagicMock()), \
          patch.object(_os, "makedirs", lambda *a, **k: None), \
@@ -549,15 +623,18 @@ def test_run_sweep_partitions_error_payloads_and_raises_on_total_failure(capsys)
         "diagnostics": {"corpus_link_target": "/data/longmemeval_s_cleaned.json"},
     }
 
-    mock_run_point = MagicMock()
-    mock_run_point.starmap = lambda args_iter: [
+    mock_run_point_chunk = MagicMock()
+    # Phase 13: every chunk fails → every cell becomes a chunk_failure
+    # error_point. With 5 cells × 6 chunks = 30 dispatches, we return 30
+    # identical error payloads.
+    mock_run_point_chunk.starmap = lambda args_iter: [
         __import__("json").dumps(error_payload) for _ in args_iter
     ]
 
-    ctxs = [patch.object(sweep_app, "run_point", mock_run_point)] + _patched_run_sweep_env()
+    ctxs = [patch.object(sweep_app, "run_point_chunk", mock_run_point_chunk)] + _patched_run_sweep_env()
     _enter_all(ctxs)
     try:
-        with pytest.raises(RuntimeError, match="all 5 points failed"):
+        with pytest.raises(RuntimeError, match="all 5 cells failed"):
             sweep_app.run_sweep(
                 sweep_name="lambda1_tripwire",
                 synthetic=False,
@@ -568,7 +645,7 @@ def test_run_sweep_partitions_error_payloads_and_raises_on_total_failure(capsys)
         _exit_all(ctxs)
 
     captured = capsys.readouterr()
-    assert "5 of 5 points failed" in captured.err
+    assert "5 of 5 cells failed" in captured.err
     assert "node subprocess failed" in captured.err
     assert "spec violation in retrieval ladder" in captured.err, (
         "stderr from failing node subprocess must be surfaced — operator "
@@ -583,6 +660,8 @@ def test_run_sweep_partial_failure_continues_with_ok_subset(capsys):
     """
     ok_payload = {
         "overrides": {"TIER3_LAMBDA_1": 1.0, "TIER2_TAU_GAP": 10, "BATCH_SIZE": 15},
+        "itemIndices": [0, 1, 2],
+        "runs": [],   # empty runs[]; the recompute helper handles n=0
         "metrics": {"mrr": 0.5, "recallAtK": {"5": 0.6}, "coverage": 0.7, "n_scored": 100},
         "latencyMs": {"p50": 1.0, "p95": 2.0},
         "runCount": 100,
@@ -598,13 +677,33 @@ def test_run_sweep_partial_failure_continues_with_ok_subset(capsys):
     }
 
     import json as _json
-    # 4 ok + 1 error = partial failure
-    sequence = [_json.dumps(ok_payload)] * 4 + [_json.dumps(error_payload)]
+    # Phase 13: 5 cells × 6 chunks = 30 dispatches.
+    # We taint the LAST cell entirely (chunks 24-29 = 6 errors) so 4 cells
+    # succeed and 1 cell becomes a chunk_failure error_point.
+    sequence = [_json.dumps(ok_payload)] * 24 + [_json.dumps(error_payload)] * 6
 
-    mock_run_point = MagicMock()
-    mock_run_point.starmap = lambda _args: sequence
+    mock_run_point_chunk = MagicMock()
+    mock_run_point_chunk.starmap = lambda _args: sequence
 
-    ctxs = [patch.object(sweep_app, "run_point", mock_run_point)] + _patched_run_sweep_env()
+    # Phase 13: run_sweep also subprocess.run()'s the _recompute-metrics.js
+    # helper per cell. Stub it to return a deterministic recompute payload.
+    import subprocess as _subprocess
+
+    class _StubRecomputeResult:
+        returncode = 0
+        stdout = _json.dumps({
+            "metrics": {"mrr": 0.5, "coverage": 0.7, "n_scored": 0},
+            "aggStats": None,
+        })
+        stderr = ""
+
+    def _stub_subprocess_run(*a, **k):
+        return _StubRecomputeResult()
+
+    ctxs = [
+        patch.object(sweep_app, "run_point_chunk", mock_run_point_chunk),
+        patch.object(_subprocess, "run", _stub_subprocess_run),
+    ] + _patched_run_sweep_env()
     _enter_all(ctxs)
     try:
         # Should not raise — partial failure is allowed.
@@ -618,6 +717,6 @@ def test_run_sweep_partial_failure_continues_with_ok_subset(capsys):
         _exit_all(ctxs)
 
     captured = capsys.readouterr()
-    assert "1 of 5 points failed" in captured.err, (
+    assert "1 of 5 cells failed" in captured.err, (
         "operator must see partial-failure summary in stderr"
     )
