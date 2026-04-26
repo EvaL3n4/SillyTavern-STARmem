@@ -267,9 +267,17 @@ def _default_ok_chunk_payload():
 def _stub_recompute_subprocess():
     """Phase 13: run_sweep subprocess.run()'s the _recompute-metrics.js
     helper per cell. Stub it to return a deterministic minimal payload
-    so capture-style tests don't need a real Node binary."""
+    so capture-style tests don't need a real Node binary.
+
+    Patched via sys.modules so sweep_app's local `import subprocess`
+    inside run_sweep resolves to our shim. patch.dict on sys.modules
+    is auto-restored even if a test missed _exit_all (mock unwraps
+    on context exit; pytest's session teardown clears stragglers via
+    GC).
+    """
     import json as _json
-    import subprocess as _subprocess
+    import sys as _sys
+    import types as _types
 
     class _StubResult:
         returncode = 0
@@ -286,7 +294,17 @@ def _stub_recompute_subprocess():
         })
         stderr = ""
 
-    return patch.object(_subprocess, "run", lambda *a, **k: _StubResult())
+    fake_subprocess = _types.ModuleType("subprocess")
+    fake_subprocess.run = lambda *a, **k: _StubResult()
+    # Forward attrs the test path doesn't touch but the module might
+    # need at import-eval time (e.g. PIPE constants used by other
+    # subprocess.run calls in run_sweep that aren't on the stub-relevant
+    # path). We shadow only `run`; everything else proxies to the real
+    # module via __getattr__.
+    real_subprocess = _sys.modules["subprocess"]
+    fake_subprocess.__getattr__ = lambda name: getattr(real_subprocess, name)
+
+    return patch.dict(_sys.modules, {"subprocess": fake_subprocess})
 
 
 def _patched_run_sweep_env():
