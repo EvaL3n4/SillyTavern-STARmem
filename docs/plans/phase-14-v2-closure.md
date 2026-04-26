@@ -532,12 +532,17 @@ modal run bench/modal/vllm_warmup.py \
 
 Expected: `warmedCount=0` (5 items already cached at 2048 from Phase 12 Task 6.5), `failedCount=0`. If `warmedCount=5` instead of 0, the Phase 12 cache shard is missing or the enumerator is producing different customIds than Phase 12 — pause and diagnose, don't proceed to Steps 2–3.
 
+**Note (Phase 14 hotfix 2026-04-26):** if a `--skip-existing` full-corpus enumeration was accidentally dispatched at the unchanged 2048 default (the canonical example: a no-op `sed` against the wrong path or wrong syntax silently leaves the constant unedited), the result is identical to a maxed-out Step 1: `dispatched=0, skippedExisting=16682, perPromptFailures=0`, and is by definition ≤ Step 1's signal because it covers the full corpus. **That counts as Step 1 passing**; skip the explicit smoke and proceed to Step 2 with the sanity already in hand.
+
 **Step 2: Full warmup at 4096**
 
 ```bash
-# 1. Bump the constant locally (NOT committed; reverted at end of step)
-sed -i 's/EXTRACT_MAX_TOKENS: 2048/EXTRACT_MAX_TOKENS: 4096/' src/core/constants.js
-grep -n "EXTRACT_MAX_TOKENS:" src/core/constants.js  # verify the edit landed exactly once
+# 1. Bump the constant locally (NOT committed; reverted at end of step). The
+#    constant lives in src/consolidation/extractFacts.js as a top-level export
+#    `export const EXTRACT_MAX_TOKENS = 2048;` (NOT in src/core/constants.js,
+#    NOT object-key syntax — sed must match the exact form including spaces).
+sed -i 's/EXTRACT_MAX_TOKENS = 2048/EXTRACT_MAX_TOKENS = 4096/' src/consolidation/extractFacts.js
+git diff src/consolidation/extractFacts.js  # MUST show one-line change; if empty, sed no-op'd, halt.
 
 # 2. Enumerate at the new value (customIds will encode 4096)
 node bench/harness/fireworks-warmup.js enumerate /tmp/warmup-input-4096.jsonl \
@@ -552,9 +557,9 @@ modal run bench/modal/vllm_warmup.py \
   --input-path /data/warmup-input-4096.jsonl \
   --skip-existing
 
-# 5. Revert constants.js — Task 6 will sweep the value via setConstantOverrides,
-#    not via the constant directly, so the on-disk source stays at 2048 until Task 6's amend.
-git checkout src/core/constants.js
+# 5. Revert extractFacts.js — Task 5.5 will properly unlock the constant for
+#    runtime override; the on-disk default stays 2048 until Task 6's amend.
+git checkout src/consolidation/extractFacts.js
 ```
 
 Expected: ~2-3h wall-clock (Phase 12 Task 6.5 measured ~74-min worst-case at 1.5K out tok/s; 4096 max output is twice the 2048 ceiling but most batches won't hit it — closer to 2× p95 = ~10-15% slowdown on average). `warmedCount=16,682` (full LongMemEval-S × `BATCH_SIZE=15`), `failedCount=0`.
@@ -566,8 +571,8 @@ If `failedCount > 0`, inspect the diagnostics report; common causes are vLLM eng
 Same shape as Step 2, with `4096` → `6144` everywhere:
 
 ```bash
-sed -i 's/EXTRACT_MAX_TOKENS: 2048/EXTRACT_MAX_TOKENS: 6144/' src/core/constants.js
-grep -n "EXTRACT_MAX_TOKENS:" src/core/constants.js
+sed -i 's/EXTRACT_MAX_TOKENS = 2048/EXTRACT_MAX_TOKENS = 6144/' src/consolidation/extractFacts.js
+git diff src/consolidation/extractFacts.js  # MUST show one-line change
 
 node bench/harness/fireworks-warmup.js enumerate /tmp/warmup-input-6144.jsonl \
   --corpora longmemeval-s \
@@ -579,7 +584,7 @@ modal run bench/modal/vllm_warmup.py \
   --input-path /data/warmup-input-6144.jsonl \
   --skip-existing
 
-git checkout src/core/constants.js
+git checkout src/consolidation/extractFacts.js
 ```
 
 Expected: similar wall to the 4096 warmup or slightly longer (most batches still well under 6144).
@@ -595,11 +600,97 @@ modal volume ls starmem-bench-cache extractions/ | wc -l
 
 **Step 5: Eva reports back to controller**
 
-Eva pings controller with: total warmup time, cost (Modal dashboard), `warmedCount` / `failedCount` per dispatch, and a one-line pass/fail. Controller proceeds to Task 6 only if both warmups report `failedCount=0`. If `failedCount > 0` in either, Phase 14 pauses for diagnosis (likely a Decision 7-class issue).
+Eva pings controller with: total warmup time, cost (Modal dashboard), `warmedCount` / `failedCount` per dispatch, and a one-line pass/fail. Controller proceeds to Task 5.5 → Task 6 only if both warmups report `failedCount=0`. If `failedCount > 0` in either, Phase 14 pauses for diagnosis (likely a Decision 7-class issue).
 
-**Pre-flight tripwire (added 2026-04-26 after the `--corpus`/`--extract-max-tokens`/`--batch-size` flag drift was caught on a `modal run -h` probe):** before each step, `git diff src/core/constants.js` must show the expected one-line bump, and `node bench/harness/fireworks-warmup.js enumerate -h 2>&1 | head` must confirm the enumerator's flag surface hasn't drifted from this plan. The plan's commands are tied to two surfaces (Node enumerator + Modal warmup); a flag rename in either silently re-targets cache writes at zero error signal.
+**Pre-flight tripwire (added 2026-04-26 after the `--corpus`/`--extract-max-tokens`/`--batch-size` flag drift was caught on a `modal run -h` probe; refined after a no-op-sed misfire on the 4096 dispatch):** before each step, `git diff src/consolidation/extractFacts.js` must show the expected one-line bump (NOT empty — empty = sed didn't match), and `node bench/harness/fireworks-warmup.js enumerate -h 2>&1 | head` must confirm the enumerator's flag surface hasn't drifted from this plan. The plan's commands are tied to two surfaces (Node enumerator + Modal warmup); a flag rename in either, OR a constant-path or syntax drift in extractFacts.js, silently re-targets cache writes at zero error signal.
 
-**No commit:** Task 5 produces no source-tree changes. Cache state lives on the Modal Volume. The `git checkout src/core/constants.js` at end of Steps 2 and 3 reverts the temporary local edit.
+**No commit:** Task 5 produces no source-tree changes. Cache state lives on the Modal Volume. The `git checkout src/consolidation/extractFacts.js` at end of Steps 2 and 3 reverts the temporary local edit.
+
+---
+
+## Task 5.5: Unlock `EXTRACT_MAX_TOKENS` for runtime sweep override
+
+**Objective:** Refactor `EXTRACT_MAX_TOKENS` from a top-level `const` export in `src/consolidation/extractFacts.js` into the `CONSOLIDATION` group in `src/core/constants.js`, then add to `_SWEPT_CONSOLIDATION_KEYS`. This is a precondition for Task 6: the sweep mechanism mutates `RETRIEVAL[key]` / `CONSOLIDATION[key]` in place, but a top-level `const` binding is immutable, so `setConstantOverrides({ EXTRACT_MAX_TOKENS: N })` cannot land. Task 6 as originally drafted ("add to `_SWEPT_RETRIEVAL_KEYS`") would be a no-op without the move.
+
+**Owner:** Subagent (mechanical refactor; full skill recipe is `unlock-knob-for-runtime-sweep`). Controller dispatches with the skill name in context.
+
+**Architectural note:** `EXTRACT_MAX_TOKENS` belongs in `CONSOLIDATION`, not `RETRIEVAL`. It governs the consolidation-time extraction LLM call ceiling, not the retrieval ladder. Sits semantically next to `BATCH_SIZE` and `WORKING_BUFFER_THRESHOLD`.
+
+**Files (preflight grep confirms 4 reader sites + 1 declarer + 1 test file):**
+- Modify: `src/consolidation/extractFacts.js` — drop the top-level `export const EXTRACT_MAX_TOKENS = 2048;`, drop the import-side dependents, change the call-site at L260 to read `CONSOLIDATION.EXTRACT_MAX_TOKENS` at call time
+- Modify: `src/core/constants.js` — add `EXTRACT_MAX_TOKENS: 2048` inside the `CONSOLIDATION` block (next to `BATCH_SIZE`); add `'EXTRACT_MAX_TOKENS'` to `_SWEPT_CONSOLIDATION_KEYS` Object.freeze list
+- Modify: `bench/harness/fireworks-warmup.js` (L22, L291, L336, L369) — change import + 3 call sites to read through `CONSOLIDATION.EXTRACT_MAX_TOKENS` at call time. **No module-top destructure** — that would re-snapshot the value and silently swallow Task 6's overrides.
+- Modify: `bench/harness/_modal-warmup-point.js` (L59, L139) — same call-time-read rewrite.
+- Modify: `tests/unit/core/swept-constants-overridable.test.js` — add the round-trip test for `EXTRACT_MAX_TOKENS` per the skill's TDD step. The auto-generated destructure-guard loop picks up the new key automatically.
+
+**Step 1: Skill recipe**
+
+Follow `software-development/unlock-knob-for-runtime-sweep` end-to-end. Steps 1–7 of that skill map directly: write the round-trip test (RED), add to `_SWEPT_CONSOLIDATION_KEYS`, do the destructure rewrite (one of the listed patterns: top-level export → group property → call-time read), tripwire-verify the destructure guard, clean up the sentinel via `patch()` not `git checkout`, run the full suite green, commit.
+
+**PREFLIGHT cache-key audit (skill-mandated):** confirm the audit before starting code. `EXTRACT_MAX_TOKENS` flows into the customId cache key (`bench/harness/extractionCache.js:_cacheKey(model, messages, maxTokens)`). Decision matrix per the skill: **warm cache + key in cache-key path = not sweepable against warm cache without special handling**. The handling for Phase 14 is exactly Task 5: pre-warm three shards (2048 from Phase 12, 4096 + 6144 from Task 5) so Task 6's sweep at all three values is fully cache-warm. **Confirmation:** if Task 5 reports `failedCount=0` for both 4096 and 6144, the audit is satisfied.
+
+**Step 2: Verify the round-trip test**
+
+```bash
+npm test tests/unit/core/swept-constants-overridable.test.js -- -t "EXTRACT_MAX_TOKENS"
+```
+
+Expected: PASS for `setConstantOverrides({ EXTRACT_MAX_TOKENS: 4096 })` round-trip. Auto-generated destructure-guard test PASSes against the rewritten readers.
+
+**Step 3: Tripwire-verify the destructure guard**
+
+Inject sentinel per the skill recipe:
+```bash
+echo "const { EXTRACT_MAX_TOKENS: SENTINEL_P14_T55 } = CONSOLIDATION;" >> src/consolidation/extractFacts.js
+npm test tests/unit/core/swept-constants-overridable.test.js -- -t "EXTRACT_MAX_TOKENS is not destructured"
+```
+
+Expected: FAIL with `extractFacts.js` in offenders. Then clean up with `patch` (NOT `git checkout` — extractFacts.js has uncommitted Task 5.5 work):
+
+```
+patch(path="src/consolidation/extractFacts.js",
+      old_string="const { EXTRACT_MAX_TOKENS: SENTINEL_P14_T55 } = CONSOLIDATION;\n",
+      new_string="")
+```
+
+**Step 4: Full-suite green-gate**
+
+```bash
+npm test
+cd bench/modal && python -m pytest tests/ -q
+```
+
+Expected: all green. Watch specifically for `tests/unit/bench/warmup/enumerate.test.js` — the enumerator now reads `CONSOLIDATION.EXTRACT_MAX_TOKENS` at call time, so any test that sets up the module under a stub may see different behavior. Fix on the spot if it surfaces.
+
+**Step 5: Commit**
+
+One commit per the skill's commit-message template:
+
+```
+feat(consolidation): unlock EXTRACT_MAX_TOKENS for sweep overrides (P14 T5.5)
+
+Moves EXTRACT_MAX_TOKENS from a top-level const in extractFacts.js into
+the CONSOLIDATION group in constants.js, so setConstantOverrides() can
+reach it. Adds to _SWEPT_CONSOLIDATION_KEYS. Five reader sites rewritten
+to call-time reads through CONSOLIDATION.EXTRACT_MAX_TOKENS — no module-
+top destructures, so Phase 14 Task 6's sweep observes the override.
+
+Cache-key audit: EXTRACT_MAX_TOKENS flows into customId; Task 5 pre-warms
+three shards {2048, 4096, 6144} so Task 6's sweep is fully cache-warm.
+
+Tripwire: sentinel const-destructure injected → guard FAIL with
+extractFacts.js in offenders → cleanup via patch().
+
+Test count: N suites / M tests green (was M-1; +1 for the EXTRACT_MAX_TOKENS
+round-trip + auto-generated destructure guard).
+
+Plan: docs/plans/phase-14-v2-closure.md (Task 5.5)
+Skill: software-development/unlock-knob-for-runtime-sweep
+```
+
+**Wall-clock estimate:** ~30 min subagent + 5 min controller review.
+
+---
 
 ---
 
@@ -611,7 +702,7 @@ Eva pings controller with: total warmup time, cost (Modal dashboard), `warmedCou
 
 **Files:**
 - Modify: `bench/modal/sweep_app.py` — add `extract_max_tokens` sweep config + base overrides
-- Modify: `src/core/constants.js` — `_SWEPT_RETRIEVAL_KEYS` add `EXTRACT_MAX_TOKENS`; default 2048 → 4096 (assuming sweep wins; subagent verifies first)
+- Modify: `src/core/constants.js` — `CONSOLIDATION.EXTRACT_MAX_TOKENS` default 2048 → 4096 (assuming sweep wins; subagent verifies first). Already in `_SWEPT_CONSOLIDATION_KEYS` from Task 5.5.
 - Modify: `docs/specs/2026-04-20-starmem-v2-design.md` — tuning amendment callout
 - Modify: `tests/unit/core/constants.test.js` — assertion 2048 → 4096
 - Modify: any tests that exercise the `EXTRACT_MAX_TOKENS` mechanism (grep first; surface 4 of the skill)
@@ -650,9 +741,19 @@ Add to `_SWEEP_BASE_OVERRIDES`:
 
 If a sibling renderer exists for one-knob lambda1_tripwire-style sweeps, reuse. Otherwise add a `render_extract_max_tokens_report` that emits a 3-row table of `{knob, primary_metric, coverage, latency_p95}` plus elbow detection. Pattern matches `render_lambda1_report` from Phase 13.
 
-**Step 3: Add `EXTRACT_MAX_TOKENS` to `_SWEPT_RETRIEVAL_KEYS`** (`src/core/constants.js`)
+**Step 3: Verify `EXTRACT_MAX_TOKENS` is sweep-reachable** (precondition from Task 5.5)
 
-The skill names this as a precondition — `setConstantOverrides({ EXTRACT_MAX_TOKENS: N })` will throw on unknown key otherwise. Add to the `_SWEPT_RETRIEVAL_KEYS` Object.freeze list.
+Task 5.5 already moved `EXTRACT_MAX_TOKENS` into `CONSOLIDATION` and added it to `_SWEPT_CONSOLIDATION_KEYS`. Confirm before kicking off the sweep:
+
+```bash
+grep -n "EXTRACT_MAX_TOKENS" src/core/constants.js
+# Expect: one line in CONSOLIDATION block, one line in _SWEPT_CONSOLIDATION_KEYS
+
+npm test tests/unit/core/swept-constants-overridable.test.js -- -t "EXTRACT_MAX_TOKENS"
+# Expect: PASS — round-trip and destructure-guard tests both green
+```
+
+If either fails, Task 5.5 didn't fully land — back-fill before proceeding.
 
 **Step 4: Run the LongMemEval-S sweep**
 
