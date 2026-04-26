@@ -496,6 +496,49 @@ These are v2.1+ considerations. Do not implement them in any phase.
 
 _Appended after each phase ships. Format: `## Phase N—<date>`, with notes on surprises, scope changes, and lessons for subsequent phases._
 
+## Phase 12—2026-04-26
+
+**What shipped:** Multi-corpus benchmarking substrate + λ₁ two-corpus inert verdict. LongMemEval-S (500 items, 6 task types) added alongside LoCoMo-10 as the second benchmark corpus via a new `CorpusAdapter` interface under `bench/corpora/`. Tier 2 demolition landed (always-seed-Tier-3 ladder, ~30 LOC). `computeMetrics` emits `byTaskType` slice + `abstentionCount`. Modal substrate gains `--corpus {locomo, longmemeval-s}` across `run-point`, `run-baselines`, `run-sweep`. Mid-phase substrate swap forced by Fireworks Batch API-shape brittleness: 14 commits chasing dead-end mismatches → pivoted to Modal vLLM offline batch with `Qwen/Qwen3.6-35B-A3B-FP8` on a single H100 (Task 6.5, see [`phase-12-task-6-5-retro.md`](./phase-12-task-6-5-retro.md)). Phase 13 item-fan-out pulled forward as Task 7.5 after `run_point` cell-serial architecture timed out 4× on LongMemEval-S; new `run_point_chunk` worker + `--chunks K` CLI ship 30-container parallelism per sweep. **λ₁ tripwire on LongMemEval-S: Outcome A — provably inert**. MRR identical to 16 decimals across grid `{0.5, 0.75, 1.0, 1.25, 1.5}`, every metric, every aggStats counter, every task-type slice. Two-corpus reproduction of Phase 9.5's three-time LoCoMo flatness; spec default `TIER3_LAMBDA_1=1.0` holds with confidence. v2.1 hypothesis filed: λ₁ may need to operate at candidate generation, not re-ranking.
+
+**Test totals:** 89 suites / 945 tests (jest, +12 suites / +121 from 824: CorpusAdapter, byTaskType, LongMemEval fixtures, warmup helpers); 57 tests (pytest bench/modal, +49 from 8: vLLM warmup + chunk-plan + cell aggregator). All green, no regressions.
+
+**Commits this phase:** 79 total (Phase 11 was 13). Plan (`8ab5231`) → core 8 tasks (~10 commits) + Task 6 Fireworks dead-end (14) + Task 6.5 substrate swap (13) + Phase 13 item-fan-out pulled forward (7) + tactical timeout/test fixes inside Task 7 (~10) + retro. Phase 12 range: `8ab5231..HEAD`.
+
+**Execution mode:** Hybrid split per plan declaration. Controller owned plan, narrative, mechanical wiring, and all Modal dispatch coordination. Subagents (delegate_task → Fireworks/Kimi, then Codex from 2026-04-26) handled large-surface refactors (Tasks 2-5, parts of Task 6). Eva owned all Modal dispatches per the established 9.4.8/9.4.9/9.5/Phase-11 pattern. Three architectural pivots executed mid-phase (Fireworks→Modal vLLM, cell-serial→item-fan-out, Phase 13 forward-pull) — each preceded by an explicit plan-or-retro doc rather than ad-hoc work.
+
+**Decisions held (1–9, 12) / mid-phase pivots:**
+
+- Decisions 1-9, 10, 11, 12: held.
+- Mid-phase substrate swap (Fireworks → Modal vLLM): forced by API-shape brittleness, documented in `phase-12-task-6-5-modal-vllm-warmup.md`. Not a planned decision but the structurally-honest call once the Fireworks path showed it would never converge.
+- Phase 13 pulled forward as Task 7.5: forced by `run_point` timeout SIGKILLs on LongMemEval-S after 4 successive timeout bumps. Eva's call: stop bumping, fix the architecture. Item-fan-out shipped in 7 commits, λ₁ sweep dispatched cleanly afterward.
+
+**Surprises:**
+
+1. **Fireworks Batch API-shape brittleness forced full substrate swap.** Plan budgeted 1-2 commits; reality was 14 chasing one-at-a-time mismatches (proto-prefixed job states, snake_case wire fields, `BIJOutputSet.jsonl` filename, downloadResults GET-with-no-body, response shape lacking the OpenAI-Batch wrapper documented elsewhere). Lesson: vendor batch APIs not OpenAI-Batch-compatible should be smoke-audited end-to-end *before* a phase plan budgets them.
+
+2. **λ₁ Outcome A is bit-identical to 16 decimals.** Pre-registration was H₀ inert vs H₁ multi-session-corpus-signal. Data destroyed H₁ entirely — not "small effect drowned in noise" but *retrieval order does not change* across a 3× λ₁ range. Strongest possible negative finding the harness can produce. Combined with Phase 9.5's three reproductions, this is structural to the current Tier 3 placement.
+
+3. **Cell-serial architecture didn't survive contact with LongMemEval-S; pulled Phase 13 forward.** `run_point` 1 container × 500 items serial timed out 4× under successive timeout bumps (1500 → 1800 → 3000 → SIGKILL). Item-fan-out (`run_point_chunk` × 6 chunks per cell) shipped cleanly; sweep wall-clocked ~6.3 min. Lesson: container-timeout budgets should be sized off *worst-case-cell*, not mean-item — Phase 13's first sizing was 1200s based on `~83 × 3.6s` average; cell 1 actually wall-clocked 1381s. Fixed in `6dc88c4`.
+
+4. **"Drops a ton of batches" worry resolved.** Eva's live observation during failed dispatches turned out to be 0.71% parse failures + 0.016% entries skipped (healthy consolidation). The 77/500 `n_skipped` are scoring-side, not infra. The slowdown half is real but NOT λ-correlated — 3.7× cell wall-time spread (373s vs 1381s) on identical work. Filed for Phase 14: chunk-assignment / cold-container variance investigation.
+
+5. **Tier 2 demolition had zero downstream impact.** Confirmed via Task 6 LoCoMo baselines: retrieval metrics unchanged from Phase 11 within infra noise. The `t2.hit` shortcut was genuinely never firing under `TIER2_TAU_GAP=10`.
+
+6. **CorpusAdapter abstraction held cleanly across the phase.** Eva's mildly-leaned position (with explicit awareness of premature-abstraction risk) was correct: Task 3 LongMemEval adapter dropped behind the interface unchanged; Task 4 `byTaskType` added without signature changes.
+
+**Notes for Phase 10 (UI/UX):**
+
+- Two-corpus retrieval surface available for UX decisions (LoCoMo regression-control + LongMemEval-S multi-task-type).
+- `byTaskType` slice exposes 6 LongMemEval task types — Phase 10 can surface task-type-specific affordances. Coverage by slice ranges 0.53 → 0.92, so don't make uniform-quality UX promises.
+- λ₁ provably inert two-corpus — do not surface graph-retrieval λ₁ as user-facing tuning UX.
+- Tier 2 is no longer a resolver; debug UX should label as "BM25 seed stage", not a resolver.
+- Do not pivot retrieval path on LongMemEval-multi-session signal in UX — that's v2.1 territory if/when the structural λ₁ fix surfaces.
+- Do not add UX for abstention scoring (v2.1).
+
+**v2.1 / Phase 13 / Phase 14 candidates filed:** λ₁ structural fix (move upstream of re-ranking); Tier 2 code removal (full); cell wall-time variance + late-chunk slowdown (Phase 14 retro inputs); `run_point_chunk` worst-case-cell timeout sizing (skill candidate); abstention scoring; Zep/Mem0/MemGPT external baselines; LongMemEval `_oracle`/`_m`; `EXTRACT_MAX_TOKENS → 256` sweep; renderer-signature cleanup; Fireworks Batch dead-end documentation kept accessible at `c3aa4c7`.
+
+---
+
 ## Phase 11—2026-04-23
 
 **What shipped:** Measurement-infrastructure hardening. Zero retrieval-surface changes; 9.4.8 tune (`TIER2_TAU_GAP=10`, MRR 0.8057, coverage 0.643) holds. Five of six filed Phase 11 candidates landed (Tier 2 demolition + `EXTRACT_MAX_TOKENS → 256` deferred to Phase 12): (1) `_elbow_on_slice` zero-axis-Δ guard (`ABS_DELTA_FLOOR = 0.005`) structurally prevents the 9.5 three-time flat-axis false-positive pattern; (2) `coverage = n_scored / n` as a first-class field on `MetricsResult` + `bench/render/amendment-rule.js` (`shouldAmend({baseline, candidate})`) and Python `_should_amend` mirror, with gate `ΔMRR ≥ 0.02 AND coverage_delta ≥ −5pp` wired into all 5 Python sweep renderers; (3) `--mode run-baselines` Modal dispatch with 4-retriever parallel fan-out; (4) `--mode run-sweep --sweep-name batchsize` via conversation-level split (25 bounded containers = 5 BATCH_SIZE × 5 convs, weighted-MRR aggregation); (5) `--local-out` parity for `run-point` mode. Six 9.5 sweep artifacts re-rendered under the two-column metric via new one-shot `bench/modal/rerender.py`; zero files show "Amend" verdict (matches 9.5 retro invariant). Task 7 Modal dispatch of the BATCH_SIZE sweep completed cleanly (~22 min wall-clock across 25 cells); Branch C fired — `BATCH_SIZE=10` held at spec default, `ΔMRR = +0.0188` to candidate below 0.02 gate. `docs/bench/baseline.json` refreshed with Phase 11 closure entry, new `BATCH_SIZE` entry under `tuned/`, `coverage: 0.643` on `headlineMetrics.ladder`.
