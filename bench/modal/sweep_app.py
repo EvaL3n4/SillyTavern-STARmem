@@ -213,6 +213,43 @@ def stratified_longmemeval_indices(
     return sorted(picked)
 
 
+def _compute_chunk_plan(
+    grid_size: int,
+    corpus_size: int,
+    chunks_override: int = 0,
+) -> tuple[int, int, list[tuple[int, int, list[int]]]]:
+    """Build the chunk plan for a sweep dispatch.
+
+    Returns (n_chunks, chunk_size, plan) where plan is a list of
+    (cell_idx, chunk_idx, item_indices) tuples covering the full corpus
+    for every cell in the grid.
+
+    Args:
+        grid_size: Number of cells in the sweep grid.
+        corpus_size: Number of items in the corpus.
+        chunks_override: When > 0, use this value for n_chunks. Else
+            apply the heuristic max(1, corpus_size // 80).
+
+    Phase 13 Task 5 (extracted from run_sweep for unit-testability).
+    """
+    if chunks_override > 0:
+        n_chunks = chunks_override
+    else:
+        n_chunks = max(1, corpus_size // 80)
+
+    chunk_size = (corpus_size + n_chunks - 1) // n_chunks  # ceil
+    plan = []
+    for cell_idx in range(grid_size):
+        for chunk_idx in range(n_chunks):
+            start = chunk_idx * chunk_size
+            end = min(start + chunk_size, corpus_size)
+            if start >= end:
+                continue   # last chunk may be empty if corpus_size % n_chunks != 0
+            indices = list(range(start, end))
+            plan.append((cell_idx, chunk_idx, indices))
+    return n_chunks, chunk_size, plan
+
+
 @app.function(image=image, volumes={"/data": volume}, timeout=600, memory=4096)
 def hello():
     import os
@@ -3091,25 +3128,11 @@ def run_sweep(sweep_name: str, synthetic: bool = False, corpus: str = "locomo", 
     # dispatch.
     overrides_jsons = [json.dumps(point) for point in grid]
     corpus_size = 500 if corpus == "longmemeval-s" else 10
-    if chunks_override > 0:
-        n_chunks = chunks_override
-    else:
-        n_chunks = max(1, corpus_size // 80)
-
-    # Build chunk plans: list of (cell_idx, chunk_idx, item_indices) for
-    # each (cell, chunk) pair. Chunk i covers items [i*chunk_size, ...)
-    # using contiguous slicing — preserves item-order so any temporal
-    # locality in the corpus stays within a chunk where possible.
-    chunk_size = (corpus_size + n_chunks - 1) // n_chunks  # ceil
-    chunk_plans = []  # list of (cell_idx, chunk_idx, indices_list)
-    for cell_idx in range(len(grid)):
-        for chunk_idx in range(n_chunks):
-            start = chunk_idx * chunk_size
-            end = min(start + chunk_size, corpus_size)
-            if start >= end:
-                continue   # last chunk may be empty if corpus_size % n_chunks != 0
-            indices = list(range(start, end))
-            chunk_plans.append((cell_idx, chunk_idx, indices))
+    n_chunks, chunk_size, chunk_plans = _compute_chunk_plan(
+        grid_size=len(grid),
+        corpus_size=corpus_size,
+        chunks_override=chunks_override,
+    )
 
     print(
         f"[run_sweep] dispatching {len(chunk_plans)} chunks "
