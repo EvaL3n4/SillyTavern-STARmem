@@ -6,7 +6,7 @@
  * @see docs/specs/2026-04-20-starmem-v2-design.md §3.1
  */
 
-import { createHash } from 'node:crypto';
+import { sha256Hex } from '../vendor/sha256.js';
 import { isScope, isMaturity, isEdgeType } from '../core/schema.js';
 
 /** Scope → id prefix. */
@@ -26,7 +26,7 @@ const SCOPE_PREFIX = Object.freeze({
  * @returns {string}
  */
 function contentSuffix(seed) {
-    return createHash('sha256').update(seed).digest('hex').slice(0, 12);
+    return sha256Hex(seed).slice(0, 12);
 }
 
 /**
@@ -91,6 +91,25 @@ export function createEntry(fields) {
         || !Array.isArray(provenance.sourceMessages)
         || typeof provenance.extractor !== 'string') {
         throw new Error('createEntry: provenance must be { sourceMessages: number[], extractor: string }');
+    }
+
+    if (!tags.every(t => typeof t === 'string')) {
+        throw new Error('createEntry: tags must be string[]');
+    }
+    for (let i = 0; i < relations.length; i++) {
+        const r = relations[i];
+        if (!r || typeof r !== 'object') {
+            throw new Error(`createEntry: relations[${i}] must be an object`);
+        }
+        if (!isEdgeType(r.type)) {
+            throw new Error(`createEntry: relations[${i}].type invalid: ${String(r.type)}`);
+        }
+        if (typeof r.target !== 'string' || r.target.length === 0) {
+            throw new Error(`createEntry: relations[${i}].target must be a non-empty string`);
+        }
+    }
+    if (!provenance.sourceMessages.every(n => Number.isInteger(n) && n >= 0)) {
+        throw new Error('createEntry: provenance.sourceMessages must be non-negative integers');
     }
 
     const when = now ?? new Date();

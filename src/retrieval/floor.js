@@ -19,11 +19,15 @@ export function floor(state, ctx) {
     const { now, k = 5 } = ctx;
     const scored = [];
     for (const entry of Object.values(state.entries)) {
-        if (entry.scope === 'working') continue;
-        const { importance, maturity, createdAt } = entry.lifecycle;
+        if (!entry || entry.scope === 'working') continue;
+        const lifecycle = /** @type {any} */ (entry).lifecycle;
+        if (!lifecycle || typeof lifecycle !== 'object') continue;
+        const { importance, maturity, createdAt } = lifecycle;
+        if (typeof importance !== 'number' || typeof createdAt !== 'string') continue;
         const score = recencyAt(now, createdAt)
             * (1 + importance / 100)
             * maturityBoost(maturity);
+        if (!Number.isFinite(score)) continue;
         scored.push({ entry, bm25: 0, score });
     }
     scored.sort((a, b) => b.score - a.score);

@@ -90,7 +90,8 @@ export function tier1(state, query) {
 }
 
 /**
- * Record a resolved query's entries under its token-set key. Empty-token
+ * Record a resolved query's entries under its token-set key. Bounded LRU
+ * at `RETRIEVAL.TIER_CACHE_MAX_ENTRIES` — oldest evicted first. Empty-token
  * queries are a no-op (returns a new state object for API consistency).
  *
  * @param {import('../core/schema.js').State} state
@@ -103,14 +104,20 @@ export function recordTier1(state, query, entries) {
     if (key.length === 0) {
         return { ...state };
     }
+    const ids = entries.map(e => e.id);
+    const { [key]: _discard, ...without } = state.tierCaches.fuzzy;
+    const next = { ...without, [key]: ids };
+    const cap = RETRIEVAL.TIER_CACHE_MAX_ENTRIES;
+    const keys = Object.keys(next);
+    if (keys.length > cap) {
+        const evicted = keys.slice(0, keys.length - cap);
+        for (const k of evicted) delete next[k];
+    }
     return {
         ...state,
         tierCaches: {
             ...state.tierCaches,
-            fuzzy: {
-                ...state.tierCaches.fuzzy,
-                [key]: entries.map(e => e.id),
-            },
+            fuzzy: next,
         },
     };
 }

@@ -19,8 +19,6 @@
 
 import { createEmptyState } from './schema.js';
 
-const METADATA_KEY = 'STARmem';
-
 /**
  * @typedef {object} Backend
  * @property {(chatId: string) => unknown} read   - Returns raw stored value or undefined.
@@ -28,45 +26,26 @@ const METADATA_KEY = 'STARmem';
  */
 
 /**
- * Resolve SillyTavern's extension context. Returns undefined if we're
- * not running inside ST (e.g. during unit tests, before the DOM is ready,
- * or if the API shape changes). Callers must null-check.
+ * Default backend that *throws* when invoked. Production code must call
+ * setBackend(buildStateBackend()) from bootstrap before any loadState/
+ * persistState call. Tests must substitute their own backend.
  *
- * @returns {{ chatMetadata?: Record<string, unknown>, saveMetadataDebounced?: () => void } | undefined}
+ * Rationale (finding #15): the previous default silently read
+ * globalThis.chat_metadata and wrote there without threading chatId —
+ * so consolidation after a chat-switch could corrupt the wrong chat.
+ * Bootstrap-must-run is now an enforced invariant instead of a comment.
+ *
+ * @returns {Backend}
  */
-function getSTContext() {
-    const g = /** @type {any} */ (globalThis);
-    const api = g.SillyTavern;
-    if (api && typeof api.getContext === 'function') {
-        try {
-            return api.getContext();
-        } catch {
-            return undefined;
-        }
-    }
-    return undefined;
-}
-
-/** @returns {Backend} */
 function makeDefaultBackend() {
+    const err = () => new Error(
+        '[STARmem] state backend not configured. Call setBackend() — '
+        + 'production callers go through integration/bootstrap.js::buildStateBackend(); '
+        + 'tests must inject their own.',
+    );
     return {
-        read: (_chatId) => {
-            const ctx = getSTContext();
-            return ctx?.chatMetadata?.[METADATA_KEY];
-        },
-        write: (_chatId, value) => {
-            const ctx = getSTContext();
-            if (!ctx || !ctx.chatMetadata) {
-                throw new Error(
-                    'state.write: SillyTavern.getContext().chatMetadata is not available; '
-                    + 'call setBackend() before persistState() when running outside ST.'
-                );
-            }
-            ctx.chatMetadata[METADATA_KEY] = value;
-            if (typeof ctx.saveMetadataDebounced === 'function') {
-                ctx.saveMetadataDebounced();
-            }
-        },
+        read: () => { throw err(); },
+        write: () => { throw err(); },
     };
 }
 
@@ -102,13 +81,15 @@ export function _resetBackendForTests() {
 function looksLikeState(x) {
     if (!x || typeof x !== 'object' || Array.isArray(x)) return false;
     const s = /** @type {Record<string, unknown>} */ (x);
-    return (
-        typeof s.entries === 'object' && s.entries !== null && !Array.isArray(s.entries)
-        && Array.isArray(s.workingBuffer)
-        && typeof s.graph === 'object' && s.graph !== null
-        && typeof s.tierCaches === 'object' && s.tierCaches !== null
-        && typeof s.runtime === 'object' && s.runtime !== null
-    );
+    if (typeof s.entries !== 'object' || s.entries === null || Array.isArray(s.entries)) return false;
+    if (!Array.isArray(s.workingBuffer)) return false;
+    // graph must be an object AND have an edges array — finding #3.
+    if (typeof s.graph !== 'object' || s.graph === null) return false;
+    const g = /** @type {Record<string, unknown>} */ (s.graph);
+    if (!Array.isArray(g.edges)) return false;
+    if (typeof s.tierCaches !== 'object' || s.tierCaches === null) return false;
+    if (typeof s.runtime !== 'object' || s.runtime === null) return false;
+    return true;
 }
 
 /**

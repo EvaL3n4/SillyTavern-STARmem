@@ -401,7 +401,8 @@ def _emit_html(df: pl.DataFrame) -> None:
     body_html: list[str] = []
     for row in rows:
         is_winner = winner_idx >= 0 and row[winner_idx] == "✓"
-        cls = ' class="winner"' if is_winner else ""
+        tr_attr = ' class="winner"' if is_winner else ""
+        card_cls = " winner" if is_winner else ""
         # Desktop: <tr><td>...</td></tr>
         tds = "".join(
             f'<td class="num">{esc(cell)}</td>' if cols[i] in _NUMERIC_COLS
@@ -419,8 +420,8 @@ def _emit_html(df: pl.DataFrame) -> None:
             f'<div class="card-head">{esc(heading_val) or "&nbsp;"}</div>'
             f'<dl>{dl_pairs}</dl>'
         )
-        body_html.append(f'<tr{cls}>{tds}</tr>')
-        body_html.append(f'<div class="card{cls}">{card}</div>')
+        body_html.append(f'<tr{tr_attr}>{tds}</tr>')
+        body_html.append(f'<div class="card{card_cls}">{card}</div>')
 
     ths = "".join(
         f'<th class="num">{esc(c)}</th>' if c in _NUMERIC_COLS

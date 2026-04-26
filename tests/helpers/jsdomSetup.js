@@ -23,3 +23,14 @@ if (typeof globalThis.structuredClone !== 'function') {
     globalThis.structuredClone = (x) => JSON.parse(JSON.stringify(x));
 }
 
+// TextEncoder / TextDecoder — required by src/vendor/sha256.js (pure-JS
+// SHA-256 uses TextEncoder for UTF-8 encoding parity with node:crypto).
+// jsdom does not ship these globals; the Node runtime does, so we re-attach.
+import { TextEncoder, TextDecoder } from 'node:util';
+if (typeof globalThis.TextEncoder === 'undefined') {
+    globalThis.TextEncoder = TextEncoder;
+}
+if (typeof globalThis.TextDecoder === 'undefined') {
+    globalThis.TextDecoder = TextDecoder;
+}
+

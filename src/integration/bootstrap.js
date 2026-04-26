@@ -73,6 +73,22 @@ function buildConsolidateOpts() {
     };
 }
 
+/** Reserved keys that would collide with Object.prototype if used as map keys. */
+const RESERVED_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+
+/**
+ * Guard against prototype pollution from tampered or imported chat metadata.
+ * @param {string} id
+ */
+function assertSafeChatId(id) {
+    if (typeof id !== 'string' || id.length === 0) {
+        throw new Error('[STARmem] invalid chatId (must be non-empty string)');
+    }
+    if (RESERVED_KEYS.has(id)) {
+        throw new Error(`[STARmem] reserved key '${id}' not allowed as chatId`);
+    }
+}
+
 /**
  * Build the canonical state backend that reads + writes chatMetadata via ST.
  *
@@ -81,6 +97,7 @@ function buildConsolidateOpts() {
 export function buildStateBackend() {
     return {
         read: (id) => {
+            assertSafeChatId(id);
             const ctx = resolveContext();
             const cm = ctx?.chatMetadata;
             if (!cm || typeof cm !== 'object') return undefined;
@@ -89,13 +106,16 @@ export function buildStateBackend() {
             return slot[id];
         },
         write: (id, value) => {
+            assertSafeChatId(id);
             const ctx = resolveContext();
             const cm = ctx?.chatMetadata;
             if (!cm || typeof cm !== 'object') {
                 throw new Error('[STARmem] chatMetadata not available — cannot persist');
             }
             if (!cm['STARmem'] || typeof cm['STARmem'] !== 'object') {
-                cm['STARmem'] = {};
+                // Object.create(null) — even if assertSafeChatId is ever
+                // bypassed, prototype keys can't collide with inherited props.
+                cm['STARmem'] = Object.create(null);
             }
             cm['STARmem'][id] = value;
             if (typeof ctx.saveMetadataDebounced === 'function') {

@@ -73,7 +73,7 @@ function buildList(entries, sortKey) {
     if (sortKey === 'importance') {
         sorted.sort((a, b) => (b.lifecycle?.importance ?? 0) - (a.lifecycle?.importance ?? 0));
     } else if (sortKey === 'recency') {
-        sorted.sort((a, b) => recencyAt(b.lifecycle, now) - recencyAt(a.lifecycle, now));
+        sorted.sort((a, b) => recencyAt(now, b.lifecycle?.createdAt) - recencyAt(now, a.lifecycle?.createdAt));
     } else if (sortKey === 'added') {
         sorted.sort((a, b) => (b.lifecycle?.createdAt || '').localeCompare(a.lifecycle?.createdAt || ''));
     }
@@ -100,7 +100,7 @@ function buildRow(entry, now) {
     const scores = document.createElement('span');
     scores.className = `${CSS_PREFIX}-viewer-scores`;
     const imp = entry.lifecycle?.importance ?? 0;
-    const rec = recencyAt(entry.lifecycle, now);
+    const rec = recencyAt(now, entry.lifecycle?.createdAt);
     const mat = entry.lifecycle?.maturity ?? '(?)';
     const boost = entry.lifecycle ? maturityBoost(entry.lifecycle.maturity) : 1;
     scores.textContent = `I=${imp.toFixed(0)}  R=${rec.toFixed(2)}  ${mat}·${boost.toFixed(2)}`;

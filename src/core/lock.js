@@ -55,3 +55,8 @@ export function withWriteLock(chatId, fn) {
 export function _resetLocksForTests() {
     tails.clear();
 }
+
+/** Test-only: expose the in-flight lock set for race-detection tests. */
+export function _getLockSetForTests() {
+    return new Set(tails.keys());
+}
