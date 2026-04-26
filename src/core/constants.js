@@ -74,6 +74,8 @@ export const RETRIEVAL = {
     SUBJECT_BOOST: 2,
     /** Integer replication factor for tag tokens in the BM25 document. */
     TAG_BOOST: 2,
+    /** Max entries retained per tier cache (exact and fuzzy). Oldest evicted on write. Spec §5 hardening — finding #4 (Codex 2026-04-24). Sweepable. */
+    TIER_CACHE_MAX_ENTRIES: 200,
     /** Tier 2 exit: minimum top score required to shortcut the ladder. Spec §5; 9.4.8 sweep: inert on LoCoMo (identical MRR across 0.5–5.0). */
     TIER2_TAU_CONFIDENCE: 2.0,
     /** Tier 2 exit: minimum (top − #2) score gap required to shortcut. Spec §5; 9.4.8 amended 0.5 → 10 (+0.0625 MRR). Effectively disables Tier 2 gating in favor of always-Tier-3; Phase 11 demolition candidate. */
@@ -196,6 +198,7 @@ export const _SWEPT_RETRIEVAL_KEYS = Object.freeze([
     'EXPLICIT_RELATION_WEIGHT',
     'SUBJECT_BOOST',
     'TAG_BOOST',
+    'TIER_CACHE_MAX_ENTRIES',
 ]);
 
 /** @type {ReadonlyArray<string>} Swept keys in CONSOLIDATION. */

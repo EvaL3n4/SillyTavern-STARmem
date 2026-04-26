@@ -8,6 +8,8 @@
  * @see docs/specs/2026-04-20-starmem-v2-design.md §5
  */
 
+import { RETRIEVAL } from '../core/constants.js';
+
 /**
  * @typedef {{
  *   hit: boolean,
@@ -73,8 +75,13 @@ export function tier0(state, query) {
 }
 
 /**
- * Record a resolved query's id list in the exact cache. Called by the ladder
- * when any tier 1+ resolves. Pure—returns a new state.
+ * Record a resolved query's id list in the exact cache. Bounded at
+ * `RETRIEVAL.TIER_CACHE_MAX_ENTRIES` — oldest insertion-order entries are
+ * evicted first when the cap is exceeded. Pure — returns a new state.
+ *
+ * Reading RETRIEVAL.TIER_CACHE_MAX_ENTRIES at call time (NOT destructuring
+ * at module top) so sweep overrides are observed. See
+ * tests/unit/core/swept-constants-overridable.test.js.
  *
  * @param {import('../core/schema.js').State} state
  * @param {string} query
@@ -83,14 +90,23 @@ export function tier0(state, query) {
  */
 export function recordTier0(state, query, entries) {
     const key = keyFor(query);
+    const ids = entries.map(e => e.id);
+    // Delete-then-reinsert so the updated key moves to the end (LRU).
+    // Object insertion-order is preserved per ECMA-262 §6.1.7.
+    const { [key]: _discard, ...without } = state.tierCaches.exact;
+    const next = { ...without, [key]: ids };
+    const cap = RETRIEVAL.TIER_CACHE_MAX_ENTRIES;
+    const keys = Object.keys(next);
+    if (keys.length > cap) {
+        // Evict the oldest (keys.length - cap) entries.
+        const evicted = keys.slice(0, keys.length - cap);
+        for (const k of evicted) delete next[k];
+    }
     return {
         ...state,
         tierCaches: {
             ...state.tierCaches,
-            exact: {
-                ...state.tierCaches.exact,
-                [key]: entries.map(e => e.id),
-            },
+            exact: next,
         },
     };
 }
