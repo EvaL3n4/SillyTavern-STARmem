@@ -122,14 +122,13 @@ function pointRow(point, knobName, primaryMetric, baselineVal) {
 /**
  * Render a Markdown report from all sweep results.
  *
- * @param {object} params
- * @param {import('./_driver.js').SweepResult} params.baselineResult
- * @param {Array<{round: object, result: import('./_driver.js').SweepResult, committedValue: number}>} params.roundResults
- * @param {import('../loaders/locomo.js').CorpusConversation[]} params.corpus
- * @param {string} params.primaryMetric
+ * @param {{baselineResult: import('./_driver.js').SweepResult, roundResults: Array<{round: object, result: import('./_driver.js').SweepResult, committedValue: number}>}} result
+ * @param {import('../loaders/locomo.js').CorpusConversation[]} corpus
+ * @param {string} primaryMetric
  * @returns {string}
  */
-function renderReport({ baselineResult, roundResults, corpus, primaryMetric }) {
+function renderReport(result, corpus, primaryMetric) {
+    const { baselineResult, roundResults } = result;
     const today = new Date().toISOString().slice(0, 10);
     const accessor = METRIC_ACCESSORS[primaryMetric];
     const baselineMetrics = baselineResult.points[0].metrics;
@@ -228,14 +227,19 @@ ${envBlock}
  * Write the Markdown report to disk.
  *
  * @param {object} params
+ * @param {import('./_driver.js').SweepResult} params.baselineResult
+ * @param {Array<{round: object, result: import('./_driver.js').SweepResult, committedValue: number}>} params.roundResults
+ * @param {import('../loaders/locomo.js').CorpusConversation[]} params.corpus
+ * @param {string} params.primaryMetric
  */
-async function writeReport(params) {
+async function writeReport({ baselineResult, roundResults, corpus, primaryMetric }) {
     const today = new Date().toISOString().slice(0, 10);
     const outDir = path.join('docs', 'bench', 'sweeps');
     const outPath = path.join(outDir, `${today}-graph.md`);
 
     await mkdir(outDir, { recursive: true });
-    await writeFile(outPath, renderReport(params), 'utf8');
+    const result = { baselineResult, roundResults };
+    await writeFile(outPath, renderReport(result, corpus, primaryMetric), 'utf8');
     console.log(`Report written to ${outPath}`);
 }
 
