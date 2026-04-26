@@ -496,6 +496,25 @@ These are v2.1+ considerations. Do not implement them in any phase.
 
 _Appended after each phase ships. Format: `## Phase N—<date>`, with notes on surprises, scope changes, and lessons for subsequent phases._
 
+## Phase 13—2026-04-26
+
+**What shipped:** Item-level fan-out for Modal sweep dispatch + closure of Phase 12 Task 7. New `run_point_chunk` worker + `_modal-chunk.js` harness slice + `_recompute-metrics.js` + `_compute_chunk_plan` helper replace per-cell-serial dispatch with `(cell × chunk)` flat-fan-out via `run_point_chunk.starmap`. Chunks heuristic = `max(1, items // 80)`: LoCoMo runs as 1 chunk (zero overhead, identical to pre-Phase-13 shape), LongMemEval-S runs as 6 chunks. CLI override `--chunks K`. Decision gate on λ₁ tripwire fired **Outcome A — provably inert**, two-corpus reproduction of Phase 9.5's flatness; spec default `TIER3_LAMBDA_1=1.0` holds with confidence.
+
+**Note on phase boundary:** Phase 13 was pulled forward mid-Phase-12 as Task 7.5 (see Phase 12 entry below, surprise 3) to unblock the λ₁ tripwire after `run_point` cell-serial timed out 4× under successive timeout bumps. The two phases interleave too tightly to write parallel retros without duplication. **Canonical narrative lives in `phase-12-retro.md`** — §1 artifacts table, §4 surprises 3-4, §6 candidates 3-5. `phase-13-retro.md` is a structured pointer with the per-task commit table and decisions-held audit.
+
+**Commits this phase:** ~10 total. Plan (`f033c85`) → 6 task landings (`d877d62`, `5097056`, `10b7183`, `d1e967e`, `578189f`, `707e975`) → 4 tactical fixes inside Tasks 5-6 (`92594fd`, `8a6e806`, `1b15372`, `6dc88c4`) → retro. Phase 13 range: `f033c85..HEAD`.
+
+**Execution mode:** Hybrid. Subagents owned the mechanical wiring (Tasks 1-4 verbatim-source landings). Controller owned Task 5 helper extraction + retro fixes after smoke. Eva owned the Modal dispatch (Task 6, ~6.3 min wall on warm cache).
+
+**Decisions held / revised:** 9 of 10 plan-header decisions held. Decision 7 (`run_point_chunk` timeout = 1200s) revised → 3000s in `6dc88c4`: initial sizing priced the average item, but cell 1 wall-clocked 1381s — sizing should track observed worst-case-cell, not mean-item. Filed as a skill candidate.
+
+**Post-Phase 13:**
+- Item-fan-out is the default for `run-sweep` mode against any corpus ≥ 80 items. Future LongMemEval-shape sweeps inherit 30-container parallelism by construction.
+- λ₁ on LongMemEval-S resolved as Outcome A. v2.1 graph-tier work should treat λ₁ as a fixed parameter; the structural-fix hypothesis (move λ₁ upstream of re-ranking) is the live alternative if/when graph-tier follow-through has appetite.
+- Phase 14 inherits three candidates filed in Phase 12 retro §6: cell wall-time variance profiling, late-chunk slowdown investigation, and the worst-case-cell timeout-sizing skill.
+
+---
+
 ## Phase 12—2026-04-26
 
 **What shipped:** Multi-corpus benchmarking substrate + λ₁ two-corpus inert verdict. LongMemEval-S (500 items, 6 task types) added alongside LoCoMo-10 as the second benchmark corpus via a new `CorpusAdapter` interface under `bench/corpora/`. Tier 2 demolition landed (always-seed-Tier-3 ladder, ~30 LOC). `computeMetrics` emits `byTaskType` slice + `abstentionCount`. Modal substrate gains `--corpus {locomo, longmemeval-s}` across `run-point`, `run-baselines`, `run-sweep`. Mid-phase substrate swap forced by Fireworks Batch API-shape brittleness: 14 commits chasing dead-end mismatches → pivoted to Modal vLLM offline batch with `Qwen/Qwen3.6-35B-A3B-FP8` on a single H100 (Task 6.5, see [`phase-12-task-6-5-retro.md`](./phase-12-task-6-5-retro.md)). Phase 13 item-fan-out pulled forward as Task 7.5 after `run_point` cell-serial architecture timed out 4× on LongMemEval-S; new `run_point_chunk` worker + `--chunks K` CLI ship 30-container parallelism per sweep. **λ₁ tripwire on LongMemEval-S: Outcome A — provably inert**. MRR identical to 16 decimals across grid `{0.5, 0.75, 1.0, 1.25, 1.5}`, every metric, every aggStats counter, every task-type slice. Two-corpus reproduction of Phase 9.5's three-time LoCoMo flatness; spec default `TIER3_LAMBDA_1=1.0` holds with confidence. v2.1 hypothesis filed: λ₁ may need to operate at candidate generation, not re-ranking.
