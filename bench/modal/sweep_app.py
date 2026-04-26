@@ -2950,7 +2950,7 @@ def _cartesian_product(knobs):
 
 
 @app.function(image=image, volumes={"/data": volume}, secrets=[env_secret, wandb_secret], timeout=10800, memory=4096)
-def run_sweep(sweep_name: str, synthetic: bool = False, corpus: str = "locomo", extractor_model: str = "") -> dict:
+def run_sweep(sweep_name: str, synthetic: bool = False, corpus: str = "locomo", extractor_model: str = "", chunks_override: int = 0) -> dict:
     """Run a full parameter sweep in parallel via Modal.
 
     Args:
@@ -2965,6 +2965,8 @@ def run_sweep(sweep_name: str, synthetic: bool = False, corpus: str = "locomo", 
             env_secret. Phase 12 Task 7 sweeps against the Modal vLLM
             warmed cache require '--extractor-model "Qwen/Qwen3.6-35B-A3B-FP8"'
             for cache-key alignment (see docs/plans/phase-12-task-6-5-retro.md).
+        chunks_override: Optional positive chunk count override for Phase 13
+            item-fan-out. 0 uses heuristic max(1, items // 80).
 
     Returns:
         Dict with keys:
@@ -2981,6 +2983,7 @@ def run_sweep(sweep_name: str, synthetic: bool = False, corpus: str = "locomo", 
     import os
     import subprocess
     import json
+    import sys
     from datetime import datetime
 
     # 9.4.9 dispatch — multi-round sweeps run in specialized helpers
@@ -3074,13 +3077,156 @@ def run_sweep(sweep_name: str, synthetic: bool = False, corpus: str = "locomo", 
             for k, v in base_overrides.items():
                 point.setdefault(k, v)
 
-    # Fan out to parallel containers
+    # Phase 13: item-fan-out. Each grid cell is split into K chunks of
+    # item indices; chunks fan out in parallel alongside cells, then we
+    # aggregate runs[] back per-cell and recompute metrics once.
+    #
+    # K = max(1, items // 80) so LoCoMo (10 items) → 1 chunk (identical
+    # to old per-cell dispatch shape, no overhead) and LongMemEval-S
+    # (500 items) → 6 chunks of ~83 items each. CLI override --chunks
+    # is honored when set (>0).
+    #
+    # See docs/plans/phase-13-item-fan-out.md decision 4 for why this
+    # uses a flat starmap over (cell × chunk) tuples instead of nested
+    # dispatch.
     overrides_jsons = [json.dumps(point) for point in grid]
-    point_results = list(run_point.starmap(
-        [(oj, corpus, extractor_model) for oj in overrides_jsons]
-    ))
+    corpus_size = 500 if corpus == "longmemeval-s" else 10
+    if chunks_override > 0:
+        n_chunks = chunks_override
+    else:
+        n_chunks = max(1, corpus_size // 80)
 
-    points = [json.loads(pr) for pr in point_results]
+    # Build chunk plans: list of (cell_idx, chunk_idx, item_indices) for
+    # each (cell, chunk) pair. Chunk i covers items [i*chunk_size, ...)
+    # using contiguous slicing — preserves item-order so any temporal
+    # locality in the corpus stays within a chunk where possible.
+    chunk_size = (corpus_size + n_chunks - 1) // n_chunks  # ceil
+    chunk_plans = []  # list of (cell_idx, chunk_idx, indices_list)
+    for cell_idx in range(len(grid)):
+        for chunk_idx in range(n_chunks):
+            start = chunk_idx * chunk_size
+            end = min(start + chunk_size, corpus_size)
+            if start >= end:
+                continue   # last chunk may be empty if corpus_size % n_chunks != 0
+            indices = list(range(start, end))
+            chunk_plans.append((cell_idx, chunk_idx, indices))
+
+    print(
+        f"[run_sweep] dispatching {len(chunk_plans)} chunks "
+        f"({len(grid)} cells × {n_chunks} chunks, "
+        f"chunk_size={chunk_size}, corpus_size={corpus_size})",
+        file=sys.stderr,
+    )
+
+    # Fan out via run_point_chunk. starmap argument tuple matches the
+    # function signature: (overrides_json, corpus, extractor_model,
+    # item_indices_json).
+    chunk_results_raw = list(run_point_chunk.starmap([
+        (overrides_jsons[cell_idx], corpus, extractor_model, json.dumps(indices))
+        for (cell_idx, chunk_idx, indices) in chunk_plans
+    ]))
+
+    # Group chunk results by cell_idx for aggregation.
+    chunks_by_cell = {}  # cell_idx -> list of parsed chunk payloads
+    chunk_errors = []  # parallel list of (cell_idx, chunk_idx, error_dict)
+    for (cell_idx, chunk_idx, _indices), raw in zip(chunk_plans, chunk_results_raw):
+        parsed = json.loads(raw)
+        if "error" in parsed and "overrides" not in parsed and "runs" not in parsed:
+            chunk_errors.append((cell_idx, chunk_idx, parsed))
+            continue
+        chunks_by_cell.setdefault(cell_idx, []).append((chunk_idx, parsed))
+
+    # Surface chunk-level errors loudly. A cell with ANY chunk error is
+    # tainted — its aggregated metrics would be missing items and silently
+    # under-count, which breaks the decision gate. Hard-fail per cell.
+    if chunk_errors:
+        print(
+            f"\n[run_sweep] {len(chunk_errors)} of {len(chunk_plans)} chunks failed:",
+            file=sys.stderr,
+        )
+        for (ci, chi, ep) in chunk_errors:
+            stdout_tail = (ep.get("stdout_tail") or "").splitlines()[-10:]
+            print(
+                f"  cell={ci} chunk={chi} error={ep.get('error')!r} "
+                f"returncode={ep.get('returncode')}\n"
+                f"    stdout_tail (last 10 lines):\n      "
+                + "\n      ".join(stdout_tail),
+                file=sys.stderr,
+            )
+
+    # Aggregate per cell: concat runs[], recompute metrics once.
+    # We delegate the recompute to a Node helper rather than re-implementing
+    # computeMetrics in Python — single source of truth, no drift risk.
+    points = []
+    error_points = []
+    for cell_idx, oj in enumerate(overrides_jsons):
+        # Cell tainted by any chunk error: emit error_point, skip.
+        cell_chunk_errors = [(ci, chi, ep) for (ci, chi, ep) in chunk_errors if ci == cell_idx]
+        if cell_chunk_errors:
+            first = cell_chunk_errors[0][2]
+            error_points.append({
+                "error": "chunk_failure",
+                "cell_idx": cell_idx,
+                "overrides_echo": oj,
+                "failed_chunks": len(cell_chunk_errors),
+                "total_chunks": n_chunks,
+                "first_chunk_error": first.get("error"),
+                "first_chunk_returncode": first.get("returncode"),
+            })
+            continue
+
+        cell_chunks = sorted(chunks_by_cell.get(cell_idx, []), key=lambda t: t[0])
+        if not cell_chunks:
+            error_points.append({
+                "error": "no_chunks_returned",
+                "cell_idx": cell_idx,
+                "overrides_echo": oj,
+            })
+            continue
+
+        # Concat runs[] across chunks for this cell.
+        concat_runs = []
+        max_chunk_wall = 0
+        cell_overrides = cell_chunks[0][1].get("overrides", {})
+        for (_chi, chunk) in cell_chunks:
+            concat_runs.extend(chunk.get("runs", []))
+            max_chunk_wall = max(max_chunk_wall, chunk.get("wallMs", 0))
+
+        # Recompute metrics once on concat_runs via Node helper.
+        recompute_input = json.dumps({"runs": concat_runs})
+        recompute_proc = subprocess.run(
+            ["node", "-e",
+             "import('./bench/sweeps/_recompute-metrics.js')"
+             ".then(m => m.runFromStdin(process.stdin))"],
+            cwd="/repo",
+            input=recompute_input,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        recompute_out = json.loads(recompute_proc.stdout.strip().split("\n")[-1])
+
+        latencies = [r.get("latencyMs", 0) for r in concat_runs]
+        sorted_lat = sorted(latencies)
+        n = len(sorted_lat)
+        latency_p50_p95 = {
+            "p50": sorted_lat[int((n - 1) * 0.5)] if n > 0 else 0,
+            "p95": sorted_lat[int((n - 1) * 0.95)] if n > 0 else 0,
+        }
+
+        points.append({
+            "overrides": cell_overrides,
+            "metrics": recompute_out["metrics"],
+            "aggStats": recompute_out.get("aggStats"),
+            "latencyMs": latency_p50_p95,
+            "runCount": len(concat_runs),
+            "wallMs": max_chunk_wall,   # cell wall = max chunk wall (parallel)
+            "chunksRun": len(cell_chunks),
+            "totalChunks": n_chunks,
+        })
+
+    # Pre-existing run_sweep logic continues to consume `points` and
+    # `error_points` exactly as before — no further changes needed.
 
     # Partition successes vs error payloads BEFORE _detect_elbow / renderer
     # touch them — both index `p["overrides"]` and crash with KeyError on
@@ -3088,7 +3234,8 @@ def run_sweep(sweep_name: str, synthetic: bool = False, corpus: str = "locomo", 
     # swallowing the actual node subprocess failure. Surface the errors
     # loudly so the operator sees what crashed instead of a confusing
     # `KeyError: 'overrides'` 50 lines deep in the sweep pipeline.
-    error_points = [p for p in points if "error" in p and "overrides" not in p]
+    point_error_points = [p for p in points if "error" in p and "overrides" not in p]
+    error_points.extend(point_error_points)
     ok_points = [p for p in points if "overrides" in p]
 
     if error_points:
