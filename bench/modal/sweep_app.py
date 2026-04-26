@@ -235,13 +235,12 @@ def hello():
     image=image,
     volumes={"/data": volume},
     secrets=[env_secret],
-    timeout=1800,   # was 1500: Phase 12 Task 7 lambda1_tripwire on
-                    # LongMemEval-S hit FunctionTimeoutError at 1500s on
-                    # 2026-04-26. Plan estimate (line 2725) was ~2000s
-                    # warm-cache seeding per cell, so 1500s was under-spec
-                    # before any cache miss. Aligns with the
-                    # run_baseline_point / run_longmemeval_warmup_point
-                    # budget (both 1800s) — same shape of work.
+    timeout=3000,   # was 1800: bumped 1500→1800 on 2026-04-26 was still
+                    # under-spec. Re-dispatch with stderr streaming
+                    # confirmed the work was progressing steadily, not
+                    # wedged — just slow. Plan estimate (line 2725) was
+                    # ~2000s warm-cache seeding per cell; 3000s gives
+                    # 50% margin for tail items.
     memory=4096,
 )
 def run_point(overrides_json: str, corpus: str = "locomo", extractor_model: str = "") -> str:
