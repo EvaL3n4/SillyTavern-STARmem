@@ -1,0 +1,450 @@
+{
+  "_schema": 1,
+  "sweep_name": "lambda1_tripwire",
+  "synthetic": false,
+  "timestamp": "2026-04-26T14-52-55Z",
+  "corpus_len": 500,
+  "qa_count": 500,
+  "tags_stats": null,
+  "result": {
+    "name": "lambda1_tripwire",
+    "points": [
+      {
+        "overrides": {
+          "TIER3_LAMBDA_1": 0.5,
+          "TIER2_TAU_GAP": 10,
+          "BATCH_SIZE": 15,
+          "WORKING_BUFFER_THRESHOLD": 15
+        },
+        "metrics": {
+          "n": 470,
+          "n_scored": 393,
+          "n_skipped": 77,
+          "coverage": 0.8361702127659575,
+          "precisionAtK": {
+            "1": 0.8346055979643766,
+            "3": 0.6437659033078876,
+            "5": 0.6025021204410516,
+            "10": 0.5810271012561088
+          },
+          "recallAtK": {
+            "1": 0.4259693444807947,
+            "3": 0.8600539197867438,
+            "5": 0.960559796437659,
+            "10": 1
+          },
+          "mrr": 0.9038470859081548,
+          "byTaskType": {
+            "single-session-user": {
+              "mrr": 0.945578231292517,
+              "coverage": 0.765625,
+              "n_scored": 49,
+              "n_skipped": 15
+            },
+            "multi-session": {
+              "mrr": 0.8631488631488632,
+              "coverage": 0.9173553719008265,
+              "n_scored": 111,
+              "n_skipped": 10
+            },
+            "single-session-preference": {
+              "mrr": 0.7745535714285714,
+              "coverage": 0.5333333333333333,
+              "n_scored": 16,
+              "n_skipped": 14
+            },
+            "temporal-reasoning": {
+              "mrr": 0.8891698272229246,
+              "coverage": 0.889763779527559,
+              "n_scored": 113,
+              "n_skipped": 14
+            },
+            "knowledge-update": {
+              "mrr": 0.9727272727272728,
+              "coverage": 0.9166666666666666,
+              "n_scored": 66,
+              "n_skipped": 6
+            },
+            "single-session-assistant": {
+              "mrr": 0.9473684210526315,
+              "coverage": 0.6785714285714286,
+              "n_scored": 38,
+              "n_skipped": 18
+            }
+          },
+          "abstentionCount": 30
+        },
+        "aggStats": {
+          "added": 129532,
+          "updated": 567,
+          "drained": 246738,
+          "batches": 16682,
+          "parseFailures": 118,
+          "entriesSkipped": 21,
+          "updateRate": 0.004358219509757954,
+          "dedupHitRate": 0.0022979840964910147,
+          "parseFailRate": 0.0070734923870039565,
+          "entrySkipRate": 0.00016138948662772825
+        },
+        "latencyMs": {
+          "p50": 5.886721000017133,
+          "p95": 11.287249000000884
+        },
+        "runCount": 500,
+        "wallMs": 373636,
+        "chunksRun": 6,
+        "totalChunks": 6
+      },
+      {
+        "overrides": {
+          "TIER3_LAMBDA_1": 0.75,
+          "TIER2_TAU_GAP": 10,
+          "BATCH_SIZE": 15,
+          "WORKING_BUFFER_THRESHOLD": 15
+        },
+        "metrics": {
+          "n": 470,
+          "n_scored": 393,
+          "n_skipped": 77,
+          "coverage": 0.8361702127659575,
+          "precisionAtK": {
+            "1": 0.8346055979643766,
+            "3": 0.6437659033078876,
+            "5": 0.6025021204410516,
+            "10": 0.5810271012561088
+          },
+          "recallAtK": {
+            "1": 0.4259693444807947,
+            "3": 0.8600539197867438,
+            "5": 0.960559796437659,
+            "10": 1
+          },
+          "mrr": 0.9038470859081548,
+          "byTaskType": {
+            "single-session-user": {
+              "mrr": 0.945578231292517,
+              "coverage": 0.765625,
+              "n_scored": 49,
+              "n_skipped": 15
+            },
+            "multi-session": {
+              "mrr": 0.8631488631488632,
+              "coverage": 0.9173553719008265,
+              "n_scored": 111,
+              "n_skipped": 10
+            },
+            "single-session-preference": {
+              "mrr": 0.7745535714285714,
+              "coverage": 0.5333333333333333,
+              "n_scored": 16,
+              "n_skipped": 14
+            },
+            "temporal-reasoning": {
+              "mrr": 0.8891698272229246,
+              "coverage": 0.889763779527559,
+              "n_scored": 113,
+              "n_skipped": 14
+            },
+            "knowledge-update": {
+              "mrr": 0.9727272727272728,
+              "coverage": 0.9166666666666666,
+              "n_scored": 66,
+              "n_skipped": 6
+            },
+            "single-session-assistant": {
+              "mrr": 0.9473684210526315,
+              "coverage": 0.6785714285714286,
+              "n_scored": 38,
+              "n_skipped": 18
+            }
+          },
+          "abstentionCount": 30
+        },
+        "aggStats": {
+          "added": 129532,
+          "updated": 567,
+          "drained": 246738,
+          "batches": 16682,
+          "parseFailures": 118,
+          "entriesSkipped": 21,
+          "updateRate": 0.004358219509757954,
+          "dedupHitRate": 0.0022979840964910147,
+          "parseFailRate": 0.0070734923870039565,
+          "entrySkipRate": 0.00016138948662772825
+        },
+        "latencyMs": {
+          "p50": 5.249295000015991,
+          "p95": 10.877266999996209
+        },
+        "runCount": 500,
+        "wallMs": 1381042,
+        "chunksRun": 6,
+        "totalChunks": 6
+      },
+      {
+        "overrides": {
+          "TIER3_LAMBDA_1": 1,
+          "TIER2_TAU_GAP": 10,
+          "BATCH_SIZE": 15,
+          "WORKING_BUFFER_THRESHOLD": 15
+        },
+        "metrics": {
+          "n": 470,
+          "n_scored": 393,
+          "n_skipped": 77,
+          "coverage": 0.8361702127659575,
+          "precisionAtK": {
+            "1": 0.8346055979643766,
+            "3": 0.6437659033078876,
+            "5": 0.6025021204410516,
+            "10": 0.5810271012561088
+          },
+          "recallAtK": {
+            "1": 0.4259693444807947,
+            "3": 0.8600539197867438,
+            "5": 0.960559796437659,
+            "10": 1
+          },
+          "mrr": 0.9038470859081548,
+          "byTaskType": {
+            "single-session-user": {
+              "mrr": 0.945578231292517,
+              "coverage": 0.765625,
+              "n_scored": 49,
+              "n_skipped": 15
+            },
+            "multi-session": {
+              "mrr": 0.8631488631488632,
+              "coverage": 0.9173553719008265,
+              "n_scored": 111,
+              "n_skipped": 10
+            },
+            "single-session-preference": {
+              "mrr": 0.7745535714285714,
+              "coverage": 0.5333333333333333,
+              "n_scored": 16,
+              "n_skipped": 14
+            },
+            "temporal-reasoning": {
+              "mrr": 0.8891698272229246,
+              "coverage": 0.889763779527559,
+              "n_scored": 113,
+              "n_skipped": 14
+            },
+            "knowledge-update": {
+              "mrr": 0.9727272727272728,
+              "coverage": 0.9166666666666666,
+              "n_scored": 66,
+              "n_skipped": 6
+            },
+            "single-session-assistant": {
+              "mrr": 0.9473684210526315,
+              "coverage": 0.6785714285714286,
+              "n_scored": 38,
+              "n_skipped": 18
+            }
+          },
+          "abstentionCount": 30
+        },
+        "aggStats": {
+          "added": 129532,
+          "updated": 567,
+          "drained": 246738,
+          "batches": 16682,
+          "parseFailures": 118,
+          "entriesSkipped": 21,
+          "updateRate": 0.004358219509757954,
+          "dedupHitRate": 0.0022979840964910147,
+          "parseFailRate": 0.0070734923870039565,
+          "entrySkipRate": 0.00016138948662772825
+        },
+        "latencyMs": {
+          "p50": 5.593292999998084,
+          "p95": 10.754240999987815
+        },
+        "runCount": 500,
+        "wallMs": 423006,
+        "chunksRun": 6,
+        "totalChunks": 6
+      },
+      {
+        "overrides": {
+          "TIER3_LAMBDA_1": 1.25,
+          "TIER2_TAU_GAP": 10,
+          "BATCH_SIZE": 15,
+          "WORKING_BUFFER_THRESHOLD": 15
+        },
+        "metrics": {
+          "n": 470,
+          "n_scored": 393,
+          "n_skipped": 77,
+          "coverage": 0.8361702127659575,
+          "precisionAtK": {
+            "1": 0.8346055979643766,
+            "3": 0.6437659033078876,
+            "5": 0.6025021204410516,
+            "10": 0.5810271012561088
+          },
+          "recallAtK": {
+            "1": 0.4259693444807947,
+            "3": 0.8600539197867438,
+            "5": 0.960559796437659,
+            "10": 1
+          },
+          "mrr": 0.9038470859081548,
+          "byTaskType": {
+            "single-session-user": {
+              "mrr": 0.945578231292517,
+              "coverage": 0.765625,
+              "n_scored": 49,
+              "n_skipped": 15
+            },
+            "multi-session": {
+              "mrr": 0.8631488631488632,
+              "coverage": 0.9173553719008265,
+              "n_scored": 111,
+              "n_skipped": 10
+            },
+            "single-session-preference": {
+              "mrr": 0.7745535714285714,
+              "coverage": 0.5333333333333333,
+              "n_scored": 16,
+              "n_skipped": 14
+            },
+            "temporal-reasoning": {
+              "mrr": 0.8891698272229246,
+              "coverage": 0.889763779527559,
+              "n_scored": 113,
+              "n_skipped": 14
+            },
+            "knowledge-update": {
+              "mrr": 0.9727272727272728,
+              "coverage": 0.9166666666666666,
+              "n_scored": 66,
+              "n_skipped": 6
+            },
+            "single-session-assistant": {
+              "mrr": 0.9473684210526315,
+              "coverage": 0.6785714285714286,
+              "n_scored": 38,
+              "n_skipped": 18
+            }
+          },
+          "abstentionCount": 30
+        },
+        "aggStats": {
+          "added": 129532,
+          "updated": 567,
+          "drained": 246738,
+          "batches": 16682,
+          "parseFailures": 118,
+          "entriesSkipped": 21,
+          "updateRate": 0.004358219509757954,
+          "dedupHitRate": 0.0022979840964910147,
+          "parseFailRate": 0.0070734923870039565,
+          "entrySkipRate": 0.00016138948662772825
+        },
+        "latencyMs": {
+          "p50": 5.589705999998841,
+          "p95": 10.150374000018928
+        },
+        "runCount": 500,
+        "wallMs": 409454,
+        "chunksRun": 6,
+        "totalChunks": 6
+      },
+      {
+        "overrides": {
+          "TIER3_LAMBDA_1": 1.5,
+          "TIER2_TAU_GAP": 10,
+          "BATCH_SIZE": 15,
+          "WORKING_BUFFER_THRESHOLD": 15
+        },
+        "metrics": {
+          "n": 470,
+          "n_scored": 393,
+          "n_skipped": 77,
+          "coverage": 0.8361702127659575,
+          "precisionAtK": {
+            "1": 0.8346055979643766,
+            "3": 0.6437659033078876,
+            "5": 0.6025021204410516,
+            "10": 0.5810271012561088
+          },
+          "recallAtK": {
+            "1": 0.4259693444807947,
+            "3": 0.8600539197867438,
+            "5": 0.960559796437659,
+            "10": 1
+          },
+          "mrr": 0.9038470859081548,
+          "byTaskType": {
+            "single-session-user": {
+              "mrr": 0.945578231292517,
+              "coverage": 0.765625,
+              "n_scored": 49,
+              "n_skipped": 15
+            },
+            "multi-session": {
+              "mrr": 0.8631488631488632,
+              "coverage": 0.9173553719008265,
+              "n_scored": 111,
+              "n_skipped": 10
+            },
+            "single-session-preference": {
+              "mrr": 0.7745535714285714,
+              "coverage": 0.5333333333333333,
+              "n_scored": 16,
+              "n_skipped": 14
+            },
+            "temporal-reasoning": {
+              "mrr": 0.8891698272229246,
+              "coverage": 0.889763779527559,
+              "n_scored": 113,
+              "n_skipped": 14
+            },
+            "knowledge-update": {
+              "mrr": 0.9727272727272728,
+              "coverage": 0.9166666666666666,
+              "n_scored": 66,
+              "n_skipped": 6
+            },
+            "single-session-assistant": {
+              "mrr": 0.9473684210526315,
+              "coverage": 0.6785714285714286,
+              "n_scored": 38,
+              "n_skipped": 18
+            }
+          },
+          "abstentionCount": 30
+        },
+        "aggStats": {
+          "added": 129532,
+          "updated": 567,
+          "drained": 246738,
+          "batches": 16682,
+          "parseFailures": 118,
+          "entriesSkipped": 21,
+          "updateRate": 0.004358219509757954,
+          "dedupHitRate": 0.0022979840964910147,
+          "parseFailRate": 0.0070734923870039565,
+          "entrySkipRate": 0.00016138948662772825
+        },
+        "latencyMs": {
+          "p50": 5.6217389999947045,
+          "p95": 10.227499000000535
+        },
+        "runCount": 500,
+        "wallMs": 634349,
+        "chunksRun": 6,
+        "totalChunks": 6
+      }
+    ],
+    "elbow": {
+      "overrides": {
+        "TIER3_LAMBDA_1": 0.5
+      },
+      "rationale": "Axis flat (max\u0394/\u0394knob = 0.000000 \u2264 0.005); held at spec on TIER3_LAMBDA_1. Highest observed mrr = 0.9038."
+    }
+  }
+}
