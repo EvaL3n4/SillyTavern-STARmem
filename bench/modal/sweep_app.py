@@ -2825,7 +2825,7 @@ def _cartesian_product(knobs):
     return result
 
 
-@app.function(image=image, volumes={"/data": volume}, secrets=[env_secret, wandb_secret], timeout=1800, memory=4096)
+@app.function(image=image, volumes={"/data": volume}, secrets=[env_secret, wandb_secret], timeout=10800, memory=4096)
 def run_sweep(sweep_name: str, synthetic: bool = False, corpus: str = "locomo", extractor_model: str = "") -> dict:
     """Run a full parameter sweep in parallel via Modal.
 
