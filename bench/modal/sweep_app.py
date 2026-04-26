@@ -367,6 +367,130 @@ def run_point(overrides_json: str, corpus: str = "locomo", extractor_model: str 
     image=image,
     volumes={"/data": volume},
     secrets=[env_secret],
+    timeout=1200,   # Phase 13: per-chunk worst-case ~83 items × ~3.6s/item
+                    # = ~300s wall + 4× headroom. Comfortably under the
+                    # old run_point 3000s; chunked dispatch makes timeouts
+                    # a non-issue. Tune downward if Phase 14 sweeps show
+                    # stable per-chunk wall < 200s on this corpus.
+    memory=4096,
+)
+def run_point_chunk(
+    overrides_json: str,
+    corpus: str,
+    extractor_model: str,
+    item_indices_json: str,
+) -> str:
+    """Run a single (overrides × item-chunk) sweep cell on a corpus slice.
+
+    Phase 13 item-fan-out entry point. Mirrors run_point exactly except:
+      - threads STARMEM_ITEM_INDICES env var to the Node subprocess
+      - invokes bench/sweeps/_modal-chunk.js (which slices the corpus)
+        instead of _modal-point.js (which runs the full corpus)
+      - per-chunk timeout=1200s instead of run_point's 3000s
+
+    Cell-level metrics aggregation happens in run_sweep, not here. This
+    function emits per-chunk runs[] + advisory metrics; run_sweep groups
+    by cell_idx, concatenates runs[], and recomputes metrics once per
+    cell via the existing computeMetrics path.
+
+    Args:
+        overrides_json: JSON string of Record<string, number> overrides.
+        corpus: 'locomo' or 'longmemeval-s'. Note: Phase 13 chunking
+            heuristic (items // 80) means LoCoMo always runs as 1 chunk
+            covering all 10 items, identical to the old run_point shape.
+            LongMemEval-S full corpus = 6 chunks of ~83 items.
+        extractor_model: Optional model override (see run_point docstring
+            for cache-key alignment requirements).
+        item_indices_json: JSON array of integer item indices into the
+            corpus (e.g. "[0, 1, 2, ..., 82]"). Required — there is no
+            "full corpus" sentinel; full-corpus runs go through run_point
+            via run_sweep's chunks=1 path.
+
+    Returns:
+        JSON string with { overrides, itemIndices, runs, metrics,
+        latencyMs, runCount, wallMs, aggStats }. The runs[] field is the
+        raw HarnessRun array; cell-level recompute downstream concatenates
+        across chunks.
+    """
+    import os
+    import subprocess
+
+    # Symlink Volume cache to where the repo expects it.
+    repo_cache = "/repo/bench/.cache"
+    os.makedirs(repo_cache, exist_ok=True)
+    corpus_link = os.path.join(repo_cache, "locomo10.json")
+    cache_link = os.path.join(repo_cache, "extractions")
+    _install_volume_symlink(corpus_link, "/data/locomo10.json")
+    _install_volume_symlink(cache_link, "/data/extractions")
+    if corpus == "longmemeval-s":
+        longmemeval_link = os.path.join(repo_cache, "longmemeval_s_cleaned.json")
+        _install_volume_symlink(longmemeval_link, "/data/longmemeval_s_cleaned.json")
+
+    diag = {
+        "repo_cache_contents": sorted(os.listdir(repo_cache)) if os.path.isdir(repo_cache) else None,
+        "corpus_link_target": os.readlink(corpus_link) if os.path.islink(corpus_link) else "not-a-symlink",
+        "corpus_link_size": os.path.getsize(corpus_link) if os.path.exists(corpus_link) else 0,
+        "cache_link_target": os.readlink(cache_link) if os.path.islink(cache_link) else "not-a-symlink",
+        "cache_link_isdir": os.path.isdir(cache_link),
+        "modal_chunk_js_exists": os.path.exists("/repo/bench/sweeps/_modal-chunk.js"),
+        "runner_js_exists": os.path.exists("/repo/bench/runner.js"),
+        "node_modules_exists": os.path.exists("/repo/node_modules"),
+    }
+
+    env = os.environ.copy()
+    env["STARMEM_OVERRIDES"] = overrides_json
+    env["STARMEM_BENCH_CORPUS"] = corpus
+    env["STARMEM_ITEM_INDICES"] = item_indices_json   # Phase 13: chunk slice
+    if extractor_model:
+        env["STARMEM_BENCH_LLM_MODEL"] = extractor_model
+
+    # Stream stderr live to Modal's log stream — same Popen pattern as
+    # run_point (post-2026-04-26 fix). Per-chunk wall-clock is short
+    # enough (~300s) that buffering wouldn't be catastrophic, but
+    # consistency with run_point + free progress visibility wins.
+    import sys
+    proc = subprocess.Popen(
+        ["node", "bench/sweeps/_modal-chunk.js"],
+        cwd="/repo",
+        stdout=subprocess.PIPE,
+        stderr=sys.stdout,
+        text=True,
+        env=env,
+    )
+    stdout_str, _ = proc.communicate()
+    returncode = proc.returncode
+
+    if returncode != 0:
+        import json as _json
+        try:
+            volume.commit()
+        except Exception:
+            pass
+        return _json.dumps({
+            "error": "node subprocess failed",
+            "returncode": returncode,
+            "stderr_note": "streamed live to Modal function log",
+            "stdout_tail": (stdout_str or "")[-2000:],
+            "diagnostics": diag,
+            "overrides_echo": overrides_json,
+            "item_indices_echo": item_indices_json,
+        })
+
+    # Per-chunk volume.commit() — durability for cache writes from any
+    # live extraction fall-through that happened in this chunk. Mirror
+    # of run_point's pattern.
+    try:
+        volume.commit()
+    except Exception:
+        pass
+
+    return stdout_str.strip()
+
+
+@app.function(
+    image=image,
+    volumes={"/data": volume},
+    secrets=[env_secret],
     timeout=600,
     memory=4096,
 )
