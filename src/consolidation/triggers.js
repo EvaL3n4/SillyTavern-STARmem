@@ -22,7 +22,10 @@ import { consolidate } from './consolidate.js';
 import { createLogger } from '../core/logger.js';
 
 const log = createLogger({ debug: false }).scope('triggers');
-const { WORKING_BUFFER_THRESHOLD, IDLE_TRIGGER_SECONDS } = CONSOLIDATION;
+// IDLE_TRIGGER_SECONDS is not swept (Phase 12), safe to destructure.
+// WORKING_BUFFER_THRESHOLD is swept (Phase 12 Task 7) — read at call
+// time inside maybeConsolidate so setConstantOverrides is observed.
+const { IDLE_TRIGGER_SECONDS } = CONSOLIDATION;
 
 /** @type {Map<string, ReturnType<typeof setTimeout>>} */
 const idleTimers = new Map();
@@ -53,7 +56,7 @@ export async function maybeConsolidate(chatId, reason, opts) {
         return { skipped: true, why: 'empty-buffer' };
     }
 
-    if (reason === 'buffer' && state.workingBuffer.length < WORKING_BUFFER_THRESHOLD) {
+    if (reason === 'buffer' && state.workingBuffer.length < CONSOLIDATION.WORKING_BUFFER_THRESHOLD) {
         return { skipped: true, why: 'below-threshold' };
     }
     // 'idle' reason has no buffer-size precondition beyond non-empty (above).

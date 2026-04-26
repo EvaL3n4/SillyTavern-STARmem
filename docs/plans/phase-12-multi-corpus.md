@@ -2740,21 +2740,45 @@ SWEEP_CONFIGS = {
         ],
         "primary_metric": "mrr",
         "renderer": render_single_axis_report,
-        # Fix TIER2_TAU_GAP=10 so queries reach Tier 3 (same invariant as
-        # 9.4.9/9.5 graph sweeps; Tier 2 demolition in Phase 12 Task 1
-        # made this a no-op structurally, but preserved for replayability).
-        "base_overrides": {"TIER2_TAU_GAP": 10},
     },
 }
 ```
 
-If `run_sweep` does NOT honor a `base_overrides` key (per preflight note), inline the override into each grid point's override JSON — that's the pattern hops and relw use.
+`run_sweep` doesn't honor a config-level `base_overrides` key today; instead, all single-axis sweeps inline through a module-level `_SWEEP_BASE_OVERRIDES` dict (added in this task):
+
+```python
+_SWEEP_BASE_OVERRIDES = {
+    "hops": {"TIER2_TAU_GAP": 10},
+    "relw": {"TIER2_TAU_GAP": 10},
+    "lambda1_tripwire": {"TIER2_TAU_GAP": 10, "BATCH_SIZE": 15},
+}
+```
+
+`BATCH_SIZE=15` is required for cache-key alignment with the Modal vLLM
+warmed cache (Phase 12 Task 6.5 retro: warmed at BS=15, must be read at
+BS=15 — mirror of the warmup-side fix in commit 51a677e). `BATCH_SIZE` is
+in `_SWEPT_CONSOLIDATION_KEYS` so it routes through the same
+`setConstantOverrides` path as the swept knob.
+
+This task also threaded `--extractor-model` through `run-sweep` (commit
+extends `main()` → `run_sweep.remote()` → `run_point.starmap` 3-tuple
+→ `run_point` env). Without this, the sweep falls back to .env.bench's
+`google/gemma-4-26b-a4b-it` and misses 100% against the Qwen warm cache.
 
 **Step 2: Dispatch**
 
 ```bash
-modal run bench/modal/sweep_app.py --mode run-sweep --sweep-name lambda1_tripwire --corpus longmemeval-s --local-out docs/bench/sweeps
+modal run bench/modal/sweep_app.py --mode run-sweep \
+    --sweep-name lambda1_tripwire --corpus longmemeval-s \
+    --extractor-model "Qwen/Qwen3.6-35B-A3B-FP8" \
+    --local-out docs/bench/sweeps
 ```
+
+`BATCH_SIZE=15` is inlined per-point by `_SWEEP_BASE_OVERRIDES`, so no
+`--batch-size` flag needed on the dispatch (Task 6.5's `--batch-size`
+flag is for `warmup-longmemeval` mode; `run-sweep` uses inlined overrides
+because BATCH_SIZE is a swept consolidation key reachable through
+`STARMEM_OVERRIDES` → `setConstantOverrides`).
 
 Expected artifact: `docs/bench/sweeps/<timestamp>-lambda1_tripwire.md` + `.json`. Rename to `2026-04-XX-longmemeval-lambda1-live.md`.
 

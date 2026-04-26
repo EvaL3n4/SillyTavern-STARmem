@@ -202,6 +202,13 @@ export const _SWEPT_RETRIEVAL_KEYS = Object.freeze([
 export const _SWEPT_CONSOLIDATION_KEYS = Object.freeze([
     'DEDUP_JACCARD_THRESHOLD',
     'BATCH_SIZE',
+    // WORKING_BUFFER_THRESHOLD is the consolidate() trigger; it must be
+    // swept *together with* BATCH_SIZE because runtime drains
+    // min(BATCH_SIZE, buffer.length) per fire — when threshold (10) <
+    // BATCH_SIZE (15), runtime always drains 10-turn chunks even though
+    // the warmup cached 15-turn chunks, producing 100% cache miss.
+    // Phase 12 Task 7 cache-key alignment: see retro phase-12-task-6-5.
+    'WORKING_BUFFER_THRESHOLD',
 ]);
 
 /**

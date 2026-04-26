@@ -240,3 +240,384 @@ def test_render_by_task_type_canonical_order():
     assert len(lines) == 4
     assert "single-session-user" in lines[2]
     assert "multi-session" in lines[3]
+
+
+# --- Phase 12 Task 7: extractor_model + lambda1_tripwire wiring ----------
+
+
+def _patched_run_sweep_env():
+    """Common context-managers for run_sweep tests — stubs file I/O and
+    the symlink installer so the test stays in pure-helper territory.
+    """
+    return [
+        patch.object(sweep_app, "_install_volume_symlink", lambda *a, **k: None),
+        patch.object(sweep_app, "_detect_elbow", lambda *a, **k: {}),
+        patch.object(sweep_app, "volume", MagicMock()),
+        patch("os.makedirs", lambda *a, **k: None),
+        patch("builtins.open", MagicMock()),
+    ]
+
+
+def _enter_all(ctxs):
+    """Manually enter a list of context managers (patch.object returns
+    them) so the body of the test can use them all without nested `with`.
+    """
+    return [c.__enter__() for c in ctxs]
+
+
+def _exit_all(ctxs):
+    for c in ctxs:
+        c.__exit__(None, None, None)
+
+
+def test_run_sweep_threads_extractor_model_to_starmap():
+    """run_sweep forwards extractor_model into the run_point.starmap tuple
+    so every container's run_point receives the override and sets
+    STARMEM_BENCH_LLM_MODEL on its node subprocess.
+
+    Phase 12 Task 7: without this, a sweep against the Modal vLLM
+    Qwen-warmed cache falls back to env_secret's gemma model and misses
+    100% — same cache-key-alignment trap that bit Task 6 (commit 51a677e).
+    """
+    captured_starmap_args = []
+
+    def _capture_starmap(args_iter):
+        captured_starmap_args.extend(list(args_iter))
+        return iter([])
+
+    mock_run_point = MagicMock()
+    mock_run_point.starmap = _capture_starmap
+
+    ctxs = [patch.object(sweep_app, "run_point", mock_run_point)] + _patched_run_sweep_env()
+    _enter_all(ctxs)
+    try:
+        # lambda1_tripwire is the production target, but any sweep_name in
+        # the generic dispatch path exercises the same starmap shape.
+        sweep_app.run_sweep(
+            sweep_name="lambda1_tripwire",
+            synthetic=False,
+            corpus="longmemeval-s",
+            extractor_model="Qwen/Qwen3.6-35B-A3B-FP8",
+        )
+    finally:
+        _exit_all(ctxs)
+
+    # Expect 5 grid points (TIER3_LAMBDA_1 ∈ [0.5, 0.75, 1.0, 1.25, 1.5])
+    assert len(captured_starmap_args) == 5, (
+        f"expected 5 starmap tuples for lambda1_tripwire grid, got {len(captured_starmap_args)}"
+    )
+    for tup in captured_starmap_args:
+        # Tuple shape: (overrides_json, corpus, extractor_model)
+        assert len(tup) == 3, (
+            f"starmap tuple must be 3-ary (was 2 before this commit); got {len(tup)}: {tup}"
+        )
+        assert tup[1] == "longmemeval-s"
+        assert tup[2] == "Qwen/Qwen3.6-35B-A3B-FP8", (
+            f"extractor_model (3rd element) must be threaded into every starmap tuple; got {tup[2]!r}"
+        )
+
+
+def test_run_sweep_extractor_model_default_empty_string():
+    """Default extractor_model='' threads through unchanged (env_secret wins).
+
+    Backward-compat: existing run-sweep callers (tau, bm25, hops, relw)
+    that don't pass --extractor-model continue to inherit the .env.bench
+    STARMEM_BENCH_LLM_MODEL setting in each container.
+    """
+    captured_starmap_args = []
+
+    def _capture_starmap(args_iter):
+        captured_starmap_args.extend(list(args_iter))
+        return iter([])
+
+    mock_run_point = MagicMock()
+    mock_run_point.starmap = _capture_starmap
+
+    ctxs = [patch.object(sweep_app, "run_point", mock_run_point)] + _patched_run_sweep_env()
+    _enter_all(ctxs)
+    try:
+        sweep_app.run_sweep(
+            sweep_name="hops",
+            synthetic=False,
+            corpus="locomo",
+        )
+    finally:
+        _exit_all(ctxs)
+
+    assert len(captured_starmap_args) >= 1
+    for tup in captured_starmap_args:
+        assert tup[2] == "", (
+            f"extractor_model defaults to '' (sentinel for env_secret inheritance); got {tup[2]!r}"
+        )
+
+
+def test_run_sweep_lambda1_tripwire_inlines_batch_size_and_tau_gap():
+    """lambda1_tripwire inlines BOTH TIER2_TAU_GAP=10 AND BATCH_SIZE=15
+    into every grid point's overrides JSON.
+
+    BATCH_SIZE=15 is the cache-key alignment fix from Phase 12 Task 6.5
+    retro: the Modal vLLM cache was warmed at BS=15, so the read path
+    must enumerate at BS=15 too. TIER2_TAU_GAP=10 is the Tier 3
+    reachability invariant inherited from hops/relw.
+    """
+    captured_starmap_args = []
+
+    def _capture_starmap(args_iter):
+        captured_starmap_args.extend(list(args_iter))
+        return iter([])
+
+    mock_run_point = MagicMock()
+    mock_run_point.starmap = _capture_starmap
+
+    ctxs = [patch.object(sweep_app, "run_point", mock_run_point)] + _patched_run_sweep_env()
+    _enter_all(ctxs)
+    try:
+        sweep_app.run_sweep(
+            sweep_name="lambda1_tripwire",
+            synthetic=False,
+            corpus="longmemeval-s",
+            extractor_model="Qwen/Qwen3.6-35B-A3B-FP8",
+        )
+    finally:
+        _exit_all(ctxs)
+
+    import json as _json
+    for tup in captured_starmap_args:
+        overrides = _json.loads(tup[0])
+        assert overrides.get("TIER2_TAU_GAP") == 10, (
+            f"every lambda1_tripwire point must inline TIER2_TAU_GAP=10; got {overrides!r}"
+        )
+        assert overrides.get("BATCH_SIZE") == 15, (
+            f"every lambda1_tripwire point must inline BATCH_SIZE=15 for "
+            f"cache-key alignment with the Modal vLLM warmed cache; got {overrides!r}"
+        )
+        assert "TIER3_LAMBDA_1" in overrides, (
+            f"every lambda1_tripwire point must carry the swept TIER3_LAMBDA_1 value; got {overrides!r}"
+        )
+
+
+def test_run_sweep_hops_unchanged_after_table_refactor():
+    """The _SWEEP_BASE_OVERRIDES table refactor must not regress the
+    pre-existing hops/relw inlining (TIER2_TAU_GAP=10 only, no BATCH_SIZE).
+    """
+    captured_starmap_args = []
+
+    def _capture_starmap(args_iter):
+        captured_starmap_args.extend(list(args_iter))
+        return iter([])
+
+    mock_run_point = MagicMock()
+    mock_run_point.starmap = _capture_starmap
+
+    ctxs = [patch.object(sweep_app, "run_point", mock_run_point)] + _patched_run_sweep_env()
+    _enter_all(ctxs)
+    try:
+        sweep_app.run_sweep(sweep_name="hops", synthetic=False, corpus="locomo")
+    finally:
+        _exit_all(ctxs)
+
+    import json as _json
+    for tup in captured_starmap_args:
+        overrides = _json.loads(tup[0])
+        assert overrides.get("TIER2_TAU_GAP") == 10
+        assert "BATCH_SIZE" not in overrides, (
+            f"hops must NOT inline BATCH_SIZE (only lambda1_tripwire does); got {overrides!r}"
+        )
+
+
+def test_main_run_sweep_threads_extractor_model():
+    """`modal run ... --mode run-sweep --extractor-model M` reaches
+    run_sweep.remote(extractor_model=M)."""
+    with patch.object(sweep_app, "run_sweep") as mock_rs:
+        mock_rs.remote.return_value = {"report": "", "result_json": "{}", "run_dir": "/tmp"}
+        sweep_app.main(
+            mode="run-sweep",
+            sweep_name="lambda1_tripwire",
+            corpus="longmemeval-s",
+            extractor_model="Qwen/Qwen3.6-35B-A3B-FP8",
+        )
+        kwargs = mock_rs.remote.call_args.kwargs
+        assert kwargs.get("corpus") == "longmemeval-s"
+        assert kwargs.get("extractor_model") == "Qwen/Qwen3.6-35B-A3B-FP8"
+
+
+def test_main_run_point_threads_extractor_model():
+    """`modal run ... --mode run-point --extractor-model M` reaches
+    run_point.remote(extractor_model=M)."""
+    with patch.object(sweep_app, "run_point") as mock_rp:
+        mock_rp.remote.return_value = '{"metrics": {}, "latencyMs": 0, "runCount": 0, "wallMs": 0}'
+        sweep_app.main(
+            mode="run-point",
+            corpus="longmemeval-s",
+            extractor_model="Qwen/Qwen3.6-35B-A3B-FP8",
+        )
+        kwargs = mock_rp.remote.call_args.kwargs
+        assert kwargs.get("extractor_model") == "Qwen/Qwen3.6-35B-A3B-FP8"
+
+
+def test_run_point_sets_llm_model_env_when_extractor_model_passed():
+    """run_point sets STARMEM_BENCH_LLM_MODEL on the node subprocess env
+    when extractor_model is provided. Mirrors run_baseline_point's pattern.
+    """
+    import os as _os
+    import subprocess as _subprocess
+
+    captured_envs = []
+
+    class _StubResult:
+        returncode = 0
+        stdout = '{"overrides": {}, "metrics": {}, "latencyMs": 0, "runCount": 0, "wallMs": 0, "aggStats": null}'
+        stderr = ""
+
+    def _capture_run(*args, **kwargs):
+        captured_envs.append(dict(kwargs.get("env") or _os.environ))
+        return _StubResult()
+
+    with patch.object(_subprocess, "run", side_effect=_capture_run), \
+         patch.object(sweep_app, "_install_volume_symlink", lambda *a, **k: None), \
+         patch.object(sweep_app, "volume", MagicMock()), \
+         patch.object(_os, "makedirs", lambda *a, **k: None), \
+         patch.object(_os.path, "exists", lambda *a, **k: True), \
+         patch.object(_os.path, "isdir", lambda *a, **k: True), \
+         patch.object(_os.path, "islink", lambda *a, **k: False), \
+         patch.object(_os.path, "getsize", lambda *a, **k: 0), \
+         patch.object(_os, "listdir", lambda *a, **k: []):
+
+        sweep_app.run_point(
+            overrides_json='{"TIER3_LAMBDA_1": 1.0}',
+            corpus="longmemeval-s",
+            extractor_model="Qwen/Qwen3.6-35B-A3B-FP8",
+        )
+        assert captured_envs[-1].get("STARMEM_BENCH_LLM_MODEL") == "Qwen/Qwen3.6-35B-A3B-FP8"
+        assert captured_envs[-1].get("STARMEM_BENCH_CORPUS") == "longmemeval-s"
+
+        # Default extractor_model='' must NOT set the env var (env_secret wins)
+        captured_envs.clear()
+        sweep_app.run_point(
+            overrides_json='{"TIER3_LAMBDA_1": 1.0}',
+            corpus="locomo",
+        )
+        # Env was os.environ.copy() — the var may exist from the host shell.
+        # The contract is: when extractor_model is empty, run_point MUST NOT
+        # write its own value. Distinguish by checking the value matches the
+        # original env, not our test sentinel.
+        assert captured_envs[-1].get("STARMEM_BENCH_LLM_MODEL") != "Qwen/Qwen3.6-35B-A3B-FP8"
+
+
+def test_render_single_axis_report_uses_corpus_label():
+    """Phase 12 Task 7: when corpus='longmemeval-s', the report header says
+    'LongMemEval-S-N', not 'LoCoMo-N'. Default 'locomo' preserves existing
+    hops/relw behavior.
+    """
+    fake_result = {
+        "name": "lambda1_tripwire",
+        "points": [
+            {
+                "overrides": {"TIER3_LAMBDA_1": 1.0, "TIER2_TAU_GAP": 10, "BATCH_SIZE": 15},
+                "metrics": {"mrr": 0.5, "recallAtK": {"5": 0.6}, "coverage": 0.7, "n_scored": 100},
+                "latencyMs": {"p50": 1.0, "p95": 2.0},
+            },
+        ],
+        "elbow": {"overrides": {"TIER3_LAMBDA_1": 1.0}, "rationale": "spec default"},
+    }
+    out_long = sweep_app.render_single_axis_report(fake_result, 500, 500, corpus="longmemeval-s")
+    assert "LongMemEval-S-500" in out_long, f"corpus label missing/wrong: {out_long[:300]}"
+    assert "LoCoMo" not in out_long.split("##")[0]  # not in the corpus block
+
+    out_locomo = sweep_app.render_single_axis_report(fake_result, 10, 1986)
+    assert "LoCoMo-10" in out_locomo, f"default corpus label regressed: {out_locomo[:300]}"
+
+
+# --- Phase 12 Task 7 follow-up: error-payload partitioning ---------------
+
+
+def test_run_sweep_partitions_error_payloads_and_raises_on_total_failure(capsys):
+    """When every run_point returns an error payload (subprocess crash),
+    run_sweep must surface stderr loudly and raise RuntimeError instead of
+    crashing with `KeyError: 'overrides'` 50 lines deep in _detect_elbow.
+
+    Field-validated 2026-04-26: a real lambda1_tripwire dispatch hit
+    `KeyError: 'overrides'` because at least one point's node subprocess
+    failed; the original code blindly forwarded error-shape dicts into
+    _detect_elbow and the renderer.
+    """
+    error_payload = {
+        "error": "node subprocess failed",
+        "returncode": 1,
+        "stderr": "Error: spec violation in retrieval ladder\n  at line 42",
+        "stdout_tail": "",
+        "diagnostics": {"corpus_link_target": "/data/longmemeval_s_cleaned.json"},
+    }
+
+    mock_run_point = MagicMock()
+    mock_run_point.starmap = lambda args_iter: [
+        __import__("json").dumps(error_payload) for _ in args_iter
+    ]
+
+    ctxs = [patch.object(sweep_app, "run_point", mock_run_point)] + _patched_run_sweep_env()
+    _enter_all(ctxs)
+    try:
+        with pytest.raises(RuntimeError, match="all 5 points failed"):
+            sweep_app.run_sweep(
+                sweep_name="lambda1_tripwire",
+                synthetic=False,
+                corpus="longmemeval-s",
+                extractor_model="Qwen/Qwen3.6-35B-A3B-FP8",
+            )
+    finally:
+        _exit_all(ctxs)
+
+    captured = capsys.readouterr()
+    assert "5 of 5 points failed" in captured.err
+    assert "node subprocess failed" in captured.err
+    assert "spec violation in retrieval ladder" in captured.err, (
+        "stderr from failing node subprocess must be surfaced — operator "
+        "needs the actual error message, not a confusing KeyError"
+    )
+
+
+def test_run_sweep_partial_failure_continues_with_ok_subset(capsys):
+    """When only SOME points fail, run_sweep proceeds with the successful
+    subset (rendering, elbow detection) but persists the error_points
+    field on the result so the artifact stays honest.
+    """
+    ok_payload = {
+        "overrides": {"TIER3_LAMBDA_1": 1.0, "TIER2_TAU_GAP": 10, "BATCH_SIZE": 15},
+        "metrics": {"mrr": 0.5, "recallAtK": {"5": 0.6}, "coverage": 0.7, "n_scored": 100},
+        "latencyMs": {"p50": 1.0, "p95": 2.0},
+        "runCount": 100,
+        "wallMs": 1000,
+        "aggStats": None,
+    }
+    error_payload = {
+        "error": "node subprocess failed",
+        "returncode": 1,
+        "stderr": "transient OOM",
+        "stdout_tail": "",
+        "diagnostics": {},
+    }
+
+    import json as _json
+    # 4 ok + 1 error = partial failure
+    sequence = [_json.dumps(ok_payload)] * 4 + [_json.dumps(error_payload)]
+
+    mock_run_point = MagicMock()
+    mock_run_point.starmap = lambda _args: sequence
+
+    ctxs = [patch.object(sweep_app, "run_point", mock_run_point)] + _patched_run_sweep_env()
+    _enter_all(ctxs)
+    try:
+        # Should not raise — partial failure is allowed.
+        sweep_app.run_sweep(
+            sweep_name="lambda1_tripwire",
+            synthetic=False,
+            corpus="longmemeval-s",
+            extractor_model="Qwen/Qwen3.6-35B-A3B-FP8",
+        )
+    finally:
+        _exit_all(ctxs)
+
+    captured = capsys.readouterr()
+    assert "1 of 5 points failed" in captured.err, (
+        "operator must see partial-failure summary in stderr"
+    )

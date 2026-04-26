@@ -238,12 +238,19 @@ def hello():
     timeout=1500,
     memory=4096,
 )
-def run_point(overrides_json: str, corpus: str = "locomo") -> str:
+def run_point(overrides_json: str, corpus: str = "locomo", extractor_model: str = "") -> str:
     """Run a single sweep point.
 
     Args:
         overrides_json: JSON string of Record<string, number> overrides.
         corpus: Benchmark corpus to run against. 'locomo' or 'longmemeval-s'.
+        extractor_model: Optional model override. When empty (default), inherits
+            STARMEM_BENCH_LLM_MODEL from env_secret. When set (via
+            --extractor-model on the CLI), overrides the env-secret default.
+            The cache key is sha256(model + messages + maxTokens), so this
+            MUST match the model used to populate the warm cache or every
+            consolidate() call falls through to live extraction. Mirrors the
+            same pattern as run_baseline_point (Phase 12 Task 6 / 6.5).
 
     Returns:
         JSON string with { overrides, metrics, latencyMs, runCount, wallMs }.
@@ -280,6 +287,16 @@ def run_point(overrides_json: str, corpus: str = "locomo") -> str:
     env = os.environ.copy()
     env["STARMEM_OVERRIDES"] = overrides_json
     env["STARMEM_BENCH_CORPUS"] = corpus
+    # Model override — when empty (default), inherit STARMEM_BENCH_LLM_MODEL
+    # from env_secret. When set (via --extractor-model on the CLI), override
+    # so cache keys are deterministic per-model. Cache is keyed on the
+    # (model, messages, maxTokens) triple via extractionCache._cacheKey, so
+    # a Phase 12 Task 7 sweep against the Qwen-warmed cache MUST pass
+    # `--extractor-model "Qwen/Qwen3.6-35B-A3B-FP8"` or every consolidate()
+    # call falls through to live extraction. See run_baseline_point and
+    # docs/plans/phase-12-task-6-5-retro.md for the cache-key alignment trap.
+    if extractor_model:
+        env["STARMEM_BENCH_LLM_MODEL"] = extractor_model
 
     # check=False — we want to surface stderr on non-zero exit, not raise.
     result = subprocess.run(
@@ -1661,7 +1678,7 @@ Not in scope for Phase 9 — note only.
     return report
 
 
-def render_single_axis_report(result, corpus_len, qa_count):
+def render_single_axis_report(result, corpus_len, qa_count, corpus="locomo"):
     """Generic single-knob sweep renderer.
 
     Used by the 9.5 `hops` and `relw` sweeps, both of which vary a single
@@ -1669,6 +1686,9 @@ def render_single_axis_report(result, corpus_len, qa_count):
     a compact table (axis value → primary metric + secondary metrics) plus
     a per-row ΔMRR column vs the sweep's own baseline (point with the
     smallest primary-knob value). No heatmap — single axis.
+
+    Phase 12 Task 7 reuses for `lambda1_tripwire` on LongMemEval-S — `corpus`
+    parameterizes the corpus label so the report says LongMemEval-S not LoCoMo.
     """
     import json
     from datetime import datetime
@@ -1740,7 +1760,7 @@ def render_single_axis_report(result, corpus_len, qa_count):
 
     report = f"""# {result["name"]} sweep — {today}
 
-**Corpus:** LoCoMo-{corpus_len} ({qa_count} QA items, live extraction)
+**Corpus:** {"LongMemEval-S" if corpus == "longmemeval-s" else "LoCoMo"}-{corpus_len} ({qa_count} QA items, live extraction)
 **Swept:** {swept_knob}
 {base_block}
 ## Results
@@ -1755,6 +1775,32 @@ def render_single_axis_report(result, corpus_len, qa_count):
 **Rationale:** {elbow_rationale}{amendment_verdict_block}
 """
     return report
+
+
+# 9.5: single-axis graph-tier sweeps need TIER2_TAU_GAP=10 inlined into
+# every grid point so queries actually reach Tier 3 (without it, Tier 2
+# gating short-circuits and the knob is inert by construction). Phase 12
+# Task 7 adds lambda1_tripwire, which additionally needs BATCH_SIZE=15
+# inlined for cache-key alignment with the Modal vLLM warmed cache (see
+# docs/plans/phase-12-task-6-5-retro.md). Centralized as a table so the
+# next single-axis sweep doesn't have to touch run_sweep's body.
+#
+# Both keys ARE swept (BATCH_SIZE in _SWEPT_CONSOLIDATION_KEYS, TIER2_TAU_GAP
+# in _SWEPT_RETRIEVAL_KEYS) so setConstantOverrides accepts them — the
+# inlining route through STARMEM_OVERRIDES → bench/runner.js's
+# setConstantOverrides(overrides) is the same path that the swept knob
+# itself rides.
+_SWEEP_BASE_OVERRIDES = {
+    "hops": {"TIER2_TAU_GAP": 10},
+    "relw": {"TIER2_TAU_GAP": 10},
+    # lambda1_tripwire: BATCH_SIZE=15 + WORKING_BUFFER_THRESHOLD=15 must
+    # ride together. Runtime drains min(BATCH_SIZE, buffer.length) per
+    # consolidate fire — when threshold (default 10) < BATCH_SIZE (15),
+    # consolidate always slices 10-turn chunks, but the warmed cache is
+    # keyed on 15-turn chunks → 100% cache miss → live fallback → 400.
+    # Phase 12 Task 7 cache-key alignment fix; see Task 6.5 retro.
+    "lambda1_tripwire": {"TIER2_TAU_GAP": 10, "BATCH_SIZE": 15, "WORKING_BUFFER_THRESHOLD": 15},
+}
 
 
 SWEEP_CONFIGS = {
@@ -1799,6 +1845,21 @@ SWEEP_CONFIGS = {
         # uncovered). Same gap=10 inlining as hops.
         "knobs": [
             {"name": "EXPLICIT_RELATION_WEIGHT", "values": [0.5, 1.0, 1.5, 2.0, 3.0]},
+        ],
+        "primary_metric": "mrr",
+        "renderer": render_single_axis_report,
+    },
+    "lambda1_tripwire": {
+        # Phase 12 Task 7: LongMemEval-S tripwire for Tier 3 edge-weight knob.
+        # Phase 9.5 three-time reproduced λ₁ as INERT on LoCoMo single-session.
+        # Tripwire asks whether multi-session corpus surfaces signal.
+        # Spec default TIER3_LAMBDA_1 = 1.0 (constants.js); grid brackets it.
+        # Base overrides (inlined per-point via _SWEEP_BASE_OVERRIDES):
+        #   - TIER2_TAU_GAP=10 — same Tier 3 reachability invariant as hops/relw
+        #   - BATCH_SIZE=15 — cache-key alignment with Modal vLLM warmed cache
+        #     (Phase 12 Task 6.5: warmed at BS=15, must be read at BS=15).
+        "knobs": [
+            {"name": "TIER3_LAMBDA_1", "values": [0.5, 0.75, 1.0, 1.25, 1.5]},
         ],
         "primary_metric": "mrr",
         "renderer": render_single_axis_report,
@@ -2739,15 +2800,21 @@ def _cartesian_product(knobs):
 
 
 @app.function(image=image, volumes={"/data": volume}, secrets=[env_secret, wandb_secret], timeout=1800, memory=4096)
-def run_sweep(sweep_name: str, synthetic: bool = False, corpus: str = "locomo") -> dict:
+def run_sweep(sweep_name: str, synthetic: bool = False, corpus: str = "locomo", extractor_model: str = "") -> dict:
     """Run a full parameter sweep in parallel via Modal.
 
     Args:
-        sweep_name: 'tau', 'bm25', 'hops', 'relw', 'graph', or 'consolidation'.
+        sweep_name: 'tau', 'bm25', 'hops', 'relw', 'lambda1_tripwire',
+            'graph', or 'consolidation'.
         synthetic: If True, use a tiny 2-point grid for smoke testing.
             The corpus is always full; `synthetic` only shrinks
             the knob grid, not the data.
         corpus: Benchmark corpus to run against. 'locomo' or 'longmemeval-s'.
+        extractor_model: Optional model override forwarded to every run_point.
+            When empty, each run_point inherits STARMEM_BENCH_LLM_MODEL from
+            env_secret. Phase 12 Task 7 sweeps against the Modal vLLM
+            warmed cache require '--extractor-model "Qwen/Qwen3.6-35B-A3B-FP8"'
+            for cache-key alignment (see docs/plans/phase-12-task-6-5-retro.md).
 
     Returns:
         Dict with keys:
@@ -2831,6 +2898,15 @@ def run_sweep(sweep_name: str, synthetic: bool = False, corpus: str = "locomo") 
                 {"EXPLICIT_RELATION_WEIGHT": 1.0, "TIER2_TAU_GAP": 10},  # spec default + gap=10
                 {"EXPLICIT_RELATION_WEIGHT": 2.0, "TIER2_TAU_GAP": 10},  # +1.0 variant
             ]
+        elif sweep_name == "lambda1_tripwire":
+            # Phase 12 Task 7 smoke: 2-point grid with spec default + one
+            # deviation, both inlined with BATCH_SIZE=15 + TIER2_TAU_GAP=10
+            # so smoke shares cache keys with the production lambda1_tripwire
+            # dispatch (and with the BS=15 warm cache).
+            grid = [
+                {"TIER3_LAMBDA_1": 1.0, "TIER2_TAU_GAP": 10, "BATCH_SIZE": 15},  # spec default
+                {"TIER3_LAMBDA_1": 0.5, "TIER2_TAU_GAP": 10, "BATCH_SIZE": 15},  # low variant
+            ]
         else:
             raise ValueError(f"Unknown synthetic sweep_name: {sweep_name!r}")
     else:
@@ -2839,28 +2915,73 @@ def run_sweep(sweep_name: str, synthetic: bool = False, corpus: str = "locomo") 
         # into every grid point so queries actually reach Tier 3 (without
         # it, Tier 2 gating short-circuits and the knob is inert by
         # construction). Same invariant as GRAPH_BASE_OVERRIDES; run_sweep
-        # doesn't honor a config["base_overrides"] key today, so we inline.
-        if sweep_name in ("hops", "relw"):
-            for point in grid:
-                point.setdefault("TIER2_TAU_GAP", 10)
+        # doesn't honor a config["base_overrides"] key today, so we inline
+        # via the _SWEEP_BASE_OVERRIDES table (Phase 12 Task 7 also adds
+        # BATCH_SIZE=15 for the lambda1_tripwire entry — cache-key
+        # alignment with the Modal vLLM warmed cache).
+        base_overrides = _SWEEP_BASE_OVERRIDES.get(sweep_name, {})
+        for point in grid:
+            for k, v in base_overrides.items():
+                point.setdefault(k, v)
 
     # Fan out to parallel containers
     overrides_jsons = [json.dumps(point) for point in grid]
-    point_results = list(run_point.starmap([(oj, corpus) for oj in overrides_jsons]))
+    point_results = list(run_point.starmap(
+        [(oj, corpus, extractor_model) for oj in overrides_jsons]
+    ))
 
     points = [json.loads(pr) for pr in point_results]
 
-    elbow = _detect_elbow(points, knobs, primary_metric)
+    # Partition successes vs error payloads BEFORE _detect_elbow / renderer
+    # touch them — both index `p["overrides"]` and crash with KeyError on
+    # error shape `{error, returncode, stderr, stdout_tail, diagnostics}`,
+    # swallowing the actual node subprocess failure. Surface the errors
+    # loudly so the operator sees what crashed instead of a confusing
+    # `KeyError: 'overrides'` 50 lines deep in the sweep pipeline.
+    error_points = [p for p in points if "error" in p and "overrides" not in p]
+    ok_points = [p for p in points if "overrides" in p]
+
+    if error_points:
+        import sys as _sys
+        print(
+            f"\n[run_sweep] {len(error_points)} of {len(points)} points failed:",
+            file=_sys.stderr,
+        )
+        for i, ep in enumerate(error_points):
+            stderr_tail = (ep.get("stderr") or "").splitlines()[-20:]
+            print(
+                f"  [{i}] error={ep.get('error')!r} returncode={ep.get('returncode')}\n"
+                f"      stderr (last 20 lines):\n        " + "\n        ".join(stderr_tail) + "\n"
+                f"      diagnostics={ep.get('diagnostics')!r}",
+                file=_sys.stderr,
+            )
+        # Hard-fail when ALL points errored — rendering an empty sweep is
+        # never the right outcome and the operator needs to fix the
+        # subprocess-level failure first.
+        if not ok_points:
+            raise RuntimeError(
+                f"run_sweep: all {len(points)} points failed in node subprocess. "
+                f"First error: {error_points[0].get('error')!r}, "
+                f"returncode={error_points[0].get('returncode')}. "
+                f"See stderr above for per-point detail."
+            )
+        # Partial failure is allowed but flagged; the elbow + renderer run
+        # over only the successful subset, but the persisted payload keeps
+        # the error_points so the artifact is honest.
+
+    elbow = _detect_elbow(ok_points, knobs, primary_metric)
 
     result = {
         "name": sweep_name,
-        "points": points,
+        "points": ok_points,
         "elbow": elbow,
     }
+    if error_points:
+        result["error_points"] = error_points
 
     # Compute corpus stats (Modal containers already ran the full corpus)
     corpus_len = 500 if corpus == "longmemeval-s" else 10
-    qa_count = points[0]["runCount"] if points else 0
+    qa_count = ok_points[0]["runCount"] if ok_points else 0
 
     if sweep_name == "bm25":
         # Tags populated rate: compute from one seeded conversation via a small
@@ -2889,7 +3010,14 @@ def run_sweep(sweep_name: str, synthetic: bool = False, corpus: str = "locomo") 
     else:
         tags_stats = None
 
-    report = renderer(result, corpus_len, qa_count, tags_stats) if tags_stats else renderer(result, corpus_len, qa_count)
+    # Renderer dispatch — render_bm25_report wants tags_stats; render_single_axis_report
+    # wants corpus (Phase 12 Task 7) for the corpus label; render_tau_report uses neither.
+    if tags_stats:
+        report = renderer(result, corpus_len, qa_count, tags_stats)
+    elif renderer is render_single_axis_report:
+        report = renderer(result, corpus_len, qa_count, corpus=corpus)
+    else:
+        report = renderer(result, corpus_len, qa_count)
 
     # Append per-task-type slice if any point carries it
     for p in points:
@@ -3024,7 +3152,7 @@ def main(
     if mode == "hello":
         print(json.dumps(hello.remote(), indent=2))
     elif mode == "run-point":
-        result_str = run_point.remote(overrides_json, corpus=corpus)
+        result_str = run_point.remote(overrides_json, corpus=corpus, extractor_model=extractor_model)
         print(result_str)
         if local_out:
             from datetime import datetime as _dt
@@ -3060,7 +3188,7 @@ def main(
             (out / f"{stem}.json").write_text(result_json_str)
             print(f"<!-- mirrored to host: {out / stem}.{{md,json}} -->", file=__import__("sys").stderr)
     elif mode == "run-sweep":
-        sweep_out = run_sweep.remote(sweep_name, synthetic, corpus=corpus)
+        sweep_out = run_sweep.remote(sweep_name, synthetic, corpus=corpus, extractor_model=extractor_model)
         report = sweep_out["report"]
         result_json_str = sweep_out["result_json"]
         run_dir = sweep_out["run_dir"]
