@@ -324,7 +324,7 @@ Run from repo root on the host:
     modal run bench/modal/vllm_warmup.py
 
     # 4. Regression check (Task 6):
-    modal run bench/modal/sweep_app.py --mode run-longmemeval-warmup \\
+    modal run bench/modal/sweep_app.py --mode warmup-longmemeval \\
         --corpus-size 3 --warmup-concurrency 1
     # → expect misses=0 on all 3.
 
@@ -1172,7 +1172,7 @@ Expected end-of-run JSON:
 
 ```bash
 modal run bench/modal/sweep_app.py \
-    --mode run-longmemeval-warmup \
+    --mode warmup-longmemeval \
     --corpus-size 3 \
     --warmup-concurrency 1 \
     --extractor-model "Qwen/Qwen3.6-35B-A3B-FP8" \
@@ -1222,6 +1222,10 @@ If ANY `misses > 0`:
 If all 3 items report `misses=0`: substrate swap is byte-compat. Proceed to Task 7.
 
 **Cumulative cost: ~$2.00–$3.50.**
+
+### Follow-up (non-blocking, file in Task 7 retro)
+
+- **Plumb `hits`/`misses` from the JS warmup-point payload up into the Python orchestrator's summary.** Field-validated 2026-04-26: confirming `misses=0` from the orchestrator return value alone required falling back to `cacheFilesDelta == 0` + `wallMs` shape (12s for 106 batches = cache-read speed, ~85ms/batch vs. ~1-3s/batch for live LLM). The per-item `hits=N misses=0 failures=0/N` line *is* logged to stderr (`_modal-warmup-point.js:218`) and visible in `modal app logs`, but the orchestrator JSON drops it on the floor — `totalFactCount: 0` is also a leftover from the pre-cache-prewarm consolidation path. Cleanest fix: have `run_longmemeval_warmup_point` parse the per-item JSON for `hits`/`misses`/`failureCount` and have `run_longmemeval_warmup` sum them into `totalHits`/`totalMisses`/`totalFailureCount` on the summary dict. ~30 LOC + 1 test. Not blocking Task 7; file for the follow-up commit batch.
 
 ---
 
