@@ -304,16 +304,34 @@ def run_point(overrides_json: str, corpus: str = "locomo", extractor_model: str 
     if extractor_model:
         env["STARMEM_BENCH_LLM_MODEL"] = extractor_model
 
-    # check=False — we want to surface stderr on non-zero exit, not raise.
-    result = subprocess.run(
+    # Stream stderr live to this container's stdout so Modal's log shows
+    # progress as the Node subprocess runs. capture_output=True buffers
+    # everything until exit — on a SIGKILL (FunctionTimeoutError) the
+    # buffered stderr is lost, leaving "empty logs" with no signal of
+    # whether the work was progressing or wedged. Pattern matches
+    # run_longmemeval_warmup_point and run_baseline_point (applied
+    # 2026-04-23 across the sibling fan-out functions; missed here).
+    # See devops/persist-serverless-compute-results — "Live subprocess
+    # logging: stream, don't capture".
+    #
+    # stdout stays captured (Python reads it for the JSON payload).
+    # stderr is merged into *this* process's stdout, which Modal
+    # captures as function log output. Node side already routes harness
+    # logs to stderr (bench/sweeps/_modal-point.js mirrors the warmup
+    # convention); _modal-point.js's stdout is the metrics JSON payload.
+    import sys
+    proc = subprocess.Popen(
         ["node", "bench/sweeps/_modal-point.js"],
         cwd="/repo",
-        capture_output=True,
+        stdout=subprocess.PIPE,
+        stderr=sys.stdout,   # live to Modal's log stream
         text=True,
-        check=False,
         env=env,
     )
-    if result.returncode != 0:
+    stdout_str, _ = proc.communicate()
+    returncode = proc.returncode
+
+    if returncode != 0:
         import json as _json
         # Commit volume even on error — partial cache writes from live
         # extractions are still valuable (survive to next run) even if
@@ -326,9 +344,12 @@ def run_point(overrides_json: str, corpus: str = "locomo", extractor_model: str 
             pass
         return _json.dumps({
             "error": "node subprocess failed",
-            "returncode": result.returncode,
-            "stderr": result.stderr,
-            "stdout_tail": result.stdout[-2000:] if result.stdout else "",
+            "returncode": returncode,
+            # stderr was streamed live to Modal's log (merged into
+            # parent stdout); nothing captured on the Python side.
+            # Refer to Modal's function log for the full stderr trace.
+            "stderr_note": "streamed live to Modal function log",
+            "stdout_tail": stdout_str[-2000:] if stdout_str else "",
             "diagnostics": diag,
         }, indent=2)
     # 9.5 (2026-04-22): commit volume per-point so live extractions
@@ -340,7 +361,7 @@ def run_point(overrides_json: str, corpus: str = "locomo", extractor_model: str 
     # warm partial cache from the timed-out run. Minimal cost —
     # commit is fast when there are no pending writes.
     volume.commit()
-    return result.stdout.strip()
+    return stdout_str.strip()
 
 
 @app.function(
