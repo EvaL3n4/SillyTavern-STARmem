@@ -91,11 +91,14 @@ export async function consolidate(chatId, opts) {
     return withWriteLock(chatId, async () => {
         const state = await loadState(chatId);
 
-        // In-flight guard: if another consolidation is mid-run (shouldn't happen
-        // given withWriteLock, but defensive against persisted stuck-flag on
-        // crash recovery).
+        // In-flight guard. If state.runtime.consolidating is already true from
+        // a prior stuck/crashed run, clear it and skip — natural retry on the
+        // next trigger. Finding #13: previous behaviour permanently DoS'd
+        // consolidation for a chat with a stuck flag.
         if (state.runtime.consolidating === true) {
-            log.info('consolidate: already consolidating for this chat, skipping');
+            log.warn('consolidate: stale consolidating=true on load; clearing and skipping this trigger');
+            const cleared = { ...state, runtime: { ...state.runtime, consolidating: false } };
+            await persistState(chatId, cleared);
             return /** @type {const} */ ({ skipped: true });
         }
 

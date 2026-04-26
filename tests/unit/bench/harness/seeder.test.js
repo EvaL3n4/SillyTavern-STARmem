@@ -73,9 +73,10 @@ describe('seedConversation', () => {
     });
 
     test('working buffer is below threshold after consolidation drained', async () => {
-        const r = await seedConversation(CONV, { now: FIXED_NOW });
+        const r = await seedConversation(CONV, { now: FIXED_NOW, keepBackend: true });
         const state = await loadState(r.chatId);
         expect(state.workingBuffer.length).toBeLessThan(10);
+        cleanup();
     });
 
     test('stateHash is deterministic across two runs with same input', async () => {
@@ -116,11 +117,9 @@ describe('seedConversation', () => {
     test('keepBackend=false (default) resets backend', async () => {
         const r = await seedConversation(CONV, { now: FIXED_NOW });
         // After seedConversation with keepBackend=false, the backend is reset.
-        // loadState should return empty state because the default backend
-        // (SillyTavern) has nothing for this chatId.
-        const state = await loadState(r.chatId);
-        expect(Object.keys(state.entries)).toHaveLength(0);
-        expect(state.workingBuffer).toHaveLength(0);
+        // The default backend now hard-fails until bootstrap/setBackend installs
+        // a real backend.
+        await expect(loadState(r.chatId)).rejects.toThrow(/bootstrap|setBackend/i);
     });
 
     test('handles empty turns gracefully (no crash, zero facts)', async () => {

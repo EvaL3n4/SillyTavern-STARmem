@@ -93,6 +93,25 @@ export function createEntry(fields) {
         throw new Error('createEntry: provenance must be { sourceMessages: number[], extractor: string }');
     }
 
+    if (!tags.every(t => typeof t === 'string')) {
+        throw new Error('createEntry: tags must be string[]');
+    }
+    for (let i = 0; i < relations.length; i++) {
+        const r = relations[i];
+        if (!r || typeof r !== 'object') {
+            throw new Error(`createEntry: relations[${i}] must be an object`);
+        }
+        if (!isEdgeType(r.type)) {
+            throw new Error(`createEntry: relations[${i}].type invalid: ${String(r.type)}`);
+        }
+        if (typeof r.target !== 'string' || r.target.length === 0) {
+            throw new Error(`createEntry: relations[${i}].target must be a non-empty string`);
+        }
+    }
+    if (!provenance.sourceMessages.every(n => Number.isInteger(n) && n >= 0)) {
+        throw new Error('createEntry: provenance.sourceMessages must be non-negative integers');
+    }
+
     const when = now ?? new Date();
     const iso = when.toISOString();
 
