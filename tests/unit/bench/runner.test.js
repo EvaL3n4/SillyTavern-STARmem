@@ -59,14 +59,14 @@ describe('runHarness', () => {
     });
 
     test('overrides surface in envSnapshot.constants and round-trip', async () => {
-        const before = RETRIEVAL.TIER2_TAU_CONFIDENCE;
+        const before = RETRIEVAL.TIER3_LAMBDA_1;
         const result = await runHarness({
             corpus: [],
-            overrides: { TIER2_TAU_CONFIDENCE: 7.5 },
+            overrides: { TIER3_LAMBDA_1: 7.5 },
         });
-        expect(result.envSnapshot.constants.TIER2_TAU_CONFIDENCE).toBe(7.5);
+        expect(result.envSnapshot.constants.TIER3_LAMBDA_1).toBe(7.5);
         // After runHarness returns, overrides are restored in finally
-        expect(RETRIEVAL.TIER2_TAU_CONFIDENCE).toBe(before);
+        expect(RETRIEVAL.TIER3_LAMBDA_1).toBe(before);
     });
 
     test('surfaces consolidationStats on each run record', async () => {

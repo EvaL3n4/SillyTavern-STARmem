@@ -28,7 +28,7 @@ import { maturityBoost } from '../lifecycle/maturity.js';
  */
 
 /**
- * @typedef {{ hit: boolean, scored: ScoredEntry[] }} Tier2Result
+ * @typedef {{ scored: ScoredEntry[] }} Tier2Result
  */
 
 /**
@@ -49,13 +49,13 @@ export function tier2(state, queryStr, ctx) {
         if (e.scope !== 'working') entries.push(e);
     }
     if (entries.length === 0) {
-        return { hit: false, scored: [] };
+        return { scored: [] };
     }
 
     const index = buildIndex(entries);
     const raw = bm25Query(index, queryStr, k);
     if (raw.length === 0) {
-        return { hit: false, scored: [] };
+        return { scored: [] };
     }
 
     // NOTE: The scorer registry is bypassed here in favor of inline factor
@@ -92,13 +92,8 @@ export function tier2(state, queryStr, ctx) {
         .sort((a, b) => b.score - a.score);
 
     if (scored.length === 0) {
-        return { hit: false, scored: [] };
+        return { scored: [] };
     }
 
-    const top = scored[0].score;
-    const second = scored[1]?.score ?? 0;
-    const gap = top - second;
-    const hit = top >= RETRIEVAL.TIER2_TAU_CONFIDENCE && gap >= RETRIEVAL.TIER2_TAU_GAP;
-
-    return { hit, scored };
+    return { scored };
 }

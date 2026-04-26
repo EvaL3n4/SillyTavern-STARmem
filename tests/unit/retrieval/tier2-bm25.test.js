@@ -1,6 +1,5 @@
 import { tier2 } from '../../../src/retrieval/tier2-bm25.js';
 import { _resetScorerForTests, registerScorer, setScorer } from '../../../src/retrieval/scorer.js';
-import { setConstantOverrides } from '../../../src/core/constants.js';
 import { createEmptyState } from '../../../src/core/schema.js';
 import { createEntry } from '../../../src/memory/entry.js';
 
@@ -24,9 +23,8 @@ const now = new Date('2026-04-20T12:00:00Z');
 describe('tier2', () => {
     afterEach(() => _resetScorerForTests());
 
-    test('empty corpus → no hit, empty scored', () => {
+    test('empty corpus → empty scored', () => {
         const r = tier2(state([]), 'anything', { now, intent: 'factual' });
-        expect(r.hit).toBe(false);
         expect(r.scored).toEqual([]);
     });
 
@@ -44,78 +42,28 @@ describe('tier2', () => {
         }
     });
 
-    test('hit=true when top score ≥ τ_conf AND gap ≥ τ_gap', () => {
-        // 9.4.8 amended the production τ_gap default to 10 (effectively
-        // disables the shortcut on LoCoMo-scale BM25 scores). This test
-        // exercises the gating *mechanism* — override back to 0.5 so a
-        // realistic score gap (9.5) clears it.
-        const restore = setConstantOverrides({ TIER2_TAU_GAP: 0.5 });
-        try {
-            const widerScorer = (entry) => entry.id === 'a' ? 10.0 : 0.5;
-            registerScorer('wide', widerScorer);
-            setScorer('wide');
-
-            const s = state([
-                ep('a', 'alice marseille', 'alice', ['location']),
-                ep('b', 'unrelated content'),
-            ]);
-            const r = tier2(s, 'alice', { now, intent: 'factual' });
-            expect(r.hit).toBe(true);
-            expect(r.scored[0].entry.id).toBe('a');
-        } finally {
-            restore();
-        }
+    test('returns scored candidates for Tier 3 seeding', () => {
+        const s = state([
+            ep('a', 'alice marseille', 'alice', ['location']),
+            ep('b', 'unrelated content'),
+        ]);
+        const r = tier2(s, 'alice', { now, intent: 'factual' });
+        expect(r.scored.length).toBeGreaterThan(0);
+        expect(r.scored[0].entry.id).toBe('a');
     });
 
-    test('hit=false when top score below τ_confidence', () => {
+    test('single-result corpus returns one scored entry', () => {
         const s = state([
             ep('a', 'alice marseille', null, [], {
-                lifecycle: { importance: 0, maturity: 'draft', createdAt: new Date('2026-04-20T12:00:00Z') },
-            }),
-            ep('b', 'bob paris', null, [], {
-                lifecycle: { importance: 0, maturity: 'draft', createdAt: new Date('2026-04-20T12:00:00Z') },
+                lifecycle: { importance: 100, maturity: 'core', createdAt: new Date('2026-04-20T12:00:00Z') },
             }),
         ]);
         const r = tier2(s, 'alice', { now, intent: 'factual' });
-        expect(r.hit).toBe(false);
-        expect(r.scored.length).toBeGreaterThan(0);
+        expect(r.scored.length).toBe(1);
+        expect(r.scored[0].entry.id).toBe('a');
     });
 
-    test('hit=false when gap below τ_gap', () => {
-        const flatScorer = () => 5.0;
-        registerScorer('flat', flatScorer);
-        setScorer('flat');
-        const s = state([
-            ep('a', 'alice'),
-            ep('b', 'alice'),
-        ]);
-        const r = tier2(s, 'alice', { now, intent: 'factual' });
-        expect(r.hit).toBe(false);
-    });
-
-    test('single-result hit: gap computed against implicit 0', () => {
-        // 9.4.8: override τ_gap so the single-result gap (score − 0) clears
-        // even at modest BM25 magnitudes. Tests the "implicit second score
-        // is 0" semantic, not the production default.
-        const restore = setConstantOverrides({ TIER2_TAU_GAP: 0.5 });
-        try {
-            const s = state([
-                ep('a', 'alice marseille', null, [], {
-                    lifecycle: { importance: 100, maturity: 'core', createdAt: new Date('2026-04-20T12:00:00Z') },
-                }),
-            ]);
-            const r = tier2(s, 'alice', { now, intent: 'factual' });
-            if (r.scored.length === 1) {
-                expect(r.hit).toBe(true);
-            } else {
-                expect(r.hit).toBe(false);
-            }
-        } finally {
-            restore();
-        }
-    });
-
-    test('identical scores produce zero gap → hit=false', () => {
+    test('identical scores produce zero gap but still return scored', () => {
         const s = state([
             ep('a', 'alice marseille'),
             ep('b', 'alice marseille'),
@@ -123,7 +71,6 @@ describe('tier2', () => {
         const r = tier2(s, 'alice marseille', { now, intent: 'factual' });
         expect(r.scored.length).toBe(2);
         expect(r.scored[0].score).toBeCloseTo(r.scored[1].score, 10);
-        expect(r.hit).toBe(false);
     });
 
     test('working-scope entries are NOT indexed by Tier 2', () => {

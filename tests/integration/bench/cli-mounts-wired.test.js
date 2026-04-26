@@ -30,13 +30,7 @@ const REQUIRED_WIRINGS = [
             { symbol: 'runHarness',    from: './runner.js' },
         ],
     },
-    {
-        file: 'bench/sweeps/tau.js',
-        mounts: [
-            { symbol: 'sweep',      from: './_driver.js' },
-            { symbol: 'loadLocomo', from: '../loaders/index.js' },
-        ],
-    },
+    // Phase 14 Task 2: bench/sweeps/tau.js deleted (Tier 2 demolition).
     {
         file: 'bench/sweeps/graph.js',
         mounts: [

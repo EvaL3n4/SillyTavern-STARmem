@@ -20,14 +20,18 @@
     "TIER2_TAU_CONFIDENCE": {
       "specDefault": 2.0,
       "measured": 2.0,
+      "verdict": "DEMOLISHED",
+      "phase": "14",
       "source": "sweeps/2026-04-22-tau-live.md",
-      "note": "INERT on LoCoMo-10 (second-time repro). 9.5 re-swept full 48-point grid under live Gemma: identical MRR to 4 decimals across values [0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 4.0, 5.0] at any fixed TIER2_TAU_GAP. Rank-1 Tier-2 BM25 scores always clear even low thresholds \u2014 the confidence threshold never bites. Keep at spec default; candidate for removal in future sweeps."
+      "note": "DEMOLISHED (Phase 14 Task 2). Constant removed from src/core/constants.js; the runtime if (t2.hit) branch was already removed in Phase 12 Task 1. Original 9.5 INERT verdict preserved here as historical record of WHY the constant was demolished (rank-1 Tier-2 BM25 scores always cleared even low thresholds \u2014 the confidence threshold never bit on LoCoMo). Original note: INERT on LoCoMo-10 (second-time repro). 9.5 re-swept full 48-point grid under live Gemma: identical MRR to 4 decimals across values [0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 4.0, 5.0] at any fixed TIER2_TAU_GAP."
     },
     "TIER2_TAU_GAP": {
       "specDefault": 0.5,
       "measured": 10,
+      "verdict": "DEMOLISHED",
+      "phase": "14",
       "source": "sweeps/2026-04-22-tau-live.md (+ 9.4.8 extended/sledgehammer followups for confirmation)",
-      "note": "AMENDED (9.4.8, reconfirmed 9.5). 9.5 full 48-point re-sweep under live extraction: MRR climbs monotonically from 0.7303 (gap=0.1) through 0.7876 (gap=3) to plateau at 0.8057 (gap=10). +0.0754 absolute MRR swing across the gap axis. Matches 9.4.8 measurement (0.8077) within 0.002 noise. Tier 3 graph expansion becomes the dominant retrieval path at gap \u2265 10. Phase 11 candidate: Tier 2's confident-hit gating may be net-negative \u2014 ladder could simplify to always-Tier-3-as-Tier-2-seed."
+      "note": "DEMOLISHED (Phase 14 Task 2). Constant removed from src/core/constants.js; the runtime if (t2.hit) branch was already removed in Phase 12 Task 1, making this knob architecturally meaningless. Phase 11 candidate fulfilled. Original 9.4.8 amendment + 9.5 reconfirmation preserved here as historical record. Original note: AMENDED (9.4.8, reconfirmed 9.5). 9.5 full 48-point re-sweep under live extraction: MRR climbs monotonically from 0.7303 (gap=0.1) through 0.7876 (gap=3) to plateau at 0.8057 (gap=10). +0.0754 absolute MRR swing across the gap axis. Matches 9.4.8 measurement (0.8077) within 0.002 noise. Tier 3 graph expansion becomes the dominant retrieval path at gap \u2265 10."
     },
     "TAG_BOOST": {
       "specDefault": 2,

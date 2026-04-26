@@ -73,7 +73,6 @@ if "modal" not in sys.modules or not hasattr(sys.modules["modal"], "App"):
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from sweep_app import (
-    render_tau_report,
     render_bm25_report,
     render_graph_report_stub,
     render_consolidation_report_stub,
@@ -116,9 +115,7 @@ def main():
     qa_count = payload.get("qa_count", payload.get("corpusStats", {}).get("qa_count", 0))
     tags_stats = payload.get("tags_stats")
 
-    if sweep_name == "tau":
-        out = render_tau_report(payload["result"], corpus_len, qa_count)
-    elif sweep_name == "bm25":
+    if sweep_name == "bm25":
         out = render_bm25_report(payload["result"], corpus_len, qa_count, tags_stats)
     elif sweep_name in ("hops", "relw"):
         out = render_single_axis_report(payload["result"], corpus_len, qa_count)

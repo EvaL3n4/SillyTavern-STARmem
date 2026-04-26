@@ -21,7 +21,7 @@
  *    a partial override updates the live object, and reset restores the
  *    module-load value.
  *
- * Tripwire-verify by reintroducing `const { TIER2_TAU_CONFIDENCE } = RETRIEVAL`
+ * Tripwire-verify by reintroducing `const { TIER3_LAMBDA_1 } = RETRIEVAL`
  * at the top of tier2-bm25.js — this suite's second describe block must fail
  * with a clear message naming the file and key.
  *
@@ -112,11 +112,11 @@ describe('setConstantOverrides / resetConstantOverrides', () => {
     afterEach(() => resetConstantOverrides());
 
     test('sets a single RETRIEVAL key and returns a restore function', () => {
-        const before = RETRIEVAL.TIER2_TAU_CONFIDENCE;
-        const restore = setConstantOverrides({ TIER2_TAU_CONFIDENCE: 99 });
-        expect(RETRIEVAL.TIER2_TAU_CONFIDENCE).toBe(99);
+        const before = RETRIEVAL.TIER3_LAMBDA_1;
+        const restore = setConstantOverrides({ TIER3_LAMBDA_1: 99 });
+        expect(RETRIEVAL.TIER3_LAMBDA_1).toBe(99);
         restore();
-        expect(RETRIEVAL.TIER2_TAU_CONFIDENCE).toBe(before);
+        expect(RETRIEVAL.TIER3_LAMBDA_1).toBe(before);
     });
 
     test('sets a CONSOLIDATION key', () => {
@@ -181,12 +181,10 @@ describe('setConstantOverrides / resetConstantOverrides', () => {
 
     test('resetConstantOverrides restores all swept keys to module-load values', () => {
         setConstantOverrides({
-            TIER2_TAU_CONFIDENCE: 1,
             TIER3_LAMBDA_1: 2,
             DEDUP_JACCARD_THRESHOLD: 0.3,
         });
         resetConstantOverrides();
-        expect(RETRIEVAL.TIER2_TAU_CONFIDENCE).toBe(2.0);
         expect(RETRIEVAL.TIER3_LAMBDA_1).toBe(1.0);
         expect(CONSOLIDATION.DEDUP_JACCARD_THRESHOLD).toBe(0.7);
     });

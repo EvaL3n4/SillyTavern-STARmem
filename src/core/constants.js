@@ -76,10 +76,6 @@ export const RETRIEVAL = {
     TAG_BOOST: 2,
     /** Max entries retained per tier cache (exact and fuzzy). Oldest evicted on write. Spec §5 hardening — finding #4 (Codex 2026-04-24). Sweepable. */
     TIER_CACHE_MAX_ENTRIES: 200,
-    /** Tier 2 exit: minimum top score required to shortcut the ladder. Spec §5; 9.4.8 sweep: inert on LoCoMo (identical MRR across 0.5–5.0). */
-    TIER2_TAU_CONFIDENCE: 2.0,
-    /** Tier 2 exit: minimum (top − #2) score gap required to shortcut. Spec §5; 9.4.8 amended 0.5 → 10 (+0.0625 MRR). Effectively disables Tier 2 gating in favor of always-Tier-3; Phase 11 demolition candidate. */
-    TIER2_TAU_GAP: 10,
     /** Tier 3 seeds drawn from Tier 2's top-K. Spec §5.1. */
     TIER3_SEEDS_K: 3,
     /** Tier 3 beam width. Not in spec; opening value, Phase 9 tunes. */
@@ -165,12 +161,12 @@ export const INJECTION_DEPTH = 4;
  * Phase 9 benchmarking: per-sweep override mechanism.
  *
  * The sweeps under `bench/sweeps/` need to probe retrieval/consolidation
- * behaviour at non-default values of the twelve swept knobs (τ_confidence,
- * τ_gap, λ₁, λ₂, beam width, max hops, edge cap, co-occurrence weight,
- * explicit relation weight, subject boost, tag boost, dedup Jaccard).
+ * behaviour at non-default values of the swept knobs (λ₁, λ₂, beam width,
+ * max hops, edge cap, co-occurrence weight, explicit relation weight,
+ * subject boost, tag boost, dedup Jaccard, cache max entries).
  *
- * `setConstantOverrides({ TIER2_TAU_CONFIDENCE: 5 })` mutates RETRIEVAL or
- * CONSOLIDATION in place. Callers that read `RETRIEVAL.TIER2_TAU_CONFIDENCE`
+ * `setConstantOverrides({ TIER3_LAMBDA_1: 0.5 })` mutates RETRIEVAL or
+ * CONSOLIDATION in place. Callers that read `RETRIEVAL.TIER3_LAMBDA_1`
  * at call time (not destructured at module top) observe the override on
  * the next call. Destructuring swept keys at module top would bypass the
  * override — the `tests/unit/core/swept-constants-overridable.test.js`
@@ -186,8 +182,6 @@ const _INITIAL_CONSOLIDATION = { ...CONSOLIDATION };
 
 /** @type {ReadonlyArray<string>} Swept keys in RETRIEVAL. Used by the guard test. */
 export const _SWEPT_RETRIEVAL_KEYS = Object.freeze([
-    'TIER2_TAU_CONFIDENCE',
-    'TIER2_TAU_GAP',
     'TIER3_LAMBDA_1',
     'TIER3_LAMBDA_2',
     'TIER3_MAX_HOPS',

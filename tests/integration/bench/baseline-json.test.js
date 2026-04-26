@@ -53,12 +53,16 @@ describe('docs/bench/baseline.json', () => {
         expect(parsed.status).toBe('measured');
     });
 
-    test('every tuned key is a swept constant', () => {
+    test('every tuned key is a swept constant (skipping demolished knobs)', () => {
         const swept = new Set([
             ..._SWEPT_RETRIEVAL_KEYS,
             ..._SWEPT_CONSOLIDATION_KEYS,
         ]);
-        for (const key of Object.keys(parsed.tuned)) {
+        for (const [key, entry] of Object.entries(parsed.tuned)) {
+            // Phase 14 Task 2: tuned entries with verdict='DEMOLISHED'
+            // preserve historical provenance for keys that no longer exist
+            // in _SWEPT_*_KEYS (e.g. TIER2_TAU_CONFIDENCE, TIER2_TAU_GAP).
+            if (entry && entry.verdict === 'DEMOLISHED') continue;
             expect(swept.has(key)).toBe(true);
         }
     });

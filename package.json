@@ -13,7 +13,6 @@
         "test:coverage": "node --experimental-vm-modules node_modules/.bin/jest --coverage",
         "bench": "node bench/cli.js",
         "bench:smoke": "node bench/cli.js --conversations 1",
-        "bench:sweep:tau": "node bench/sweeps/tau.js",
         "bench:sweep:graph": "node bench/sweeps/graph.js",
         "bench:sweep:consolidation": "node bench/sweeps/consolidation.js",
         "bench:sweep:bm25": "node bench/sweeps/bm25.js",

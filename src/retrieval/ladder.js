@@ -190,11 +190,11 @@ export function retrieve(state, queryStr, opts = {}) {
     }
 
     // --- Tier 2 ---
-    // Phase 12 Task 1: Tier 2 demolished as a resolver. The t2.hit shortcut
-    // is gone; Tier 2 is now exclusively a BM25 candidate provider for Tier 3
-    // seeding. TIER2_TAU_CONFIDENCE / TIER2_TAU_GAP constants retained in
-    // src/core/constants.js for replayability of pre-demolition sweep
-    // artifacts (Phase 13 removal candidate). See docs/plans/phase-12-retro.md.
+    // Phase 12 Task 1: Tier 2 demolished as a resolver. Tier 2 is now
+    // exclusively a BM25 candidate provider for Tier 3 seeding.
+    // Phase 14 Task 2: TIER2_TAU_CONFIDENCE / TIER2_TAU_GAP constants
+    // removed from src/core/constants.js; the hit field is gone from the
+    // tier2() return shape. See docs/plans/phase-14-v2-closure.md.
     const t2 = tier2(state, queryStr, { now, intent: classifier, k: 10 });
 
     // --- Tier 3: intent-routed graph expansion ---

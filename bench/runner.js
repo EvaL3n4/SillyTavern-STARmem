@@ -105,7 +105,6 @@ export async function runHarness({
     if (process.env.STARMEM_BENCH_DIAG === '1' || overrides) {
         console.error(`[diag] runHarness post-override: ` +
             `BATCH_SIZE=${CONSOLIDATION.BATCH_SIZE} ` +
-            `TIER2_TAU_GAP=${RETRIEVAL.TIER2_TAU_GAP} ` +
             `overrides=${JSON.stringify(overrides ?? {})}`);
     }
 

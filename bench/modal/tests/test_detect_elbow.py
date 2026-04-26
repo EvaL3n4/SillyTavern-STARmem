@@ -14,14 +14,19 @@ def _mk_point(overrides, mrr):
 
 def test_flat_axis_is_held_at_spec():
     """Flat MRR axis must NOT produce an amendment proposal."""
-    # 8 points along TIER2_TAU_CONFIDENCE, MRR identical to 4dp (9.5 τ sweep reality).
+    # 8 points along a synthetic FAKE_KNOB_A axis, MRR identical to 4dp.
+    # Phase 14 Task 2: Constants renamed from TIER2_TAU_CONFIDENCE/_GAP to
+    # FAKE_KNOB_A/B since those constants were demolished — _detect_elbow
+    # doesn't validate names, so the test fixture works with any string.
+    # Original narrative: this models the 9.5 TIER2_TAU_CONFIDENCE sweep
+    # reality (identical MRR to 4dp across 8 points).
     points = [
-        _mk_point({"TIER2_TAU_CONFIDENCE": v, "TIER2_TAU_GAP": 10}, 0.8057)
+        _mk_point({"FAKE_KNOB_A": v, "FAKE_KNOB_B": 10}, 0.8057)
         for v in [0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 4.0, 5.0]
     ]
     knobs = [
-        {"name": "TIER2_TAU_CONFIDENCE", "values": [0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 4.0, 5.0]},
-        {"name": "TIER2_TAU_GAP", "values": [10]},
+        {"name": "FAKE_KNOB_A", "values": [0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 4.0, 5.0]},
+        {"name": "FAKE_KNOB_B", "values": [10]},
     ]
     result = _detect_elbow(points, knobs, "mrr")
     rationale = result["rationale"].lower()
@@ -32,7 +37,9 @@ def test_flat_axis_is_held_at_spec():
 
 def test_genuine_elbow_still_detected():
     """Monotonic climb into plateau must still surface the elbow."""
-    # 9.4.8/9.5 TIER2_TAU_GAP reality: climbs 0.73 → 0.81 across gap 0.1..10.
+    # Phase 14 Task 2 rename: TIER2_TAU_GAP → FAKE_KNOB_B for the synthetic
+    # fixture. Original narrative: 9.4.8/9.5 TIER2_TAU_GAP reality climbed
+    # 0.73 → 0.81 across gap 0.1..10.
     gaps_and_mrrs = [
         (0.1, 0.7303),
         (0.5, 0.7450),
@@ -44,16 +51,16 @@ def test_genuine_elbow_still_detected():
         (10.0, 0.8057),
     ]
     points = [
-        _mk_point({"TIER2_TAU_GAP": gap, "TIER2_TAU_CONFIDENCE": 2.0}, mrr)
+        _mk_point({"FAKE_KNOB_B": gap, "FAKE_KNOB_A": 2.0}, mrr)
         for gap, mrr in gaps_and_mrrs
     ]
     knobs = [
-        {"name": "TIER2_TAU_GAP", "values": [g for g, _ in gaps_and_mrrs]},
-        {"name": "TIER2_TAU_CONFIDENCE", "values": [2.0]},
+        {"name": "FAKE_KNOB_B", "values": [g for g, _ in gaps_and_mrrs]},
+        {"name": "FAKE_KNOB_A", "values": [2.0]},
     ]
     result = _detect_elbow(points, knobs, "mrr")
     # Expect an elbow somewhere in [3.0, 10.0] — the plateau shoulder.
-    chosen_gap = result["overrides"]["TIER2_TAU_GAP"]
+    chosen_gap = result["overrides"]["FAKE_KNOB_B"]
     assert chosen_gap >= 3.0, (
         f"Expected elbow at gap ≥ 3.0 on climbing axis; "
         f"got gap={chosen_gap}, rationale={result['rationale']!r}"

@@ -1584,124 +1584,6 @@ def _append_task_type_slice(report: str, metrics: dict) -> str:
     return "\n".join(lines) + "\n"
 
 
-def render_tau_report(result, corpus_len, qa_count):
-    """Port of tau.js renderReport to Python."""
-    from datetime import datetime
-    today = datetime.now().isoformat()[:10]
-    primary_metric = "recallAt5"
-
-    header = "| TIER2_TAU_CONFIDENCE | TIER2_TAU_GAP | recallAt5 | precisionAt3 | mrr | coverage | p50 | p95 |"
-    separator = "|---|---|---|---|---|---|---|---|---|"
-    rows = []
-    for p in result["points"]:
-        tc = p["overrides"]["TIER2_TAU_CONFIDENCE"]
-        tg = p["overrides"]["TIER2_TAU_GAP"]
-        r5 = f"{p['metrics']['recallAtK']['5']:.4f}"
-        p3 = f"{p['metrics']['precisionAtK']['3']:.4f}"
-        mrr = f"{p['metrics']['mrr']:.4f}"
-        cov = p["metrics"].get("coverage")
-        cov_s = f"{cov:.4f}" if isinstance(cov, (int, float)) else "—"
-        p50 = f"{p['latencyMs']['p50']:.2f}"
-        p95 = f"{p['latencyMs']['p95']:.2f}"
-        rows.append(f"| {tc} | {tg} | {r5} | {p3} | {mrr} | {cov_s} | {p50} | {p95} |")
-
-    # Heatmap
-    tau_gap_values = sorted({p["overrides"]["TIER2_TAU_GAP"] for p in result["points"]})
-    tau_conf_values = sorted({p["overrides"]["TIER2_TAU_CONFIDENCE"] for p in result["points"]})
-    gap_header = "               " + "".join(f"{v:.2f}".rjust(5) + "  " for v in tau_gap_values).rstrip()
-    heatmap_rows = []
-    for tc in tau_conf_values:
-        cells = []
-        for tg in tau_gap_values:
-            point = next(
-                (p for p in result["points"]
-                 if p["overrides"]["TIER2_TAU_CONFIDENCE"] == tc and p["overrides"]["TIER2_TAU_GAP"] == tg),
-                None,
-            )
-            val = f"{point['metrics']['recallAtK']['5']:.2f}" if point else "N/A"
-            cells.append(val.rjust(5))
-        heatmap_rows.append(f"  {str(tc).ljust(4)}   {'  '.join(cells)}")
-
-    # Spec amendment
-    current_tau_conf = 2.0
-    current_tau_gap = 0.5
-    e_conf = result["elbow"]["overrides"]["TIER2_TAU_CONFIDENCE"]
-    e_gap = result["elbow"]["overrides"]["TIER2_TAU_GAP"]
-    conf_deviation = abs(e_conf - current_tau_conf) / current_tau_conf
-    gap_deviation = abs(e_gap - current_tau_gap) / current_tau_gap
-    needs_amendment = conf_deviation > 0.5 or gap_deviation > 0.5
-
-    if needs_amendment:
-        amendment_section = (
-            f"**Proposed amendment:**\n\n"
-            f"- TIER2_TAU_CONFIDENCE: {current_tau_conf} → {e_conf}\n"
-            f"- TIER2_TAU_GAP: {current_tau_gap} → {e_gap}\n\n"
-            f"Rationale: elbow is >50% away from current spec values ({conf_deviation*100:.0f}% / {gap_deviation*100:.0f}% deviation)."
-        )
-    else:
-        amendment_section = "No amendment needed — elbow within 50% of current spec."
-
-    # Amendment verdict (Phase 11 Task 4)
-    baseline_pt = result["points"][0] if result["points"] else None
-    candidate_pt = None
-    if baseline_pt and result["elbow"].get("overrides"):
-        candidate_pt = next(
-            (p for p in result["points"]
-             if all(p["overrides"].get(k) == v for k, v in result["elbow"]["overrides"].items())),
-            None,
-        )
-    if baseline_pt and candidate_pt and candidate_pt is not baseline_pt:
-        verdict = _should_amend(baseline_pt["metrics"], candidate_pt["metrics"])
-        amendment_verdict_block = (
-            f"\n### Amendment verdict\n\n"
-            f"{'**Amend**' if verdict['amend'] else '**Held at spec**'} — {verdict['reason']}"
-        )
-    else:
-        amendment_verdict_block = "\n### Amendment verdict\n\nNo distinct candidate point found — held at spec."
-
-    first_point = result["points"][0] if result["points"] else None
-    env_block = (
-        "```json\n" + json.dumps(first_point["metrics"], indent=2) + "\n```"
-        if first_point else "No points recorded."
-    )
-
-    rows_joined = "\n".join(rows)
-    heatmap_rows_joined = "\n".join(heatmap_rows)
-
-    report = f"""# τ sweep — {today}
-
-|**Corpus:** {corpus_len} conversations, {qa_count} QA items
-|**Primary metric:** {primary_metric}
-
-## Points
-
-{header}
-{separator}
-{rows_joined}
-
-## Heatmap (primary = {primary_metric})
-
-               TIER2_TAU_GAP
-{gap_header}
-TIER2_TAU_CONFIDENCE
-{heatmap_rows_joined}
-
-## Elbow
-
-**Recommended overrides:** `{json.dumps(result['elbow']['overrides'])}`
-**Rationale:** {result['elbow']['rationale']}
-
-## Spec amendment proposal
-
-{amendment_section}{amendment_verdict_block}
-
-## Environment snapshot
-
-{env_block}
-"""
-    return report
-
-
 def render_bm25_report(result, corpus_len, qa_count, tags_stats):
     """Port of bm25.js renderReport to Python."""
     from datetime import datetime
@@ -1973,46 +1855,28 @@ def render_single_axis_report(result, corpus_len, qa_count, corpus="locomo"):
     return report
 
 
-# 9.5: single-axis graph-tier sweeps need TIER2_TAU_GAP=10 inlined into
-# every grid point so queries actually reach Tier 3 (without it, Tier 2
-# gating short-circuits and the knob is inert by construction). Phase 12
-# Task 7 adds lambda1_tripwire, which additionally needs BATCH_SIZE=15
-# inlined for cache-key alignment with the Modal vLLM warmed cache (see
-# docs/plans/phase-12-task-6-5-retro.md). Centralized as a table so the
-# next single-axis sweep doesn't have to touch run_sweep's body.
+# 9.5: single-axis graph-tier sweeps used to inline TIER2_TAU_GAP=10 so
+# queries reached Tier 3. Phase 14 Task 2 removes TIER2_TAU_GAP entirely
+# (Tier 2 demolition complete). Only lambda1_tripwire still needs
+# BATCH_SIZE=15 + WORKING_BUFFER_THRESHOLD=15 for cache-key alignment
+# with the Modal vLLM warmed cache (see docs/plans/phase-12-task-6-5-retro.md).
 #
-# Both keys ARE swept (BATCH_SIZE in _SWEPT_CONSOLIDATION_KEYS, TIER2_TAU_GAP
-# in _SWEPT_RETRIEVAL_KEYS) so setConstantOverrides accepts them — the
-# inlining route through STARMEM_OVERRIDES → bench/runner.js's
-# setConstantOverrides(overrides) is the same path that the swept knob
-# itself rides.
+# Both keys ARE swept (BATCH_SIZE in _SWEPT_CONSOLIDATION_KEYS) so
+# setConstantOverrides accepts them — the inlining route through
+# STARMEM_OVERRIDES → bench/runner.js's setConstantOverrides(overrides)
+# is the same path that the swept knob itself rides.
 _SWEEP_BASE_OVERRIDES = {
-    "hops": {"TIER2_TAU_GAP": 10},
-    "relw": {"TIER2_TAU_GAP": 10},
     # lambda1_tripwire: BATCH_SIZE=15 + WORKING_BUFFER_THRESHOLD=15 must
     # ride together. Runtime drains min(BATCH_SIZE, buffer.length) per
     # consolidate fire — when threshold (default 10) < BATCH_SIZE (15),
     # consolidate always slices 10-turn chunks, but the warmed cache is
     # keyed on 15-turn chunks → 100% cache miss → live fallback → 400.
     # Phase 12 Task 7 cache-key alignment fix; see Task 6.5 retro.
-    "lambda1_tripwire": {"TIER2_TAU_GAP": 10, "BATCH_SIZE": 15, "WORKING_BUFFER_THRESHOLD": 15},
+    "lambda1_tripwire": {"BATCH_SIZE": 15, "WORKING_BUFFER_THRESHOLD": 15},
 }
 
 
 SWEEP_CONFIGS = {
-    "tau": {
-        # 9.5: restored to the Phase 9 Task 4 full grid (48 points) so the
-        # renderer's heatmap is populated. 9.4.8 had trimmed this to a
-        # 4-knob validation config after amending gap=10; 9.5 re-sweeps
-        # under live extraction to detect whether the gap=10 plateau holds
-        # or the elbow shifts on Gemma-extracted facts.
-        "knobs": [
-            {"name": "TIER2_TAU_CONFIDENCE", "values": [0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 4.0, 5.0]},
-            {"name": "TIER2_TAU_GAP",        "values": [0.1, 0.3, 0.5, 1.0, 3.0, 10.0]},
-        ],
-        "primary_metric": "recallAt5",
-        "renderer": render_tau_report,
-    },
     "bm25": {
         # 9.5: restored from 9.4.8's 2-knob validation config to the full
         # 4×4 grid so render_bm25_report emits a heatmap.
@@ -2027,7 +1891,7 @@ SWEEP_CONFIGS = {
         # 9.5: TIER3_MAX_HOPS sweep (Phase 9 left this knob uncovered).
         # Every point runs with TIER2_TAU_GAP=10 baseOverride so queries
         # reach Tier 3 (same invariant as GRAPH_ROUNDS). Inline the
-        # baseOverride into each grid point because run_sweep doesn't
+        # baseOverride via _SWEEP_BASE_OVERRIDES below.
         # honor a config["base_overrides"] key — it hands `grid` directly
         # to run_point.map.
         "knobs": [
@@ -2081,7 +1945,9 @@ GRAPH_ROUNDS = [
 # (9.4.8 amendment). Without this baseOverride, Tier 2 shortcut fires
 # for most queries and graph knobs don't affect retrieval because
 # queries never reach Tier 3.
-GRAPH_BASE_OVERRIDES = {"TIER2_TAU_GAP": 10}
+# Phase 14 Task 2: TIER2_TAU_GAP removed; GRAPH_BASE_OVERRIDES is now
+# empty. Tier 2 is always a BM25 candidate provider, never a gate.
+GRAPH_BASE_OVERRIDES = {}
 
 
 def render_graph_report_stub(payload):
@@ -3132,52 +2998,40 @@ def run_sweep(sweep_name: str, synthetic: bool = False, corpus: str = "locomo", 
         _install_volume_symlink(longmemeval_link, "/data/longmemeval_s_cleaned.json")
 
     if synthetic:
-        # Tiny 2-point grid for smoke testing. Both points must populate
-        # EVERY knob the renderer reads — otherwise render_tau_report's
-        # p["overrides"]["TIER2_TAU_GAP"] (and equivalents) will KeyError.
-        # Use spec defaults for one knob, a deviation for the other, so
-        # the elbow detector has two distinguishable points per axis.
-        if sweep_name == "tau":
-            grid = [
-                {"TIER2_TAU_CONFIDENCE": 2.0, "TIER2_TAU_GAP": 0.5},  # spec defaults
-                {"TIER2_TAU_CONFIDENCE": 0.5, "TIER2_TAU_GAP": 0.5},  # low-confidence variant
-            ]
-        elif sweep_name == "bm25":
+        # Tiny 2-point grid for smoke testing. Use spec defaults for one
+        # knob, a deviation for the other, so the elbow detector has two
+        # distinguishable points per axis.
+        if sweep_name == "bm25":
             grid = [
                 {"TAG_BOOST": 2, "SUBJECT_BOOST": 2},  # spec defaults
                 {"TAG_BOOST": 3, "SUBJECT_BOOST": 2},  # +tag variant
             ]
         elif sweep_name == "hops":
             grid = [
-                {"TIER3_MAX_HOPS": 2, "TIER2_TAU_GAP": 10},  # spec default + gap=10
-                {"TIER3_MAX_HOPS": 3, "TIER2_TAU_GAP": 10},  # +1 hop variant
+                {"TIER3_MAX_HOPS": 2},  # spec default
+                {"TIER3_MAX_HOPS": 3},  # +1 hop variant
             ]
         elif sweep_name == "relw":
             grid = [
-                {"EXPLICIT_RELATION_WEIGHT": 1.0, "TIER2_TAU_GAP": 10},  # spec default + gap=10
-                {"EXPLICIT_RELATION_WEIGHT": 2.0, "TIER2_TAU_GAP": 10},  # +1.0 variant
+                {"EXPLICIT_RELATION_WEIGHT": 1.0},  # spec default
+                {"EXPLICIT_RELATION_WEIGHT": 2.0},  # +1.0 variant
             ]
         elif sweep_name == "lambda1_tripwire":
             # Phase 12 Task 7 smoke: 2-point grid with spec default + one
-            # deviation, both inlined with BATCH_SIZE=15 + TIER2_TAU_GAP=10
-            # so smoke shares cache keys with the production lambda1_tripwire
-            # dispatch (and with the BS=15 warm cache).
+            # deviation, both inlined with BATCH_SIZE=15 so smoke shares
+            # cache keys with the production lambda1_tripwire dispatch
+            # (and with the BS=15 warm cache).
             grid = [
-                {"TIER3_LAMBDA_1": 1.0, "TIER2_TAU_GAP": 10, "BATCH_SIZE": 15},  # spec default
-                {"TIER3_LAMBDA_1": 0.5, "TIER2_TAU_GAP": 10, "BATCH_SIZE": 15},  # low variant
+                {"TIER3_LAMBDA_1": 1.0, "BATCH_SIZE": 15},  # spec default
+                {"TIER3_LAMBDA_1": 0.5, "BATCH_SIZE": 15},  # low variant
             ]
         else:
             raise ValueError(f"Unknown synthetic sweep_name: {sweep_name!r}")
     else:
         grid = _cartesian_product(knobs)
-        # 9.5: single-axis graph-tier sweeps need TIER2_TAU_GAP=10 inlined
-        # into every grid point so queries actually reach Tier 3 (without
-        # it, Tier 2 gating short-circuits and the knob is inert by
-        # construction). Same invariant as GRAPH_BASE_OVERRIDES; run_sweep
-        # doesn't honor a config["base_overrides"] key today, so we inline
-        # via the _SWEEP_BASE_OVERRIDES table (Phase 12 Task 7 also adds
-        # BATCH_SIZE=15 for the lambda1_tripwire entry — cache-key
-        # alignment with the Modal vLLM warmed cache).
+        # Phase 14 Task 2: TIER2_TAU_GAP removed. _SWEEP_BASE_OVERRIDES
+        # still carries BATCH_SIZE=15 for lambda1_tripwire cache-key
+        # alignment; other sweeps have no base overrides.
         base_overrides = _SWEEP_BASE_OVERRIDES.get(sweep_name, {})
         for point in grid:
             for k, v in base_overrides.items():
@@ -3368,7 +3222,7 @@ def run_sweep(sweep_name: str, synthetic: bool = False, corpus: str = "locomo", 
         tags_stats = None
 
     # Renderer dispatch — render_bm25_report wants tags_stats; render_single_axis_report
-    # wants corpus (Phase 12 Task 7) for the corpus label; render_tau_report uses neither.
+    # wants corpus (Phase 12 Task 7) for the corpus label.
     if tags_stats:
         report = renderer(result, corpus_len, qa_count, tags_stats)
     elif renderer is render_single_axis_report:

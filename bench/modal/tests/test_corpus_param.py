@@ -430,14 +430,16 @@ def test_run_sweep_extractor_model_default_empty_string():
         )
 
 
-def test_run_sweep_lambda1_tripwire_inlines_batch_size_and_tau_gap():
-    """lambda1_tripwire inlines BOTH TIER2_TAU_GAP=10 AND BATCH_SIZE=15
+def test_run_sweep_lambda1_tripwire_inlines_batch_size():
+    """lambda1_tripwire inlines BATCH_SIZE=15 (and WORKING_BUFFER_THRESHOLD=15)
     into every grid point's overrides JSON.
 
     BATCH_SIZE=15 is the cache-key alignment fix from Phase 12 Task 6.5
     retro: the Modal vLLM cache was warmed at BS=15, so the read path
-    must enumerate at BS=15 too. TIER2_TAU_GAP=10 is the Tier 3
-    reachability invariant inherited from hops/relw.
+    must enumerate at BS=15 too.
+
+    Phase 14 Task 2: TIER2_TAU_GAP=10 inline removed (Tier 2 demolition —
+    constant no longer exists in src/core/constants.js).
     """
     captured_starmap_args = []
 
@@ -467,8 +469,9 @@ def test_run_sweep_lambda1_tripwire_inlines_batch_size_and_tau_gap():
     import json as _json
     for tup in captured_starmap_args:
         overrides = _json.loads(tup[0])
-        assert overrides.get("TIER2_TAU_GAP") == 10, (
-            f"every lambda1_tripwire point must inline TIER2_TAU_GAP=10; got {overrides!r}"
+        assert "TIER2_TAU_GAP" not in overrides, (
+            f"Phase 14 Task 2 demolished TIER2_TAU_GAP; lambda1_tripwire "
+            f"must NOT inline it; got {overrides!r}"
         )
         assert overrides.get("BATCH_SIZE") == 15, (
             f"every lambda1_tripwire point must inline BATCH_SIZE=15 for "
@@ -479,9 +482,11 @@ def test_run_sweep_lambda1_tripwire_inlines_batch_size_and_tau_gap():
         )
 
 
-def test_run_sweep_hops_unchanged_after_table_refactor():
-    """The _SWEEP_BASE_OVERRIDES table refactor must not regress the
-    pre-existing hops/relw inlining (TIER2_TAU_GAP=10 only, no BATCH_SIZE).
+def test_run_sweep_hops_no_tier2_tau_gap_inlining():
+    """Phase 14 Task 2: hops/relw must NOT inline TIER2_TAU_GAP after the
+    Tier 2 demolition (constants removed; cache-key irrelevant for the
+    Tier-2-runtime branch that no longer exists). Pre-Phase-14 this test
+    asserted the inverse (`== 10`); flipped here as part of Decision §6.
     """
     captured_starmap_args = []
 
@@ -506,7 +511,10 @@ def test_run_sweep_hops_unchanged_after_table_refactor():
     import json as _json
     for tup in captured_starmap_args:
         overrides = _json.loads(tup[0])
-        assert overrides.get("TIER2_TAU_GAP") == 10
+        assert "TIER2_TAU_GAP" not in overrides, (
+            f"Phase 14 Task 2 demolished TIER2_TAU_GAP inlining for hops; "
+            f"got {overrides!r}"
+        )
         assert "BATCH_SIZE" not in overrides, (
             f"hops must NOT inline BATCH_SIZE (only lambda1_tripwire does); got {overrides!r}"
         )
