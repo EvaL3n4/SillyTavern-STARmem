@@ -2995,6 +2995,66 @@ def _cartesian_product(knobs):
     return result
 
 
+def _build_cell_record(cell_chunks, n_chunks):
+    """Build a single cell record from its chunk payloads.
+
+    Args:
+        cell_chunks: list of (chunk_idx, chunk_payload) tuples, sorted by chunk_idx.
+        n_chunks: total number of chunks (for totalChunks field).
+
+    Returns:
+        dict: cell record with overrides, metrics, latencyMs, runCount,
+              wallMs, chunkWalls, chunksRun, totalChunks.
+
+    Phase 14 Task 1 — extracted from run_sweep for unit-testability.
+    """
+    import subprocess
+
+    concat_runs = []
+    max_chunk_wall = 0
+    chunk_walls = []
+    cell_overrides = cell_chunks[0][1].get("overrides", {})
+    for (_chi, chunk) in cell_chunks:
+        concat_runs.extend(chunk.get("runs", []))
+        chunk_wall = chunk.get("wallMs", 0)
+        chunk_walls.append(chunk_wall)
+        max_chunk_wall = max(max_chunk_wall, chunk_wall)
+
+    # Recompute metrics once on concat_runs via Node helper.
+    recompute_input = json.dumps({"runs": concat_runs})
+    recompute_proc = subprocess.run(
+        ["node", "-e",
+         "import('./bench/sweeps/_recompute-metrics.js')"
+         ".then(m => m.runFromStdin(process.stdin))"],
+        cwd="/repo",
+        input=recompute_input,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    recompute_out = json.loads(recompute_proc.stdout.strip().split("\n")[-1])
+
+    latencies = [r.get("latencyMs", 0) for r in concat_runs]
+    sorted_lat = sorted(latencies)
+    n = len(sorted_lat)
+    latency_p50_p95 = {
+        "p50": sorted_lat[int((n - 1) * 0.5)] if n > 0 else 0,
+        "p95": sorted_lat[int((n - 1) * 0.95)] if n > 0 else 0,
+    }
+
+    return {
+        "overrides": cell_overrides,
+        "metrics": recompute_out["metrics"],
+        "aggStats": recompute_out.get("aggStats"),
+        "latencyMs": latency_p50_p95,
+        "runCount": len(concat_runs),
+        "wallMs": max_chunk_wall,   # cell wall = max chunk wall (parallel)
+        "chunkWalls": chunk_walls,  # Phase 14: per-chunk wall in dispatch order
+        "chunksRun": len(cell_chunks),
+        "totalChunks": n_chunks,
+    }
+
+
 @app.function(image=image, volumes={"/data": volume}, secrets=[env_secret, wandb_secret], timeout=10800, memory=4096)
 def run_sweep(sweep_name: str, synthetic: bool = False, corpus: str = "locomo", extractor_model: str = "", chunks_override: int = 0) -> dict:
     """Run a full parameter sweep in parallel via Modal.
@@ -3222,46 +3282,8 @@ def run_sweep(sweep_name: str, synthetic: bool = False, corpus: str = "locomo", 
             })
             continue
 
-        # Concat runs[] across chunks for this cell.
-        concat_runs = []
-        max_chunk_wall = 0
-        cell_overrides = cell_chunks[0][1].get("overrides", {})
-        for (_chi, chunk) in cell_chunks:
-            concat_runs.extend(chunk.get("runs", []))
-            max_chunk_wall = max(max_chunk_wall, chunk.get("wallMs", 0))
-
-        # Recompute metrics once on concat_runs via Node helper.
-        recompute_input = json.dumps({"runs": concat_runs})
-        recompute_proc = subprocess.run(
-            ["node", "-e",
-             "import('./bench/sweeps/_recompute-metrics.js')"
-             ".then(m => m.runFromStdin(process.stdin))"],
-            cwd="/repo",
-            input=recompute_input,
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-        recompute_out = json.loads(recompute_proc.stdout.strip().split("\n")[-1])
-
-        latencies = [r.get("latencyMs", 0) for r in concat_runs]
-        sorted_lat = sorted(latencies)
-        n = len(sorted_lat)
-        latency_p50_p95 = {
-            "p50": sorted_lat[int((n - 1) * 0.5)] if n > 0 else 0,
-            "p95": sorted_lat[int((n - 1) * 0.95)] if n > 0 else 0,
-        }
-
-        points.append({
-            "overrides": cell_overrides,
-            "metrics": recompute_out["metrics"],
-            "aggStats": recompute_out.get("aggStats"),
-            "latencyMs": latency_p50_p95,
-            "runCount": len(concat_runs),
-            "wallMs": max_chunk_wall,   # cell wall = max chunk wall (parallel)
-            "chunksRun": len(cell_chunks),
-            "totalChunks": n_chunks,
-        })
+        cell_record = _build_cell_record(cell_chunks, n_chunks)
+        points.append(cell_record)
 
     # Pre-existing run_sweep logic continues to consume `points` and
     # `error_points` exactly as before — no further changes needed.

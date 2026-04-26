@@ -79,7 +79,7 @@ _stub_modal()
 
 import pytest
 
-from bench.modal.sweep_app import _compute_chunk_plan
+from sweep_app import _compute_chunk_plan
 
 
 class TestChunkPlan:
@@ -205,3 +205,44 @@ class TestChunkPlan:
                     f"{expected - cell_0_union}"
                 )
                 assert cell_1_union == expected
+
+
+def test_cell_record_includes_chunkWalls(monkeypatch):
+    """Cell record schema must include chunkWalls: List[int] per Phase 14 Task 1."""
+    from sweep_app import _build_cell_record
+
+    # Mock the Node subprocess so the test doesn't need /repo or node installed.
+    def _fake_subprocess_run(*args, **kwargs):
+        class _FakeProc:
+            stdout = '{"metrics": {"mrr": 0.5, "coverage": 0.8, "n": 10, "n_scored": 8, "n_skipped": 2}, "aggStats": {"mean": 0.5}}\n'
+        return _FakeProc()
+    monkeypatch.setattr("subprocess.run", _fake_subprocess_run)
+
+    # Arrange: synthesise three chunk results with distinct wallMs values
+    cell_chunks = [
+        (0, {"overrides": {"X": 1}, "runs": [], "wallMs": 1500}),
+        (1, {"overrides": {"X": 1}, "runs": [], "wallMs": 2300}),
+        (2, {"overrides": {"X": 1}, "runs": [], "wallMs": 1800}),
+    ]
+
+    # Act
+    record = _build_cell_record(cell_chunks, n_chunks=3)
+
+    # Assert: chunkWalls present and in chunk-index dispatch order
+    assert "chunkWalls" in record, "chunkWalls field missing from cell record"
+    assert record["chunkWalls"] == [1500, 2300, 1800], (
+        f"chunkWalls dispatch order mismatch: {record['chunkWalls']}"
+    )
+
+    # Assert: wallMs preserved for backward compat (cell wall = max chunk wall)
+    assert record["wallMs"] == 2300, (
+        f"wallMs backward-compat mismatch: expected 2300, got {record['wallMs']}"
+    )
+
+    # Assert: other expected fields present
+    assert record["overrides"] == {"X": 1}
+    assert record["chunksRun"] == 3
+    assert record["totalChunks"] == 3
+    assert record["runCount"] == 0  # no runs in synthetic chunks
+    assert "metrics" in record
+    assert "latencyMs" in record
