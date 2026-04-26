@@ -3194,7 +3194,13 @@ def run_sweep(sweep_name: str, synthetic: bool = False, corpus: str = "locomo", 
                 "failed_chunks": len(cell_chunk_errors),
                 "total_chunks": n_chunks,
                 "first_chunk_error": first.get("error"),
-                "first_chunk_returncode": first.get("returncode"),
+                # Surface first chunk's debug fields at top level so the
+                # downstream error-print loop (and operators reading the
+                # artifact) can see what actually crashed without having
+                # to dig into nested chunk records.
+                "returncode": first.get("returncode"),
+                "stderr": first.get("stderr") or "",
+                "diagnostics": first.get("diagnostics"),
             })
             continue
 
@@ -3264,7 +3270,7 @@ def run_sweep(sweep_name: str, synthetic: bool = False, corpus: str = "locomo", 
     if error_points:
         import sys as _sys
         print(
-            f"\n[run_sweep] {len(error_points)} of {len(points)} points failed:",
+            f"\n[run_sweep] {len(error_points)} of {len(grid)} cells failed:",
             file=_sys.stderr,
         )
         for i, ep in enumerate(error_points):
@@ -3280,10 +3286,10 @@ def run_sweep(sweep_name: str, synthetic: bool = False, corpus: str = "locomo", 
         # subprocess-level failure first.
         if not ok_points:
             raise RuntimeError(
-                f"run_sweep: all {len(points)} points failed in node subprocess. "
+                f"run_sweep: all {len(grid)} cells failed in node subprocess. "
                 f"First error: {error_points[0].get('error')!r}, "
                 f"returncode={error_points[0].get('returncode')}. "
-                f"See stderr above for per-point detail."
+                f"See stderr above for per-cell detail."
             )
         # Partial failure is allowed but flagged; the elbow + renderer run
         # over only the successful subset, but the persisted payload keeps
