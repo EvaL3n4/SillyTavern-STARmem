@@ -3373,6 +3373,9 @@ def main(
     stratify_seed: int = 2026,   # NEW: --stratify-seed N for determinism across runs
     warmup_concurrency: int = 10,   # NEW: --warmup-concurrency K (Fireworks-safe default)
     batch_size: int = 0,   # NEW: --batch-size N override for warmup-longmemeval (0 = spec default)
+    chunks: int = 0,   # Phase 13: --chunks K override for run-sweep
+                       # item-fan-out. 0 (default) uses heuristic
+                       # max(1, items // 80). LoCoMo always = 1 chunk.
 ):
     """Dispatch entrypoint for Modal bench functions.
 
@@ -3442,6 +3445,17 @@ def main(
         PRNG seed for --stratified-sample. Default 2026. Same seed +
         same N = same item indices = same cache keys; warmup and
         baselines MUST use the same seed to share the cache.
+
+    --chunks K:
+        Only relevant to --mode run-sweep. Override the per-cell chunk
+        count for item-fan-out dispatch. Default 0 = heuristic
+        max(1, corpus_size // 80) — LoCoMo (10 items) → 1 chunk (no
+        fan-out, identical to pre-Phase-13 shape); LongMemEval-S
+        (500 items) → 6 chunks of ~83 items each. Set higher for finer
+        parallelism (e.g. K=10 for ~50 items/chunk if you want sub-200s
+        per-chunk wall on slow corpora). Set to 1 to disable fan-out
+        entirely. Cell × chunk total must fit Modal's container ceiling
+        (currently 100 free-tier; 5 cells × K chunks ≤ 100).
     """
     if corpus not in {"locomo", "longmemeval-s"}:
         raise ValueError(f"--corpus must be one of: locomo, longmemeval-s. Got: {corpus!r}")
@@ -3485,7 +3499,13 @@ def main(
             (out / f"{stem}.json").write_text(result_json_str)
             print(f"<!-- mirrored to host: {out / stem}.{{md,json}} -->", file=__import__("sys").stderr)
     elif mode == "run-sweep":
-        sweep_out = run_sweep.remote(sweep_name, synthetic, corpus=corpus, extractor_model=extractor_model)
+        sweep_out = run_sweep.remote(
+            sweep_name,
+            synthetic,
+            corpus=corpus,
+            extractor_model=extractor_model,
+            chunks_override=chunks,
+        )
         report = sweep_out["report"]
         result_json_str = sweep_out["result_json"]
         run_dir = sweep_out["run_dir"]
