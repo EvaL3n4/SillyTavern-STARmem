@@ -1166,13 +1166,17 @@ Expected end-of-run JSON:
 
 **This is the load-bearing proof of the substrate swap. If misses>0, the cache-write contract drifted; Phase 12 Task 7 cannot proceed.**
 
+**Cache-key alignment requires both `--extractor-model` and `--batch-size`.** The cache key is `sha256(model + JSON(messages) + maxTokens)`. Decision 7 fixed the model to `Qwen/Qwen3.6-35B-A3B-FP8` (not the live default `google/gemma-4-26b-a4b-it`) and Decision 10 fixed BATCH_SIZE to 15 (not the spec default 5). Both inputs MUST be passed as flag overrides on the regression check, otherwise the live read path derives different cache keys and `misses=0` is mathematically impossible. (Plan gap caught 2026-04-25 on the first regression-check attempt — the original incantation here was missing both flags. Original output had `model=google/gemma-4-26b-a4b-it BATCH_SIZE=5`, which couldn't possibly hit the warmed-at-Qwen3.6-BS=15 cache.)
+
 **Step 1: Run the regression check.**
 
 ```bash
 modal run bench/modal/sweep_app.py \
     --mode run-longmemeval-warmup \
     --corpus-size 3 \
-    --warmup-concurrency 1
+    --warmup-concurrency 1 \
+    --extractor-model "Qwen/Qwen3.6-35B-A3B-FP8" \
+    --batch-size 15
 ```
 
 Expected stdout (per-item JSON payloads from `_modal-warmup-point.js`):
@@ -1198,7 +1202,13 @@ Expected stdout (per-item JSON payloads from `_modal-warmup-point.js`):
 
 If ANY `misses > 0`:
 1. Pull the failing customId from the live path's stderr log.
-2. Recompute the customId locally:
+2. Verify the live path actually saw the BATCH_SIZE override:
+    ```bash
+    # The startup line should report `BATCH_SIZE=15`, not `BATCH_SIZE=5`.
+    # If it says 5, STARMEM_BATCH_SIZE didn't reach the container — check
+    # the orchestrator's starmap tuple shape (must be 4-ary).
+    ```
+3. Recompute the customId locally:
     ```bash
     node -e "
         const { _cacheKey } = await import('./bench/harness/extractionCache.js');
@@ -1206,8 +1216,8 @@ If ANY `misses > 0`:
         console.log(key);
     "
     ```
-3. Compare to the Volume's `/extractions/<customId>.json` filename. If different → enumerator-vs-live drift (one path is computing the cache key differently). If same → cache file write format drift (Python `json.dumps` shape differs from Node's `JSON.stringify` shape).
-4. **STOP** Phase 12 Task 7. Root-cause and patch before any downstream baseline runs.
+4. Compare to the Volume's `/extractions/<customId>.json` filename. If different → enumerator-vs-live drift (one path is computing the cache key differently). If same → cache file write format drift (Python `json.dumps` shape differs from Node's `JSON.stringify` shape).
+5. **STOP** Phase 12 Task 7. Root-cause and patch before any downstream baseline runs.
 
 If all 3 items report `misses=0`: substrate swap is byte-compat. Proceed to Task 7.
 

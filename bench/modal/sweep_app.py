@@ -481,6 +481,7 @@ def run_longmemeval_warmup_point(
     item_idx: int,
     extractor_model: str = "",
     warmup_concurrency: int = 10,
+    batch_size: int = 0,
 ) -> str:
     """Warm the extraction cache for a single LongMemEval-S item.
 
@@ -542,6 +543,21 @@ def run_longmemeval_warmup_point(
     # silently ignored, K defaulted to 16, Fireworks returned 429 on 94
     # of 106 batches).
     env["STARMEM_WARMUP_CONCURRENCY"] = str(warmup_concurrency)
+
+    # BATCH_SIZE override — when batch_size > 0, propagate to the JS warmup
+    # point as STARMEM_BATCH_SIZE. The JS side calls
+    # setConstantOverrides({BATCH_SIZE: <int>}) before reading
+    # CONSOLIDATION.BATCH_SIZE at the line-118 destructure, so the warmup
+    # enumerator and the existing-pipeline cache-lookup path both see the
+    # same value. Crucial for cache-key alignment: the Phase 12 Task 6.5
+    # vLLM pre-warming dispatch enumerated at BS=15, and the live read
+    # path keys cache lookups on the same (model, messages, maxTokens)
+    # triple — so this re-extraction warmup MUST run at BS=15 too, or
+    # `misses` jumps from 0 to ~100% (caught 2026-04-25 on the first
+    # regression-check attempt). batch_size=0 is the explicit "use spec
+    # default" signal and leaves the env var unset.
+    if batch_size > 0:
+        env["STARMEM_BATCH_SIZE"] = str(batch_size)
 
     # Start a background thread that commits the Volume every 60s while
     # the subprocess runs. Without this, a FunctionTimeoutError SIGKILLs
@@ -627,6 +643,7 @@ def run_longmemeval_warmup(
     stratified_sample: int = 0,
     stratify_seed: int = 2026,
     warmup_concurrency: int = 10,
+    batch_size: int = 0,
 ) -> dict:
     """Fan out per-item LongMemEval-S cache warm-up across bounded containers.
 
@@ -741,12 +758,14 @@ def run_longmemeval_warmup(
     volume.commit()  # durable before fan-out reads it
 
     t0 = time.time()
-    # starmap passes each tuple as (item_idx, extractor_model, warmup_concurrency).
-    # Threading warmup_concurrency through the tuple keeps it explicit
-    # per-cell instead of relying on container env inheritance (which
-    # Modal does NOT provide — caught on Fireworks smoke, 2026-04-23).
+    # starmap passes each tuple as (item_idx, extractor_model,
+    # warmup_concurrency, batch_size). Threading batch_size through the
+    # tuple keeps it explicit per-cell instead of relying on container env
+    # inheritance (which Modal does NOT provide — same trap that bit
+    # warmup_concurrency on 2026-04-23 Fireworks smoke). batch_size=0
+    # means "no override, inherit live spec default."
     results_raw = list(run_longmemeval_warmup_point.starmap(
-        ((i, extractor_model, warmup_concurrency) for i in sampled_indices)
+        ((i, extractor_model, warmup_concurrency, batch_size) for i in sampled_indices)
     ))
 
     warmed = []
@@ -2928,6 +2947,7 @@ def main(
     stratified_sample: int = 0,   # NEW: --stratified-sample N for LongMemEval-S subset
     stratify_seed: int = 2026,   # NEW: --stratify-seed N for determinism across runs
     warmup_concurrency: int = 10,   # NEW: --warmup-concurrency K (Fireworks-safe default)
+    batch_size: int = 0,   # NEW: --batch-size N override for warmup-longmemeval (0 = spec default)
 ):
     """Dispatch entrypoint for Modal bench functions.
 
@@ -3062,6 +3082,7 @@ def main(
             stratified_sample=stratified_sample,
             stratify_seed=stratify_seed,
             warmup_concurrency=warmup_concurrency,
+            batch_size=batch_size,
         )
         print(json.dumps(result, indent=2))
     else:

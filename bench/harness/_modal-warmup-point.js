@@ -58,10 +58,11 @@ import { fileURLToPath } from 'node:url';
 import { getAdapter } from '../corpora/index.js';
 import { EXTRACT_MAX_TOKENS } from '../../src/consolidation/extractFacts.js';
 import { enumerateWarmupBatches } from './warmup/enumerate.js';
-import { CONSOLIDATION } from '../../src/core/constants.js';
+import { CONSOLIDATION, setConstantOverrides } from '../../src/core/constants.js';
 import { wrapWithCache } from './extractionCache.js';
 import { makeLLMExtractor } from './llmExtractor.js';
 import { concurrencyLimit } from './concurrencyLimit.js';
+import { applyBatchSizeOverride } from './warmup/applyBatchSizeOverride.js';
 
 const corpusName = process.env.STARMEM_BENCH_CORPUS;
 const itemIdx = Number(process.env.STARMEM_WARMUP_ITEM_IDX);
@@ -111,6 +112,20 @@ const item = items[itemIdx];
 // Exact predicate match with bench/harness/seeder.js:223–225. If this
 // drifts, cache keys drift and the warmup is wasted — so don't let it.
 const nonEmpty = item.turns.filter(t => t.text && t.text.trim().length > 0);
+
+// BATCH_SIZE override — when STARMEM_BATCH_SIZE is set, apply via
+// setConstantOverrides BEFORE reading CONSOLIDATION.BATCH_SIZE below.
+// This is the cache-key-alignment hook for Phase 12 Task 6.5: the
+// vllm_warmup pre-warming pass enumerated batches at BS=15, and the
+// existing live read path keys cache lookups on the (model, messages,
+// maxTokens) triple — so this re-extraction warmup MUST run at BS=15
+// too. Without this hook, `misses` jumps from 0 to ~100% (caught
+// 2026-04-25 on the first regression-check attempt).
+//
+// Validation lives in the pure helper so the failure modes (invalid
+// envvar shape, off-by-one zero, fractional) are unit-tested without
+// dragging in this entry script's top-level await.
+applyBatchSizeOverride(process.env.STARMEM_BATCH_SIZE, setConstantOverrides);
 
 // BATCH_SIZE read at call time (not destructured at module top) so a
 // runtime setConstantOverrides() sweep is observed. See phase-9-4-9
