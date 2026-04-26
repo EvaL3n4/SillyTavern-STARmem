@@ -190,6 +190,16 @@ export function validateExtractionShape(parsed) {
                     // Reserved per spec §4. Drop silently rather than fail.
                     continue;
                 }
+                // Reject relation targets that would collide with Object.prototype
+                // when later looked up as state.entries[target]. Finding #14
+                // (Codex 2026-04-24). Under the per-entry soft-fail wrapper this
+                // throw is caught and recorded as a skip — the malformed entry
+                // is dropped, the rest of the batch survives.
+                if (r.target === '__proto__' || r.target === 'constructor' || r.target === 'prototype') {
+                    throw new Error(
+                        `entries[${i}].relations[${j}].target uses reserved key '${r.target}'`,
+                    );
+                }
                 rels.push({ type: r.type, target: r.target });
             }
             specs.push({ content: e.content, subject, tags: [...tagsRaw], relations: rels });

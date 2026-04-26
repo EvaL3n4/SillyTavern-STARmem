@@ -31,7 +31,7 @@ export async function renderTab(parent, ctx) {
 
     const header = document.createElement('div');
     header.className = `${CSS_PREFIX}-viewer-persona-header`;
-    const subjectCount = Object.keys(groups).length;
+    const subjectCount = groups.size;
     header.textContent = `Persona — ${persona.length} entries across ${subjectCount} subject${subjectCount === 1 ? '' : 's'}`;
     root.appendChild(header);
 
@@ -48,20 +48,22 @@ export async function renderTab(parent, ctx) {
         return;
     }
 
-    for (const [subject, entries] of Object.entries(groups)) {
+    for (const [subject, entries] of groups) {
         root.appendChild(buildSubjectGroup(subject, entries, ctx.chatId, settings, () => renderTab(parent, ctx)));
     }
     parent.appendChild(root);
 }
 
 function groupBySubject(entries, subjectFilter) {
-    const groups = {};
+    // Use a Map so subject strings like "__proto__" don't collide with
+    // Object.prototype (finding #1).
+    const groups = new Map();
     const q = subjectFilter.toLowerCase();
     for (const e of entries) {
         const subj = e.subject ?? '(no subject)';
         if (q && !subj.toLowerCase().includes(q)) continue;
-        if (!groups[subj]) groups[subj] = [];
-        groups[subj].push(e);
+        if (!groups.has(subj)) groups.set(subj, []);
+        groups.get(subj).push(e);
     }
     return groups;
 }

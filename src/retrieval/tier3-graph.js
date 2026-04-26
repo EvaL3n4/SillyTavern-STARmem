@@ -62,6 +62,10 @@ export function tier3(state, seeds, queryStr, intent, ctx) {
         for (const item of frontier) {
             for (const edge of neighborsOf(adjacency, item.entry.id)) {
                 if (discovered.has(edge.to)) continue;
+                // Use Object.hasOwn so reserved keys ('__proto__', 'constructor')
+                // can't resolve to inherited prototype properties — defensive
+                // against stored edges predating the extractFacts guard.
+                if (!Object.hasOwn(state.entries, edge.to)) continue;
                 const neighbor = state.entries[edge.to];
                 if (!neighbor) continue;
                 if (neighbor.scope === 'working') continue;
