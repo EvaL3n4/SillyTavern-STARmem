@@ -69,6 +69,12 @@ export function wrapWithCache(inner, opts) {
         return inner;
     }
 
+    // [diag-task-7-cache-miss] Log first cache miss with full key inputs,
+    // then list a sample of files in `dir` so we can compare against the
+    // expected key. Localizes drift between warmup-write and sweep-read.
+    // Remove once Phase 12 Task 7 is resolved.
+    let _diagLogged = false;
+
     return async function cachedExtractor(profileId, messages, maxTokens) {
         const key = _cacheKey(model, messages, maxTokens);
         const file = path.join(dir, `${key}.json`);
@@ -85,6 +91,47 @@ export function wrapWithCache(inner, opts) {
         }
 
         if (stats) stats.misses = (stats.misses ?? 0) + 1;
+
+        // [diag-task-7-cache-miss] First-miss dump.
+        if (!_diagLogged) {
+            _diagLogged = true;
+            const messagesJson = JSON.stringify(messages);
+            const messagesHash = createHash('sha256').update(messagesJson).digest('hex').slice(0, 16);
+            // eslint-disable-next-line no-console
+            console.error(
+                `[diag] cache MISS dir=${dir} ` +
+                `model=${JSON.stringify(model)} (len=${model.length}) ` +
+                `maxTokens=${maxTokens} ` +
+                `messagesLen=${messagesJson.length} messagesHash16=${messagesHash} ` +
+                `expectedKey=${key.slice(0, 16)}... ` +
+                `expectedFile=${file}`,
+            );
+            try {
+                const { readdir, stat } = await import('node:fs/promises');
+                const files = await readdir(dir);
+                const sample = files.slice(0, 3);
+                // eslint-disable-next-line no-console
+                console.error(`[diag] cache dir contains ${files.length} files; sample: ${sample.join(', ')}`);
+                if (sample.length > 0) {
+                    const sampleFile = path.join(dir, sample[0]);
+                    const sampleRaw = await readFile(sampleFile, 'utf8');
+                    const sampleParsed = JSON.parse(sampleRaw);
+                    // eslint-disable-next-line no-console
+                    console.error(
+                        `[diag] sample cached entry ${sample[0].slice(0, 16)}: ` +
+                        `model=${JSON.stringify(sampleParsed.model)} ` +
+                        `maxTokens=${sampleParsed.maxTokens} ` +
+                        `at=${sampleParsed.at}`,
+                    );
+                }
+                const fileExists = await stat(file).then(() => true, () => false);
+                // eslint-disable-next-line no-console
+                console.error(`[diag] expectedFile exists=${fileExists}`);
+            } catch (err) {
+                // eslint-disable-next-line no-console
+                console.error(`[diag] cache dir probe failed: ${err.message}`);
+            }
+        }
 
         const response = await inner(profileId, messages, maxTokens);
 

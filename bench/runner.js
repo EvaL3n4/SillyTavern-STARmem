@@ -96,6 +96,19 @@ export async function runHarness({
 }) {
     const restore = overrides ? setConstantOverrides(overrides) : () => {};
 
+    // [diag-task-7-cache-miss] Confirm setConstantOverrides actually
+    // mutated CONSOLIDATION.BATCH_SIZE (the cache-key-bearing knob).
+    // If this prints 5 instead of 15 when overrides=={BATCH_SIZE:15},
+    // the override path is broken; if it prints 15 but cache still
+    // misses, the divergence is downstream (prompt rendering, model
+    // string, maxTokens). Remove once Phase 12 Task 7 is resolved.
+    if (process.env.STARMEM_BENCH_DIAG === '1' || overrides) {
+        console.error(`[diag] runHarness post-override: ` +
+            `BATCH_SIZE=${CONSOLIDATION.BATCH_SIZE} ` +
+            `TIER2_TAU_GAP=${RETRIEVAL.TIER2_TAU_GAP} ` +
+            `overrides=${JSON.stringify(overrides ?? {})}`);
+    }
+
     // Wrap the retriever once up-front. When Weave has been initialized
     // by the entry point (e.g. bench/baselines/_modal-point.js calling
     // initWeave('STARmem')), each call becomes a replayable W&B trace.
