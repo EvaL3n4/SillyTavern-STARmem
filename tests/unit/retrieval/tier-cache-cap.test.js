@@ -13,8 +13,12 @@ import {
 
 afterEach(() => resetConstantOverrides());
 
+/**
+ * @param {string} id
+ * @returns {import('../../../src/core/schema.js').Entry}
+ */
 function makeEntry(id) {
-    return {
+    return /** @type {any} */ ({
         id, scope: 'episodic', content: `content-${id}`, subject: null,
         tags: [], relations: [],
         lifecycle: {
@@ -23,7 +27,7 @@ function makeEntry(id) {
             accessCount: 0, updateCount: 0,
         },
         provenance: { sourceMessages: [], extractor: 't' },
-    };
+    });
 }
 
 describe('tier 0 exact-cache eviction', () => {

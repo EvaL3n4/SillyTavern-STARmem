@@ -33,7 +33,7 @@ describe('malformed metadata defense', () => {
 
     test('finding #5: floor() skips entries with malformed lifecycle', async () => {
         const { floor } = await import('../../../src/retrieval/floor.js');
-        const state = {
+        const state = /** @type {any} */ ({
             entries: {
                 'ok': {
                     id: 'ok', scope: 'episodic', content: 'x', subject: null,
@@ -48,7 +48,7 @@ describe('malformed metadata defense', () => {
                 },
                 'bad': { id: 'bad', scope: 'episodic', content: 'y' /* lifecycle missing */ },
             },
-        };
+        });
         expect(() => floor(state, { now: new Date(), k: 5 })).not.toThrow();
         const results = floor(state, { now: new Date(), k: 5 });
         expect(results.map(r => r.entry.id)).toEqual(['ok']);
@@ -56,11 +56,11 @@ describe('malformed metadata defense', () => {
 
     test('finding #13: consolidate clears stale consolidating flag on happy-path skip', async () => {
         const { consolidate } = await import('../../../src/consolidation/consolidate.js');
-        const { loadState, persistState, setBackend, _resetBackendForTests } =
+        const { setBackend, _resetBackendForTests } =
             await import('../../../src/core/state.js');
         const { createEmptyState } = await import('../../../src/core/schema.js');
 
-        let stored = { ...createEmptyState() };
+        let stored = /** @type {any} */ ({ ...createEmptyState() });
         stored.runtime.consolidating = true; // simulate stuck flag
         setBackend({
             read: () => structuredClone(stored),
@@ -90,7 +90,8 @@ describe('malformed metadata defense', () => {
         const { createEntry } = await import('../../../src/memory/entry.js');
         expect(() => createEntry({
             scope: 'episodic', content: 'x', subject: null,
-            tags: ['ok', 42], // non-string element
+            // @ts-expect-error — deliberately non-string element to exercise the guard.
+            tags: ['ok', 42],
             relations: [],
             provenance: { sourceMessages: [0], extractor: 't' },
             now: new Date(),
@@ -101,6 +102,7 @@ describe('malformed metadata defense', () => {
         const { createEntry } = await import('../../../src/memory/entry.js');
         expect(() => createEntry({
             scope: 'episodic', content: 'x', subject: null, tags: [],
+            // @ts-expect-error — deliberately invalid edge type.
             relations: [{ type: 'bogus_type', target: 'ep_1' }],
             provenance: { sourceMessages: [0], extractor: 't' },
             now: new Date(),
@@ -118,6 +120,7 @@ describe('malformed metadata defense', () => {
         expect(() => createEntry({
             scope: 'episodic', content: 'x', subject: null, tags: [],
             relations: [],
+            // @ts-expect-error — deliberately mixed-type sourceMessages.
             provenance: { sourceMessages: [0, '1', 2.5], extractor: 't' },
             now: new Date(),
         })).toThrow(/sourceMessages/i);
