@@ -428,6 +428,9 @@ type MetricsResult = {
 - [ ] Retro in `docs/plans/phase-12-retro.md` + ROADMAP Phase Retro Log entry
 - [ ] All jest + pytest green at phase close
 
+**Mid-phase landings:**
+- **Task 6.5** (2026-04-25 / 2026-04-26): Modal vLLM warmup substrate swap. Fireworks Batch dead-ended; `Qwen/Qwen3.6-35B-A3B-FP8` on single H100 produced byte-compat cache (16,677 batches, ~$4.50, 54.7 min wall-clock; cumulative ~$6 across smokes + tuning). Regression check passed `misses=0` after a `--batch-size` override was plumbed through the live-extraction read path (commit `51a677e`) to align with the BS=15 warmup-write cache key. Retro: `docs/plans/phase-12-task-6-5-retro.md`. **Phase 12 Task 7 (λ₁ tripwire on LongMemEval-S) now unblocked.**
+
 _(Phase 10 UI/UX and Phase 11 Infrastructure Hardening are tracked in §6 Phase Retro Log only; §3 skipped them per prior-session convention when they diverged from the original 0-9 baseline.)_
 
 ---
