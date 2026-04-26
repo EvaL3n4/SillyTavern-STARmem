@@ -404,11 +404,20 @@ def run_point(overrides_json: str, corpus: str = "locomo", extractor_model: str 
     image=image,
     volumes={"/data": volume},
     secrets=[env_secret],
-    timeout=1200,   # Phase 13: per-chunk worst-case ~83 items × ~3.6s/item
-                    # = ~300s wall + 4× headroom. Comfortably under the
-                    # old run_point 3000s; chunked dispatch makes timeouts
-                    # a non-issue. Tune downward if Phase 14 sweeps show
-                    # stable per-chunk wall < 200s on this corpus.
+    timeout=3000,   # Phase 13 initial sizing was 1200s based on "~83 items
+                    # × ~3.6s/item = ~300s wall + 4× headroom". That priced
+                    # the *average* item: ignored (a) the late-chunk
+                    # slowdown observed live in the 2026-04-26 run, and
+                    # (b) batches in the ~25K-token range whose extraction
+                    # has real wall-cost even on cache hits. First chunk at
+                    # 1200s SIGKILLed on 2026-04-26.
+                    #
+                    # 3000s matches what run_point used pre-fan-out. Per-
+                    # chunk that's ~36s/item across 83 items, well above
+                    # observed worst case. Parent timeout=10800s, so even
+                    # all 30 chunks hitting close to 3000s in parallel
+                    # doesn't bind. Tune downward only after a clean sweep
+                    # surfaces stable per-chunk wall-clock distribution.
     memory=4096,
 )
 def run_point_chunk(
