@@ -797,21 +797,33 @@ Expected: ~5 min wall-clock, <$0.20. MRR / coverage within ±0.005 of LoCoMo's r
 
 **Step 7: Amend the constant per the four-surface skill**
 
-Surface 1: `src/core/constants.js`
+Surface 1: `src/core/constants.js` — the constant lives in the `CONSOLIDATION` block as of Task 5.5 (commit `068f3be`), NOT as a top-level export. T5.5 already wrote a forward-looking docstring referencing this Task 6 sweep; update the docstring to reflect the landed amendment and bump the literal:
+
 ```js
-// Before:
-export const EXTRACT_MAX_TOKENS = 2048;
+// Before (state after T5.5, src/core/constants.js around L120-130 inside the CONSOLIDATION block):
+    /**
+     * Max output tokens for fact extraction. The 2048 ceiling proved a
+     * correctness floor (not just an efficiency knob) — vLLM warmup wrote
+     * truncated responses to the on-disk cache (ceiling hit on dense
+     * LongMemEval-S batches), which then fail to parse on cache replay
+     * during sweeps. Phase 14 Task 6 will sweep {2048, 4096, 6144} to
+     * determine the correct ceiling.
+     */
+    EXTRACT_MAX_TOKENS: 2048,
 
 // After:
-/**
- * Max output tokens for fact extraction. Phase 14 Task 6 amended
- * 2048 → 4096 (correctness fix). The 2048 ceiling was hit on dense
- * LongMemEval-S batches at BATCH_SIZE=15, producing truncated
- * responses that failed cache-replay parsing (ExtractionParseError).
- * Sweep `docs/bench/sweeps/2026-04-26-longmemeval-extract-max-tokens-live.md`.
- */
-export const EXTRACT_MAX_TOKENS = 4096;
+    /**
+     * Max output tokens for fact extraction. Phase 14 Task 6 amended
+     * 2048 → 4096 (correctness fix, not efficiency). The 2048 ceiling
+     * was hit on dense LongMemEval-S batches at BATCH_SIZE=15, producing
+     * truncated responses that failed cache-replay parsing
+     * (ExtractionParseError). Sweep:
+     * docs/bench/sweeps/2026-04-26-longmemeval-extract-max-tokens-live.md.
+     */
+    EXTRACT_MAX_TOKENS: 4096,
 ```
+
+**Do NOT re-introduce a top-level `export const EXTRACT_MAX_TOKENS`** — T5.5 deliberately removed it so `setConstantOverrides()` can reach the value at runtime. Reader sites already read through `CONSOLIDATION.EXTRACT_MAX_TOKENS`.
 
 Surface 2: `docs/specs/2026-04-20-starmem-v2-design.md` — append a tuning amendment callout under the consolidation/extraction section. Don't rewrite the original; blockquote the amendment.
 
