@@ -1,6 +1,7 @@
 import { enumerateWarmupBatches } from '../../../../bench/harness/warmup/enumerate.js';
 import { _cacheKey } from '../../../../bench/harness/extractionCache.js';
-import { renderExtractionPrompt, EXTRACT_MAX_TOKENS } from '../../../../src/consolidation/extractFacts.js';
+import { renderExtractionPrompt } from '../../../../src/consolidation/extractFacts.js';
+import { CONSOLIDATION } from '../../../../src/core/constants.js';
 
 describe('enumerateWarmupBatches', () => {
     const MODEL = 'accounts/fireworks/models/llama-v3p3-70b-instruct';
@@ -20,7 +21,7 @@ describe('enumerateWarmupBatches', () => {
         const items = [mkItem('x', Array.from({ length: 12 }, (_, i) => `turn-${i}`))];
         const batches = enumerateWarmupBatches(items, {
             model: MODEL,
-            extractMaxTokens: EXTRACT_MAX_TOKENS,
+            extractMaxTokens: CONSOLIDATION.EXTRACT_MAX_TOKENS,
             batchSize: 5,
         });
         expect(batches).toHaveLength(3); // ceil(12/5)
@@ -30,7 +31,7 @@ describe('enumerateWarmupBatches', () => {
         const items = [mkItem('e', ['hello', '', '   ', 'world'])];
         const batches = enumerateWarmupBatches(items, {
             model: MODEL,
-            extractMaxTokens: EXTRACT_MAX_TOKENS,
+            extractMaxTokens: CONSOLIDATION.EXTRACT_MAX_TOKENS,
             batchSize: 5,
         });
         expect(batches).toHaveLength(1);
@@ -42,7 +43,7 @@ describe('enumerateWarmupBatches', () => {
         const items = [mkItem('y', ['foo', 'bar', 'baz'])];
         const [batch] = enumerateWarmupBatches(items, {
             model: MODEL,
-            extractMaxTokens: EXTRACT_MAX_TOKENS,
+            extractMaxTokens: CONSOLIDATION.EXTRACT_MAX_TOKENS,
             batchSize: 5,
         });
         const expected = _cacheKey(MODEL, batch.messages, batch.maxTokens);
@@ -53,7 +54,7 @@ describe('enumerateWarmupBatches', () => {
         const items = [mkItem('z', ['alpha', 'beta'])];
         const [batch] = enumerateWarmupBatches(items, {
             model: MODEL,
-            extractMaxTokens: EXTRACT_MAX_TOKENS,
+            extractMaxTokens: CONSOLIDATION.EXTRACT_MAX_TOKENS,
             batchSize: 5,
         });
         const expected = renderExtractionPrompt([
@@ -63,20 +64,20 @@ describe('enumerateWarmupBatches', () => {
         expect(batch.messages).toEqual(expected);
     });
 
-    test('maxTokens is EXTRACT_MAX_TOKENS by default', () => {
+    test('maxTokens is CONSOLIDATION.EXTRACT_MAX_TOKENS by default', () => {
         const items = [mkItem('m', ['a', 'b'])];
         const [batch] = enumerateWarmupBatches(items, {
             model: MODEL,
-            extractMaxTokens: EXTRACT_MAX_TOKENS,
+            extractMaxTokens: CONSOLIDATION.EXTRACT_MAX_TOKENS,
             batchSize: 5,
         });
-        expect(batch.maxTokens).toBe(EXTRACT_MAX_TOKENS);
+        expect(batch.maxTokens).toBe(CONSOLIDATION.EXTRACT_MAX_TOKENS);
     });
 
     test('empty items array produces no batches', () => {
         expect(enumerateWarmupBatches([], {
             model: MODEL,
-            extractMaxTokens: EXTRACT_MAX_TOKENS,
+            extractMaxTokens: CONSOLIDATION.EXTRACT_MAX_TOKENS,
             batchSize: 5,
         })).toEqual([]);
     });
@@ -88,7 +89,7 @@ describe('enumerateWarmupBatches', () => {
         ];
         const batches = enumerateWarmupBatches(items, {
             model: MODEL,
-            extractMaxTokens: EXTRACT_MAX_TOKENS,
+            extractMaxTokens: CONSOLIDATION.EXTRACT_MAX_TOKENS,
             batchSize: 5,
         });
         const ids = new Set(batches.map(b => b.customId));
@@ -99,7 +100,7 @@ describe('enumerateWarmupBatches', () => {
         const items = [mkItem('m', ['foo', 'bar'])];
         const batches = enumerateWarmupBatches(items, {
             model: MODEL,
-            extractMaxTokens: EXTRACT_MAX_TOKENS,
+            extractMaxTokens: CONSOLIDATION.EXTRACT_MAX_TOKENS,
             batchSize: 5,
         });
         expect(batches.every(b => b.model === MODEL)).toBe(true);
@@ -109,7 +110,7 @@ describe('enumerateWarmupBatches', () => {
         const items = [mkItem('e', ['', '   ', '\t\n'])];
         const batches = enumerateWarmupBatches(items, {
             model: MODEL,
-            extractMaxTokens: EXTRACT_MAX_TOKENS,
+            extractMaxTokens: CONSOLIDATION.EXTRACT_MAX_TOKENS,
             batchSize: 5,
         });
         expect(batches).toEqual([]);
@@ -119,7 +120,7 @@ describe('enumerateWarmupBatches', () => {
         const items = [mkItem('b', ['a', 'b', 'c'])];
         const batches = enumerateWarmupBatches(items, {
             model: MODEL,
-            extractMaxTokens: EXTRACT_MAX_TOKENS,
+            extractMaxTokens: CONSOLIDATION.EXTRACT_MAX_TOKENS,
             batchSize: 1,
         });
         expect(batches).toHaveLength(3);

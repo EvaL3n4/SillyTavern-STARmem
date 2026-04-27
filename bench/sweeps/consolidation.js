@@ -246,8 +246,8 @@ ${factLengthsTable}
 
 Rule-based mock produces facts averaging ${fl.p50} chars; at ~4 chars/token
 this implies median ~${Math.round(fl.p50 / 4)} tokens. Real-LLM extraction (sub-phase 9.5)
-may differ. EXTRACT_MAX_TOKENS is defined in extractFacts.js (value redacted
-in display output); if p95 < 0.5×cap, room to reduce; if p95 ≈ cap, consider raising.
+may differ. EXTRACT_MAX_TOKENS is defined in the CONSOLIDATION group of
+src/core/constants.js (value redacted in display output); if p95 < 0.5×cap, room to reduce; if p95 ≈ cap, consider raising.
 
 ## envSnapshot
 

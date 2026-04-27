@@ -118,6 +118,16 @@ export const CONSOLIDATION = {
     PERSONA_REBUILD_SUGGESTION_THRESHOLD: 100,
     /** Dedup Jaccard threshold for same-subject merge. Spec §6.3; opening value, Phase 9 tunes. */
     DEDUP_JACCARD_THRESHOLD: 0.7,
+    /**
+     * LLM max tokens for fact extraction. Spec §6.1.
+     *
+     * Phase 12 Task 7: surfaced when the Modal vLLM warmup wrote truncated
+     * responses to the on-disk cache (ceiling hit on dense LongMemEval-S
+     * batches), which then fail to parse on cache replay during sweeps.
+     * Phase 14 Task 6 will sweep {2048, 4096, 6144} to determine the
+     * correct ceiling.
+     */
+    EXTRACT_MAX_TOKENS: 2048,
 };
 
 /** Persona rebuild (Enhanced RAPTOR) parameters. Spec §6.4 / wiki/raptor.md. */
@@ -206,6 +216,7 @@ export const _SWEPT_CONSOLIDATION_KEYS = Object.freeze([
     // the warmup cached 15-turn chunks, producing 100% cache miss.
     // Phase 12 Task 7 cache-key alignment: see retro phase-12-task-6-5.
     'WORKING_BUFFER_THRESHOLD',
+    'EXTRACT_MAX_TOKENS',
 ]);
 
 /**

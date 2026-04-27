@@ -19,7 +19,6 @@ import { enumerateWarmupBatches } from './warmup/enumerate.js';
 import { createDataset, uploadJsonl, createJob, getJob, downloadResults } from './warmup/fireworks-batch.js';
 import { ingestResults } from './warmup/cache-ingest.js';
 import { getAdapter } from '../corpora/index.js';
-import { EXTRACT_MAX_TOKENS } from '../../src/consolidation/extractFacts.js';
 import { CONSOLIDATION } from '../../src/core/constants.js';
 
 /**
@@ -288,7 +287,7 @@ export async function runEnumerate(args) {
 
         const corpusBatches = enumerateWarmupBatches(items, {
             model,
-            extractMaxTokens: EXTRACT_MAX_TOKENS,
+            extractMaxTokens: CONSOLIDATION.EXTRACT_MAX_TOKENS,
             batchSize: effectiveBatchSize,
         });
         // eslint-disable-next-line no-console
@@ -333,7 +332,7 @@ async function runSubmit(auth, parsed) {
     // 3. Enumerate batches
     const batches = enumerateWarmupBatches(allItems, {
         model: parsed.model,
-        extractMaxTokens: EXTRACT_MAX_TOKENS,
+        extractMaxTokens: CONSOLIDATION.EXTRACT_MAX_TOKENS,
         batchSize: CONSOLIDATION.BATCH_SIZE,
     });
 
@@ -366,7 +365,7 @@ async function runSubmit(auth, parsed) {
         submissionId,
         model: parsed.model,
         corpora: parsed.corpora,
-        maxTokens: EXTRACT_MAX_TOKENS,
+        maxTokens: CONSOLIDATION.EXTRACT_MAX_TOKENS,
         batchSize: CONSOLIDATION.BATCH_SIZE,
         createdAt: new Date().toISOString(),
         state: 'enumerated',

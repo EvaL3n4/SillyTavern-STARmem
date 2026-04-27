@@ -18,8 +18,8 @@
  *
  * Correctness contract — how this stays in sync with production:
  *
- *   1. `renderExtractionPrompt` + `EXTRACT_MAX_TOKENS` are imported from
- *      the real `src/consolidation/extractFacts.js`. If anyone edits the
+ *   1. `renderExtractionPrompt` + `CONSOLIDATION.EXTRACT_MAX_TOKENS` are
+ *      imported from the real `src/core/constants.js`. If anyone edits the
  *      system prompt, the transcript format, or the token budget, the
  *      warmup follows automatically. Worst-case drift means stale cache
  *      entries miss cleanly — slow, not wrong.
@@ -56,7 +56,6 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { getAdapter } from '../corpora/index.js';
-import { EXTRACT_MAX_TOKENS } from '../../src/consolidation/extractFacts.js';
 import { enumerateWarmupBatches } from './warmup/enumerate.js';
 import { CONSOLIDATION, setConstantOverrides } from '../../src/core/constants.js';
 import { wrapWithCache } from './extractionCache.js';
@@ -136,7 +135,7 @@ const model = process.env.STARMEM_BENCH_LLM_MODEL;
 
 const batches = enumerateWarmupBatches([item], {
     model,
-    extractMaxTokens: EXTRACT_MAX_TOKENS,
+    extractMaxTokens: CONSOLIDATION.EXTRACT_MAX_TOKENS,
     batchSize: BATCH_SIZE,
 });
 

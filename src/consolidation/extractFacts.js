@@ -21,8 +21,7 @@
 import { callLLM } from './llmClient.js';
 import { createEntry } from '../memory/entry.js';
 import { ALL_EDGE_TYPES } from '../core/schema.js';
-
-export const EXTRACT_MAX_TOKENS = 2048;
+import { CONSOLIDATION } from '../core/constants.js';
 
 const SYSTEM_PROMPT = `You extract durable facts from a transcript of chat messages.
 
@@ -71,7 +70,7 @@ Rules:
  * buffer over-threshold and re-fire on the next turn.
  *
  * Phase 12 Task 7: surfaced when the Modal vLLM warmup wrote
- * truncated responses to the on-disk cache (EXTRACT_MAX_TOKENS=2048
+ * truncated responses to the on-disk cache (CONSOLIDATION.EXTRACT_MAX_TOKENS
  * ceiling hit on dense LongMemEval-S batches), which then fail to parse
  * on cache replay during sweeps.
  */
@@ -257,7 +256,7 @@ export async function extractFacts(batch, context) {
     }
 
     const messages = renderExtractionPrompt(batch);
-    const raw = await callLLM(profileId, messages, EXTRACT_MAX_TOKENS);
+    const raw = await callLLM(profileId, messages, CONSOLIDATION.EXTRACT_MAX_TOKENS);
     const parsed = parseLLMJson(raw);
     const { specs, skipped } = validateExtractionShape(parsed);
 
