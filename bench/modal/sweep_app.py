@@ -1873,6 +1873,7 @@ _SWEEP_BASE_OVERRIDES = {
     # keyed on 15-turn chunks → 100% cache miss → live fallback → 400.
     # Phase 12 Task 7 cache-key alignment fix; see Task 6.5 retro.
     "lambda1_tripwire": {"BATCH_SIZE": 15, "WORKING_BUFFER_THRESHOLD": 15},
+    "extract_max_tokens": {"BATCH_SIZE": 15, "WORKING_BUFFER_THRESHOLD": 15},
 }
 
 
@@ -1920,6 +1921,18 @@ SWEEP_CONFIGS = {
         #     (Phase 12 Task 6.5: warmed at BS=15, must be read at BS=15).
         "knobs": [
             {"name": "TIER3_LAMBDA_1", "values": [0.5, 0.75, 1.0, 1.25, 1.5]},
+        ],
+        "primary_metric": "mrr",
+        "renderer": render_single_axis_report,
+    },
+    "extract_max_tokens": {
+        # Phase 14 Task 6: EXTRACT_MAX_TOKENS sweep on LoCoMo.
+        # Spec default = 2048; grid brackets it with 4096 and 6144.
+        # Base overrides (inlined per-point via _SWEEP_BASE_OVERRIDES):
+        #   - BATCH_SIZE=15 + WORKING_BUFFER_THRESHOLD=15 — cache-key alignment
+        #     with T5's warmup (51,230 extractions pre-warmed on Modal volume).
+        "knobs": [
+            {"name": "EXTRACT_MAX_TOKENS", "values": [2048, 4096, 6144]},
         ],
         "primary_metric": "mrr",
         "renderer": render_single_axis_report,
