@@ -3290,7 +3290,7 @@ def run_sweep(sweep_name: str, synthetic: bool = False, corpus: str = "locomo", 
 def main(
     mode: str = "hello",
     overrides_json: str = "{}",
-    sweep_name: str = "tau",
+    sweep_name: str = "",
     synthetic: bool = False,
     local_out: str = "",
     corpus: str = "locomo",
@@ -3324,10 +3324,10 @@ def main(
         modal run bench/modal/sweep_app.py --mode run-sweep --sweep-name batchsize
             → 25-cell (5 BATCH_SIZE × 5 convs) split sweep, ~3min parallel
 
-        modal run bench/modal/sweep_app.py --mode run-sweep --sweep-name tau --synthetic
+        modal run bench/modal/sweep_app.py --mode run-sweep --sweep-name lambda1_tripwire --synthetic
             → runs run_sweep() with synthetic corpus (2 points)
 
-        modal run bench/modal/sweep_app.py --mode run-sweep --sweep-name tau \\
+        modal run bench/modal/sweep_app.py --mode run-sweep --sweep-name extract_max_tokens \\
                 --local-out docs/bench/runs
             → also mirrors report.md + result.json to the host dir
               (independent of the Modal Volume copy at /data/runs/<ts>-<sweep>/)
@@ -3426,6 +3426,12 @@ def main(
             (out / f"{stem}.json").write_text(result_json_str)
             print(f"<!-- mirrored to host: {out / stem}.{{md,json}} -->", file=__import__("sys").stderr)
     elif mode == "run-sweep":
+        if not sweep_name:
+            raise ValueError(
+                "--sweep-name is required for run-sweep mode. "
+                "Valid names: bm25, hops, relw, lambda1_tripwire, "
+                "extract_max_tokens, batchsize, graph, consolidation."
+            )
         sweep_out = run_sweep.remote(
             sweep_name,
             synthetic,
