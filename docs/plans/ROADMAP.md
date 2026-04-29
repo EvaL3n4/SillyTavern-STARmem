@@ -496,6 +496,47 @@ These are v2.1+ considerations. Do not implement them in any phase.
 
 _Appended after each phase ships. Format: `## Phase N—<date>`, with notes on surprises, scope changes, and lessons for subsequent phases._
 
+## Phase 14—2026-04-29
+
+**What shipped:** v2.0 closure. One correctness amendment backed by sweep evidence (`EXTRACT_MAX_TOKENS` 2048 → 4096 on LongMemEval-S, n_scored +6 / coverage +1.27pp / MRR +0.0090; LoCoMo regression smoke clean), Tier 2 dead-code follow-through (constants `TIER2_TAU_*`, `tau.js` sweep config, `render_tau_report`, base overrides for `hops`/`relw`, `'tau'` sweep_name default — all gone), `chunkWalls: List[int]` cell-record schema addition + `_build_cell_record` helper extraction, `graph.js renderReport` positional-signature cleanup (Phase 11 retro debt), `EXTRACT_MAX_TOKENS` runtime-override unlock (Task 5.5 mid-phase insert via `unlock-knob-for-runtime-sweep`), and a skill extension to `persist-serverless-compute-results` capturing the `chunkWalls` audit pattern + variance-origin test + outlier-shape sizing rule. Task 7 analysis closes Phase 12 retro §6 candidates 3+4: cell-wall variance is **dispatch-level** (cross-cell Pearson + Spearman on chunk-index-aligned walls scattered noise; slow chunks migrate between cells), and there is **no late-chunk slowdown** (`spearman(idx, wall)` per cell: −0.217, −0.238, +0.210). Eva's live observation was recency bias on cold-container outliers, not a structural effect. `baseline.json::tuned.EXTRACT_MAX_TOKENS.verdict` is `"AMENDED"`.
+
+**Test totals:** 97 suites / 973 tests (jest, **−6** from Phase 14 entry baseline of 97/979 reflecting Tier 2 demolition's structurally-honest test removal); 58 tests (pytest bench/modal, +1 from 57: `test_cell_record_includes_chunkWalls` pins the schema invariant). Phase 13 → Phase 14 entry +34 jest came from the security-findings batch merge (`8683515`), not Phase 14 proper. All green, zero regressions.
+
+**Commits this phase:** ~13 total. Plan (`83750e5`) → Tasks 1–3 mechanical landings (`139a7b3`, `f0f5300`, `97a213a`) → Task 5 hotfix + Task 5.5 unlock (`e281c5d`, `ba0cc09`, `068f3be`) → Task 6 wire/track/amend (`97f3585`, `19837ab`, `89ee9a9`) → tau-default cleanup (`f1e4aa8`) → Task 7 analysis + Task 4 skill extension + retro (`015a457` and this commit). Phase 14 range: `83750e5..HEAD`.
+
+**Execution mode:** Hybrid. Subagents owned mechanical landings (Tasks 1, 2, 3 — schema addition, dead-code removal, signature cleanup). Eva owned Modal warmup + sweep dispatch (Task 5 + Task 6 dispatch). Controller owned plan, mid-phase splits (Task 5 hotfix, Task 5.5 unlock), Task 6 wiring + amendment + baseline refresh, Task 7 analysis + write-up, Task 4 skill extension, retro. The pipeline that Phases 11–13 built (`benchmark-driven-constant-amendment`, `unlock-knob-for-runtime-sweep`, coverage-aware `_should_amend` gate, item-fan-out infra, `chunkWalls` schema) carried this phase end-to-end with no friction — no architectural pivots, no substrate swaps, no dead-end paths.
+
+**Decisions held (1–9, 10 revised in execution) / mid-phase inserts:** All 10 plan-header decisions held in substance. Task 5 hotfix (`e281c5d`) corrected the plan's two-phase warmup `sed` shape to match `vllm_warmup.py`'s actual structure — no functional change. Task 5.5 (`068f3be`, `ba0cc09`) added the `EXTRACT_MAX_TOKENS` runtime-override unlock that the plan didn't initially include — caught preflight via the `unlock-knob-for-runtime-sweep` skill checklist before Task 6 dispatch could waste compute against the unchanged baseline value. Decision 10 (plan size ~800 lines) revised in execution to ~1000 after the 5/5.5 split; still well within phase 13's 1640 footprint.
+
+**Surprises:**
+
+1. **Mechanical elbow detector flagged correctly, verdicted wrong.** `_detect_elbow` reported "axis flat (maxΔ/Δknob = 0.000004 ≤ 0.005); held at spec" — mathematically correct under the threshold rule but operationally wrong because EXTRACT_MAX_TOKENS is a *correctness knob*, not an efficiency knob. The signal that mattered was coverage (+1.27pp at 4096) and `n_scored` recovery (+6 items previously truncated). The plan flagged the calibration override in advance (line 774) so verdict didn't get blocked. Second time the gate has needed an override; it's a calibration-class issue, not one-off. v2.1 candidate: `_should_amend` correctness-knob mode (gate signal switches to `n_scored`-delta or coverage-delta when `correctness_knob: bool` is set).
+
+2. **Phase 14 was structurally easy after Phases 11–13 paid the bill.** The infra investment (gate + skill + coverage field + item-fan-out + schema) carried straight through. 13-commit count is the natural footprint of a small focused phase running through a mature pipeline. Future correctness amendments on swept knobs should follow the same skill-driven pattern and expect similar low-friction execution.
+
+3. **Variance origin is dispatch-level and intrinsic — not mitigable by re-chunking.** Task 7's 36-sample analysis showed cross-cell correlations are noise (Pearson −0.055/+0.353/−0.003, Spearman +0.056/−0.070/+0.399). Slow chunks migrate between cells. "Smaller chunks for tighter parallelism" is the wrong lever — the variance is per-container, not per-chunk-size. v2.1 candidate: pre-warmed Modal containers (`keep_warm=N`) if larger corpora (LongMemEval-`_m` 500-session) need predictable wall-clock.
+
+4. **Q2 (late-chunk slowdown) was operator misread, not data signal.** Eva's live-watch observation during failed Phase 13 dispatches was real *as a perception* but recency bias on outlier reads in a serial-watching timeline. `spearman(idx, wall)` is mixed-sign and weak across all three cells; mean(idx 6–11) was *lower* than mean(idx 0–5) on all three. **Lesson:** live operator observations during failed dispatches are valuable as triage signals but not as findings — always re-test against persisted `chunkWalls` once the run lands. Second occurrence of this pattern after Phase 12's "drops a ton of batches" worry resolution.
+
+5. **Two unlock-knob preflight catches in one phase — pattern is mature.** Task 5.5 caught the `EXTRACT_MAX_TOKENS` runtime-override gap before dispatch via the skill's checklist. Phase 9.x and Phase 11 surfaced similar gaps post-dispatch (wasted compute). The skill is now structurally preventing the failure mode it was written for — no model update needed, just confirmation that it's working.
+
+**Notes for Phase 15 (UI/UX):**
+
+- v2.0 benchmarking subsystem **closed**. `EXTRACT_MAX_TOKENS=4096`, `TIER2_TAU_GAP=10` (tier demolished anyway), `TIER3_LAMBDA_1=1.0` (two-corpus inert). `baseline.json` canonical; no v2.0 sweeps remain. Phase 15 is free to pivot the loop to UX.
+- ✅ Two-corpus retrieval surface (LoCoMo + LongMemEval-S 6-task-type) and `byTaskType` slice on `MetricsResult` available for UX.
+- ✅ Coverage-by-slice ranges 0.53 → 0.92 on LongMemEval-S — don't make uniform-quality UX promises.
+- ✅ λ₁ provably inert two-corpus — **do not** surface as user-facing tuning UX.
+- **CORRECTION FROM PHASE 12:** Tier 2 is no longer a resolver *and no longer exists structurally* (Phase 14 demolished constants, sweep config, render fn, base overrides). Ladder is now `Tier 0 → Tier 1 → Tier 3 → Floor` with Tier 3 internally seeded by BM25. Debug UX has no "tier 2" to label — UI labels should reflect post-Phase-14 reality, not the Phase 12 transitional shape.
+- Pull-forward candidates from prior retros for Phase 15 triage: Memory Viewer Traces tab consolidation-events (Phase 7), subtle consolidation indicator (Eva preference), settings-menu UI mount (Eva preference), Memory Viewer episodic-tab visual polish (post `4de0e20`).
+- Do not surface any of the four edge-weight knobs (`hops`, `relw`, `tau` — gone, `λ₁`) as user-facing tuning. All provably inert.
+- Do not add UX for benchmark dispatch — Modal substrate is dev-only, not user-facing.
+
+**v2.1 candidates filed:** `_should_amend` correctness-knob mode (calibrate gate signal direction); λ₁ structural fix (move upstream of re-ranking — Phase 12 carryover); pre-warmed Modal containers for variance-bound sweeps on larger corpora; abstention scoring (inverted metric, Phase 12 carryover); Zep/Mem0/Mem3/MemGPT external baselines (Phase 12 carryover); LongMemEval `_oracle` / `_m` variants (Phase 12 carryover); `bench/modal/rerender.py` disposition (Phase 11 carryover, lean keep); live-observation post-hoc-validation rule for plan-preflight skill (Phase 14 surprise 4 + Phase 12 "drops a ton of batches" pattern).
+
+**v2.0 done.** Phase 15 = v2.1 kickoff (UI/UX polish).
+
+---
+
 ## Phase 13—2026-04-26
 
 **What shipped:** Item-level fan-out for Modal sweep dispatch + closure of Phase 12 Task 7. New `run_point_chunk` worker + `_modal-chunk.js` harness slice + `_recompute-metrics.js` + `_compute_chunk_plan` helper replace per-cell-serial dispatch with `(cell × chunk)` flat-fan-out via `run_point_chunk.starmap`. Chunks heuristic = `max(1, items // 80)`: LoCoMo runs as 1 chunk (zero overhead, identical to pre-Phase-13 shape), LongMemEval-S runs as 6 chunks. CLI override `--chunks K`. Decision gate on λ₁ tripwire fired **Outcome A — provably inert**, two-corpus reproduction of Phase 9.5's flatness; spec default `TIER3_LAMBDA_1=1.0` holds with confidence.
