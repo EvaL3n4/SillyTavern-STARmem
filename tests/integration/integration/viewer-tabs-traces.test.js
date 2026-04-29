@@ -67,7 +67,7 @@ describe('viewer/tabs/traces', () => {
         expect(items[1].textContent).toContain('FIRST');
     });
 
-    test('summary line includes tier + classifier + top-score', async () => {
+    test('summary line includes tier badge + classifier + top-score', async () => {
         await renderTab(parent, {
             chatId: 'c',
             state: { runtime: { traces: [
@@ -75,7 +75,9 @@ describe('viewer/tabs/traces', () => {
             ] } },
         });
         const s = parent.querySelector(`.${CSS_PREFIX}-viewer-traces-summary`);
-        expect(s?.textContent).toContain('T3/temporal');
+        const badge = s?.querySelector(`.${CSS_PREFIX}-tier-badge`);
+        expect(badge?.textContent).toBe('T3');
+        expect(s?.textContent).toContain('temporal');
         expect(s?.textContent).toContain('top=2.34');
     });
 

@@ -89,6 +89,29 @@ function buildClearButton(chatId, parent, ctx) {
     return btn;
 }
 
+/**
+ * Format a tier value for the tab UI.
+ * Post-Phase-14 ladder: Tier 2 is demolished as a resolver. Legacy traces with
+ * `tierResolved: 2` (pre-Phase-14) backfill to T3 — the seed-into-Tier-3 path
+ * is what historical Tier 2 hits actually exercised.
+ *
+ * Bench-only control conditions (bm25only, recency, random) map to short
+ * labels rather than '?' so the viewer is honest when bench traces appear.
+ *
+ * @param {0 | 1 | 2 | 3 | 'floor' | 'bm25only' | 'recency' | 'random' | null | undefined} tier
+ * @returns {'T0' | 'T1' | 'T3' | 'Floor' | 'BM25' | 'Recent' | 'Rand' | '?'}
+ */
+export function formatTierLabel(tier) {
+    if (tier === 0) return 'T0';
+    if (tier === 1) return 'T1';
+    if (tier === 2 || tier === 3) return 'T3';
+    if (tier === 'floor') return 'Floor';
+    if (tier === 'bm25only') return 'BM25';
+    if (tier === 'recency') return 'Recent';
+    if (tier === 'random') return 'Rand';
+    return '?';
+}
+
 function buildTraceItem(trace) {
     const li = document.createElement('li');
     li.className = `${CSS_PREFIX}-viewer-traces-item`;
@@ -123,13 +146,19 @@ function buildTraceItem(trace) {
         return li;
     }
 
-    // Retrieve (existing path)
+    // Retrieve path (T0/T1/T3/Floor + bench-only labels)
     const ts = trace.timestamp ? formatTimestamp(trace.timestamp) : '(no ts)';
     const cls = trace.classifier ?? '?';
-    const tier = trace.tierResolved ?? '?';
+    const tier = trace.tierResolved;
     const top = getTopScore(trace);
     const query = truncate(trace.query ?? '', 60);
-    summary.textContent = `${ts} · T${tier}/${cls} · top=${top !== null ? top.toFixed(2) : 'n/a'} · "${query}"`;
+    const badge = document.createElement('span');
+    badge.className = `${CSS_PREFIX}-tier-badge`;
+    badge.textContent = formatTierLabel(tier);
+    summary.appendChild(badge);
+    const topStr = top !== null ? top.toFixed(2) : 'n/a';
+    const text = document.createTextNode(`${ts} · ${cls} · top=${topStr} · "${query}"`);
+    summary.appendChild(text);
     li.appendChild(summary);
 
     const details = document.createElement('details');
