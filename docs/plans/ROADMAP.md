@@ -496,6 +496,45 @@ These are v2.1+ considerations. Do not implement them in any phase.
 
 _Appended after each phase ships. Format: `## Phase N—<date>`, with notes on surprises, scope changes, and lessons for subsequent phases._
 
+## Phase 15—2026-04-29
+
+**What shipped:** Theme-inheritance hygiene + E2E smoke harness. Phase closed early at T3 after a mid-phase visual eyeball check verdicted T6/T7/T8 (cosmetic polish) as out-of-scope-by-reality: ST's own utilitarian visual identity caps the upside of any cosmetic work in our extension corner. Three structural deliverables landed and stand on their own. T4 (Traces consolidation events), T5 (post-Phase-14 ladder relabel), T9 (viewer ARIA) survive as honestly-named candidates; T6/T7/T8 dropped entirely. The plan was filed as "UI/UX Polish + Playwright E2E Foundation"; the retro retitles it **"Theme-Inheritance Hygiene + E2E Smoke Harness"** to match what shipped.
+
+**Test totals:** 98 suites / 974 tests (jest, **+1 / +1** from Phase 14 close: T2's `no-hardcoded-colors.test.js`); 58 tests (pytest bench/modal, unchanged); 9 Playwright tests under `tests/e2e/` runnable via `npm run test:e2e` against a live local ST (separate runner, never invoked by `npm test`). All green, zero regressions.
+
+**Commits this phase:** 5 total. Plan (`dbb71e0`) → Playwright harness (`07ff23d`) → harness skip-path bugfix (`7c2a8b3`) → `no-hardcoded-colors` JS guard (`12aa073`) → `style.css` token sweep + `--starmem-overlay` (`aca9841`). Retro + ROADMAP + plan-doc rescope notice land in this commit. Phase 15 range: `dbb71e0..HEAD`.
+
+**Execution mode:** Controller-only. No subagents. T1 was a candidate for subagent dispatch but was driven directly to keep eyes on the harness shape (correct call — `7c2a8b3` came out of post-T1 code review, not Playwright run output, and would have been harder to catch under a subagent's summary). T2 and T3 were small enough that controller overhead beat dispatch overhead. T0–T3 were drafted under `test-driven-development` (T2's tripwire-verify + RED-on-injected-violation matched the skill's grep-guard-test pattern) and `writing-plans` (T3's audit-then-edit shape).
+
+**Decisions revisited / rescope event:** All 12 plan-header decisions held in substance for T0–T3. The rescope event after T3 is the central narrative — see `phase-15-retro.md` §2. Decisions 4 ("All 9 polish candidates ship") and 9–11 (cosmetic specifics) were retired by the rescope; decisions 1–3, 5, 6 (structural framing, Playwright scope, no theme fixtures, hardcoded-color guard, fallback-tightening) all held and shipped.
+
+**Surprises:**
+
+1. **The polish framing was wrong; the structural pieces underneath were real.** Phase 15 packaged structural work (Playwright harness, JS color guard, CSS token audit) with cosmetic work (T6–T9 visual tweaks, T4–T5 trace UI extensions) under a unifying "UI/UX polish" banner. The structural work had its own justification — test infra, theme-contract enforcement — and didn't need the cosmetic work as a carrot. The cosmetic work didn't survive an eyeball check against ST's own visual ceiling. **Lesson:** when a phase mixes structural and cosmetic, file two plans (or two clearly-bounded sub-phases) so verdicts can land independently. Different acceptance criteria (mechanical vs. judgement) require different verdicts; bundling masks them.
+
+2. **Eyeball checks work as designed when scheduled correctly.** T3 Step 6 specified an eyeball check, and that step is exactly what surfaced the rescope. The check worked. **Lesson:** in cosmetic-heavy phases, schedule the eyeball check as a **gate** (does cosmetic work make sense here?) before drafting downstream cosmetic tasks in detail, not as a **smoke** after they're built. Same tool, different position in the pipeline.
+
+3. **Visual ceilings are host-imposed, real, and not polish-able-around.** STARmem inherits ST's CSS contract via `var(--SmartTheme*)` and inherits ST's visual identity by being embedded inside ST. ST is intentionally information-dense and utilitarian; trying to design a "polished" corner inside it reads worse than a consistent guest. **Lesson:** for host-embedded extensions, identify the host's visual ceiling first; default to inheriting (= structural conformity) when polish would fight it.
+
+4. **T1's subagent-friendly tag was wrong-by-luck.** The plan header tagged T1 as subagent-friendly. Direct execution caught the `test as base` re-export bug (`7c2a8b3`) at code-review time, not at run time — a subagent dispatch would have summarized "shipped" and the bug would have lived until the first real ST-offline run. **Lesson:** "mechanical wiring" tasks that include test-fixture authoring are *not* purely mechanical — fixture correctness is high-leverage and benefits from controller-level review. Re-tag similar tasks in future plans.
+
+**Notes for Phase 16+ (or whichever phase next):**
+
+- ✅ Test infrastructure now available: Playwright E2E harness at `tests/e2e/` (extend by adding spec files; `fullyParallel: false` / `workers: 1` / `retries: 0` is the established discipline). Three CSS-hygiene invariants (`no-leaky-css`, `style-css-invariants`, `no-hardcoded-colors`) form a structural triad gating future visual work.
+- ✅ Theme tokens cleaned: `--starmem-overlay` available for any future modal-style surface; `--starmem-bg-elevated` derives correctly via `color-mix`; `--starmem-danger` no longer indirects through a non-existent `--SmartThemeErrorColor`.
+- **T4 (Traces consolidation events)** survives as a candidate. Trace shape is pre-scoped in `phase-15-ui-ux.md` Task 4 (`{kind, timestamp, chatId, summary, durationMs, extractor}`). Ship when a concrete consumer surfaces (debugging a consolidation issue, surfacing extractor-cost rollup) — **not** as polish.
+- **T5 (Tier label honesty in Traces tab)** survives. Mechanical relabel reflecting Phase 14's Tier 2 demolition. Cheap; ship when convenient.
+- **T9 (Viewer ARIA + keyboard nav)** survives. Real accessibility value, distinct from cosmetic polish. Ship when a11y becomes an explicit project value commitment.
+- **Do NOT re-attempt T6/T7/T8** as drafted. Corncob inside ST's visual ceiling.
+- **Do NOT bundle structural with cosmetic** under a single phase header again without per-task acceptance criteria. The two-criteria phase decomposition rule is filed as a v2.1 candidate skill datapoint for `plan-preflight-audit`; defer the actual patch until a second confirming case lands.
+- Plan size note: the 2291-line draft was honest at the time (preflight-audited, line numbers verified) but in retrospect carried 1500+ lines of ultimately-unshipped cosmetic detail. Right-sized for a real polish phase; oversized for the structural phase it actually was.
+
+**v2.1 candidates filed:** Two-criteria phase decomposition rule (skill datapoint candidate, defer until second case); eyeball-as-gate-not-smoke planning practice (may be obvious enough not to formalize); T4 / T5 / T9 as honestly-framed candidates per their own future justification. **Not filed:** T6/T7/T8 — cosmetic polish under host-imposed visual ceiling, dropped entirely.
+
+**Phase 15 closes as honest structural work.** Phase 16+ inherits the test substrate and theme-contract discipline this phase laid down.
+
+---
+
 ## Phase 14—2026-04-29
 
 **What shipped:** v2.0 closure. One correctness amendment backed by sweep evidence (`EXTRACT_MAX_TOKENS` 2048 → 4096 on LongMemEval-S, n_scored +6 / coverage +1.27pp / MRR +0.0090; LoCoMo regression smoke clean), Tier 2 dead-code follow-through (constants `TIER2_TAU_*`, `tau.js` sweep config, `render_tau_report`, base overrides for `hops`/`relw`, `'tau'` sweep_name default — all gone), `chunkWalls: List[int]` cell-record schema addition + `_build_cell_record` helper extraction, `graph.js renderReport` positional-signature cleanup (Phase 11 retro debt), `EXTRACT_MAX_TOKENS` runtime-override unlock (Task 5.5 mid-phase insert via `unlock-knob-for-runtime-sweep`), and a skill extension to `persist-serverless-compute-results` capturing the `chunkWalls` audit pattern + variance-origin test + outlier-shape sizing rule. Task 7 analysis closes Phase 12 retro §6 candidates 3+4: cell-wall variance is **dispatch-level** (cross-cell Pearson + Spearman on chunk-index-aligned walls scattered noise; slow chunks migrate between cells), and there is **no late-chunk slowdown** (`spearman(idx, wall)` per cell: −0.217, −0.238, +0.210). Eva's live observation was recency bias on cold-container outliers, not a structural effect. `baseline.json::tuned.EXTRACT_MAX_TOKENS.verdict` is `"AMENDED"`.

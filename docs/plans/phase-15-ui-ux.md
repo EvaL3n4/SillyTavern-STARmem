@@ -1,5 +1,25 @@
 # Phase 15 — UI/UX Polish + Playwright E2E Foundation
 
+> **🛑 RESCOPED — phase closed early at T3 (2026-04-29).**
+>
+> After T0–T3 shipped, Eva eyeballed STARmem under a real ST instance and concluded the visual-polish framing was wrong: ST's own utilitarian aesthetic caps the upside of any cosmetic work in our extension surface, and T6/T7/T8 collapsed into "polishing a corncob." T4 (Traces consolidation events) and T9 (ARIA) survive as honestly-framed candidates for a future phase, but **not** under a "polish" banner — they need their own scoping when there's a concrete reason to ship them.
+>
+> **What actually shipped under this plan:** test infrastructure + theme-contract hygiene, dressed up as "polish" because we wanted permission to also do the visual work. The structural pieces are real and load-bearing:
+>
+> | T0 | `dbb71e0` | Plan committed (this doc) |
+> |---|---|---|
+> | T1 | `07ff23d` + `7c2a8b3` | Playwright E2E smoke harness — 9 tests, narrow scope |
+> | T2 | `12aa073` | `no-hardcoded-colors.test.js` — third CSS-hygiene invariant |
+> | T3 | `aca9841` | `style.css` token sweep — fixed 2 semantic mismatches, added `--starmem-overlay` |
+>
+> **Tasks 4–9 below are the original draft and are NOT shipping under Phase 15.** They are preserved here as historical record of what we thought the phase needed before the visual eyeball check. See `phase-15-retro.md` for the full rescope narrative and lessons.
+>
+> The phase is properly retitled in the retro and ROADMAP entry as **"Phase 15 — Theme-Inheritance Hygiene + E2E Smoke Harness."**
+
+---
+
+## Original plan header (preserved as drafted)
+
 > **For Hermes:** Use `subagent-driven-development` to execute task-by-task. Visual / DOM-touching tasks should be controller-executed; mechanical or contained tasks (Task 1 Playwright wiring, Task 2 guard test, Task 4 traces dispatch wiring) are subagent-friendly. Every task ends with `git commit` — do not batch.
 
 **Goal:** Close v2.0 with a polished, theme-respectful UI surface. Land a narrow Playwright smoke harness as the missing E2E test substrate, audit + tighten `style.css` for minimalist theme inheritance, ship the Memory Viewer's missing consolidation-events surface, finalize the indicator's visual treatment, polish the episodic tab and settings panel, add ARIA + keyboard-nav to the viewer tabs, and reflect the post-Phase-14 ladder shape in the Traces tab. v2.1 retrieval-side carryovers (`_should_amend` correctness-knob mode, λ₁ structural fix, etc.) stay parked — Phase 15 is a clean UI/UX lane.
