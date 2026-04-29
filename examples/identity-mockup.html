@@ -1,0 +1,531 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>STARmem—Quiet Library identity mockup</title>
+  <style>
+    /* --- ST token simulation (eyeball-mode only; real install inherits from ST) --- */
+    :root {
+      --SmartThemeBodyColor: #e8e6df;
+      --SmartThemeEmColor: #a8a59a;
+      --SmartThemeBlurTintColor: #1c1b18;
+      --SmartThemeBorderColor: #3a3833;
+      --SmartThemeQuoteColor: #c4a87c;
+      --SmartThemeShadowColor: rgba(0, 0, 0, 0.4);
+    }
+
+    /* --- STARmem tokens (Phase 16 surface; Task 4 lands the real ones in style.css) --- */
+    :root {
+      /* Color (inherited from ST, with literary-reading fallbacks) */
+      --starmem-fg: var(--SmartThemeBodyColor, #e8e6df);
+      --starmem-fg-muted: var(--SmartThemeEmColor, #a8a59a);
+      --starmem-bg: var(--SmartThemeBlurTintColor, #1c1b18);
+      --starmem-bg-elevated: color-mix(in srgb, var(--SmartThemeBodyColor) 5%, var(--SmartThemeBlurTintColor));
+      --starmem-bg-paper: color-mix(in srgb, var(--SmartThemeBodyColor) 8%, var(--SmartThemeBlurTintColor));
+      --starmem-border: var(--SmartThemeBorderColor, #3a3833);
+      --starmem-border-faint: color-mix(in srgb, var(--SmartThemeBorderColor) 50%, transparent);
+      --starmem-accent: var(--SmartThemeQuoteColor, #c4a87c);
+      --starmem-overlay: rgba(0, 0, 0, 0.55);
+      --starmem-danger: #c66c5a;
+
+      /* Typography—Quiet Library: contemporary book serif, inherited body, monospace for data */
+      --starmem-font-display: 'Charter', 'Bitstream Charter', 'Sitka Text', 'Source Serif Pro', Cambria, Georgia, serif;
+      --starmem-font-body: inherit; /* body inherits ST's font choice */
+      --starmem-font-mono: ui-monospace, 'JetBrains Mono', 'Cascadia Code', Menlo, Consolas, monospace;
+      --starmem-fs-display-1: 1.5rem;   /* viewer title */
+      --starmem-fs-display-2: 1.125rem; /* section / subject heading */
+      --starmem-fs-body: 0.9375rem;     /* 15px reading body */
+      --starmem-fs-meta: 0.8125rem;     /* 13px metadata, badges */
+      --starmem-fs-mono: 0.8125rem;     /* match meta size for alignment */
+      --starmem-lh-tight: 1.25;
+      --starmem-lh-reading: 1.55;       /* generous body leading; reading room feel */
+      --starmem-tracking-display: -0.005em; /* subtle tightening on serif display */
+      --starmem-tracking-meta: 0.04em;       /* slight track-out on small caps / labels */
+
+      /* Spacing rhythm—4px base, 1.5× ratio for major steps */
+      --starmem-space-1: 0.25rem;
+      --starmem-space-2: 0.5rem;
+      --starmem-space-3: 0.75rem;
+      --starmem-space-4: 1rem;
+      --starmem-space-5: 1.5rem;
+      --starmem-space-6: 2.25rem;
+      --starmem-space-7: 3.5rem;
+
+      /* Elevation—paper-like, never glossy */
+      --starmem-elev-0: none;
+      --starmem-elev-1: 0 1px 0 var(--starmem-border-faint);
+      --starmem-elev-2: 0 1px 2px rgba(0, 0, 0, 0.18), 0 0 0 1px var(--starmem-border-faint);
+      --starmem-elev-3: 0 6px 24px rgba(0, 0, 0, 0.28), 0 0 0 1px var(--starmem-border);
+
+      /* Radius—restrained; serif identity wants modest curves */
+      --starmem-radius-1: 2px;
+      --starmem-radius-2: 4px;
+      --starmem-radius-3: 6px;
+
+      /* Motion */
+      --starmem-ease: cubic-bezier(0.2, 0, 0.1, 1);
+      --starmem-dur-fast: 120ms;
+      --starmem-dur-med: 280ms;
+      --starmem-dur-slow: 600ms;
+    }
+
+    /* Reset for the mockup's own demo frame; STARmem itself doesn't reset globals */
+    body {
+      background: var(--starmem-bg);
+      color: var(--starmem-fg);
+      font-family: var(--starmem-font-body), system-ui, sans-serif;
+      font-size: var(--starmem-fs-body);
+      line-height: var(--starmem-lh-reading);
+      margin: 0;
+      padding: var(--starmem-space-6);
+    }
+
+    .demo-frame {
+      max-width: 980px;
+      margin: 0 auto;
+      display: grid;
+      gap: var(--starmem-space-7);
+    }
+
+    .demo-section-label {
+      font-family: var(--starmem-font-display);
+      font-size: var(--starmem-fs-meta);
+      letter-spacing: var(--starmem-tracking-meta);
+      text-transform: uppercase;
+      color: var(--starmem-fg-muted);
+      border-bottom: 1px solid var(--starmem-border-faint);
+      padding-bottom: var(--starmem-space-2);
+      margin-bottom: var(--starmem-space-4);
+    }
+
+    /* === STARmem viewer surface === */
+    .starmem-viewer {
+      background: var(--starmem-bg-elevated);
+      border-radius: var(--starmem-radius-3);
+      box-shadow: var(--starmem-elev-3);
+      overflow: hidden;
+    }
+
+    .starmem-viewer-header {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      padding: var(--starmem-space-5) var(--starmem-space-6) var(--starmem-space-3);
+      border-bottom: 1px solid var(--starmem-border-faint);
+    }
+
+    .starmem-viewer-title {
+      font-family: var(--starmem-font-display);
+      font-size: var(--starmem-fs-display-1);
+      font-weight: 400;
+      letter-spacing: var(--starmem-tracking-display);
+      margin: 0;
+      color: var(--starmem-fg);
+    }
+
+    .starmem-viewer-close {
+      background: none;
+      border: none;
+      color: var(--starmem-fg-muted);
+      font-size: 1.25rem;
+      cursor: pointer;
+      padding: var(--starmem-space-1) var(--starmem-space-2);
+      transition: color var(--starmem-dur-fast) var(--starmem-ease);
+    }
+    .starmem-viewer-close:hover { color: var(--starmem-fg); }
+
+    .starmem-viewer-filter-row {
+      padding: var(--starmem-space-3) var(--starmem-space-6);
+      border-bottom: 1px solid var(--starmem-border-faint);
+      display: flex;
+      align-items: center;
+      gap: var(--starmem-space-3);
+    }
+    .starmem-viewer-filter-row label {
+      font-size: var(--starmem-fs-meta);
+      color: var(--starmem-fg-muted);
+      letter-spacing: var(--starmem-tracking-meta);
+      text-transform: uppercase;
+    }
+    .starmem-viewer-subject-input {
+      background: var(--starmem-bg);
+      border: 1px solid var(--starmem-border-faint);
+      border-radius: var(--starmem-radius-1);
+      color: var(--starmem-fg);
+      padding: var(--starmem-space-2) var(--starmem-space-3);
+      font: inherit;
+      flex: 1;
+      max-width: 320px;
+      transition: border-color var(--starmem-dur-fast) var(--starmem-ease);
+    }
+    .starmem-viewer-subject-input:focus {
+      outline: none;
+      border-color: var(--starmem-accent);
+    }
+
+    .starmem-viewer-tabs {
+      display: flex;
+      gap: 0;
+      padding: 0 var(--starmem-space-6);
+      border-bottom: 1px solid var(--starmem-border-faint);
+      background: var(--starmem-bg);
+    }
+    .starmem-viewer-tab {
+      background: none;
+      border: none;
+      color: var(--starmem-fg-muted);
+      font-family: var(--starmem-font-display);
+      font-size: var(--starmem-fs-body);
+      letter-spacing: var(--starmem-tracking-meta);
+      padding: var(--starmem-space-3) var(--starmem-space-4);
+      cursor: pointer;
+      border-bottom: 2px solid transparent;
+      transition: color var(--starmem-dur-fast) var(--starmem-ease),
+                  border-color var(--starmem-dur-med) var(--starmem-ease);
+    }
+    .starmem-viewer-tab:hover { color: var(--starmem-fg); }
+    .starmem-viewer-tab-active {
+      color: var(--starmem-fg);
+      border-bottom-color: var(--starmem-accent);
+    }
+
+    .starmem-viewer-body {
+      padding: var(--starmem-space-5) var(--starmem-space-6);
+      min-height: 280px;
+    }
+
+    /* === Episodic tab content (representative—Task 6 successor) === */
+    .starmem-viewer-episodic {
+      display: grid;
+      gap: var(--starmem-space-5);
+    }
+    .starmem-viewer-episodic-subject-group {
+      border-left: 2px solid var(--starmem-border-faint);
+      padding-left: var(--starmem-space-4);
+    }
+    .starmem-viewer-episodic-subject {
+      font-family: var(--starmem-font-display);
+      font-size: var(--starmem-fs-display-2);
+      font-weight: 400;
+      color: var(--starmem-fg);
+      margin: 0 0 var(--starmem-space-2);
+      letter-spacing: var(--starmem-tracking-display);
+    }
+    .starmem-viewer-episodic-entry {
+      padding: var(--starmem-space-2) 0;
+      border-bottom: 1px dotted var(--starmem-border-faint);
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: var(--starmem-space-3);
+      align-items: baseline;
+    }
+    .starmem-viewer-episodic-entry:last-child { border-bottom: none; }
+    .starmem-viewer-episodic-content {
+      font-size: var(--starmem-fs-body);
+      line-height: var(--starmem-lh-reading);
+    }
+    .starmem-viewer-episodic-meta {
+      font-family: var(--starmem-font-mono);
+      font-size: var(--starmem-fs-mono);
+      color: var(--starmem-fg-muted);
+      white-space: nowrap;
+    }
+
+    /* === Traces tab content (representative—Task 2 + Task 3) === */
+    .starmem-viewer-traces-list { list-style: none; padding: 0; margin: 0; }
+    .starmem-viewer-traces-item {
+      padding: var(--starmem-space-3) 0;
+      border-bottom: 1px solid var(--starmem-border-faint);
+    }
+    .starmem-viewer-traces-summary {
+      font-family: var(--starmem-font-mono);
+      font-size: var(--starmem-fs-mono);
+      color: var(--starmem-fg);
+      line-height: var(--starmem-lh-tight);
+    }
+    .starmem-tier-badge {
+      display: inline-block;
+      padding: 0 var(--starmem-space-2);
+      border: 1px solid var(--starmem-border-faint);
+      border-radius: var(--starmem-radius-1);
+      font-family: var(--starmem-font-mono);
+      font-size: var(--starmem-fs-meta);
+      color: var(--starmem-accent);
+      margin-right: var(--starmem-space-2);
+    }
+    .starmem-tier-badge-event {
+      color: var(--starmem-fg-muted);
+      border-style: dashed;
+    }
+
+    /* === Settings panel (representative—Task 7 successor) === */
+    .starmem-settings {
+      background: var(--starmem-bg-elevated);
+      border-radius: var(--starmem-radius-3);
+      box-shadow: var(--starmem-elev-2);
+      padding: var(--starmem-space-5) var(--starmem-space-6);
+    }
+    .starmem-settings-section {
+      margin-bottom: var(--starmem-space-6);
+    }
+    .starmem-settings-section:last-child { margin-bottom: 0; }
+    .starmem-settings-section-title {
+      font-family: var(--starmem-font-display);
+      font-size: var(--starmem-fs-display-2);
+      font-weight: 400;
+      margin: 0 0 var(--starmem-space-3);
+      padding-bottom: var(--starmem-space-2);
+      border-bottom: 1px solid var(--starmem-border-faint);
+      letter-spacing: var(--starmem-tracking-display);
+    }
+    .starmem-settings-field {
+      display: grid;
+      grid-template-columns: 220px 1fr;
+      gap: var(--starmem-space-4);
+      align-items: center;
+      padding: var(--starmem-space-2) 0;
+    }
+    .starmem-settings-label {
+      font-size: var(--starmem-fs-body);
+      color: var(--starmem-fg);
+    }
+    .starmem-settings-help {
+      grid-column: 2;
+      font-size: var(--starmem-fs-meta);
+      color: var(--starmem-fg-muted);
+      margin-top: var(--starmem-space-1);
+      font-style: italic;
+    }
+    .starmem-settings-field input[type="number"],
+    .starmem-settings-field select {
+      background: var(--starmem-bg);
+      border: 1px solid var(--starmem-border-faint);
+      border-radius: var(--starmem-radius-1);
+      color: var(--starmem-fg);
+      padding: var(--starmem-space-2) var(--starmem-space-3);
+      font: inherit;
+      max-width: 200px;
+    }
+
+    /* === Indicator (Task 5 successor) === */
+    .starmem-indicator-mockup-row {
+      display: flex;
+      align-items: center;
+      gap: var(--starmem-space-4);
+      padding: var(--starmem-space-4);
+      background: var(--starmem-bg-elevated);
+      border-radius: var(--starmem-radius-2);
+      box-shadow: var(--starmem-elev-1);
+    }
+    .starmem-indicator {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      display: inline-block;
+    }
+    .starmem-indicator-idle {
+      background: var(--starmem-fg-muted);
+      opacity: 0.4;
+    }
+    .starmem-indicator-busy {
+      background: var(--starmem-accent);
+      animation: starmem-indicator-pulse 1.4s var(--starmem-ease) infinite;
+    }
+    @keyframes starmem-indicator-pulse {
+      0%, 100% { opacity: 0.4; transform: scale(1); }
+      50% { opacity: 1; transform: scale(1.25); }
+    }
+    .indicator-label {
+      font-family: var(--starmem-font-mono);
+      font-size: var(--starmem-fs-meta);
+      color: var(--starmem-fg-muted);
+    }
+
+    /* === Memorable moment: viewer entrance reveal === */
+    .reveal-trigger {
+      cursor: pointer;
+      color: var(--starmem-accent);
+      font-family: var(--starmem-font-mono);
+      font-size: var(--starmem-fs-meta);
+    }
+    .starmem-viewer.is-revealing .starmem-viewer-header {
+      animation: starmem-fade-up var(--starmem-dur-med) var(--starmem-ease) both;
+    }
+    .starmem-viewer.is-revealing .starmem-viewer-tab-active {
+      animation: starmem-underline-draw var(--starmem-dur-slow) var(--starmem-ease) 280ms both;
+    }
+    .starmem-viewer.is-revealing .starmem-viewer-body {
+      animation: starmem-fade-in var(--starmem-dur-med) var(--starmem-ease) 320ms both;
+    }
+    @keyframes starmem-fade-up {
+      from { opacity: 0; transform: translateY(-4px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    @keyframes starmem-fade-in {
+      from { opacity: 0; }
+      to { opacity: 1; }
+    }
+    @keyframes starmem-underline-draw {
+      from { border-image: linear-gradient(to right, var(--starmem-accent) 0%, transparent 0%) 1; border-bottom-color: transparent; }
+      to { border-bottom-color: var(--starmem-accent); }
+    }
+
+    /* Reduced-motion respect (a11y default) */
+    @media (prefers-reduced-motion: reduce) {
+      .starmem-viewer.is-revealing .starmem-viewer-header,
+      .starmem-viewer.is-revealing .starmem-viewer-tab-active,
+      .starmem-viewer.is-revealing .starmem-viewer-body {
+        animation: none;
+      }
+      .starmem-indicator-busy { animation: none; opacity: 1; }
+    }
+  </style>
+</head>
+<body>
+<div class="demo-frame">
+
+  <header>
+    <h1 class="starmem-viewer-title" style="margin-bottom: var(--starmem-space-2)">STARmem—Quiet Library</h1>
+    <p style="color: var(--starmem-fg-muted); margin: 0;">Visual identity mockup for Phase 16. Open this file in a browser; click <span class="reveal-trigger" id="replay">↻ replay reveal</span> to see the entrance animation.</p>
+  </header>
+
+  <section>
+    <div class="demo-section-label">Memory Viewer · Episodic tab</div>
+    <div class="starmem-viewer" id="viewer-mockup">
+      <div class="starmem-viewer-header">
+        <h2 class="starmem-viewer-title">Memory Viewer</h2>
+        <button class="starmem-viewer-close" aria-label="Close">✕</button>
+      </div>
+      <div class="starmem-viewer-filter-row">
+        <label for="subject-input">Subject</label>
+        <input id="subject-input" class="starmem-viewer-subject-input" placeholder="(all subjects)" />
+      </div>
+      <nav class="starmem-viewer-tabs">
+        <button class="starmem-viewer-tab">Working</button>
+        <button class="starmem-viewer-tab starmem-viewer-tab-active">Episodic</button>
+        <button class="starmem-viewer-tab">Persona</button>
+        <button class="starmem-viewer-tab">Graph</button>
+        <button class="starmem-viewer-tab">Traces</button>
+      </nav>
+      <div class="starmem-viewer-body">
+        <div class="starmem-viewer-episodic">
+          <div class="starmem-viewer-episodic-subject-group">
+            <h3 class="starmem-viewer-episodic-subject">Alanis</h3>
+            <div class="starmem-viewer-episodic-entry">
+              <div class="starmem-viewer-episodic-content">Has a younger brother named Theo who is studying classical guitar in Vienna.</div>
+              <div class="starmem-viewer-episodic-meta">imp·72 · 3d</div>
+            </div>
+            <div class="starmem-viewer-episodic-entry">
+              <div class="starmem-viewer-episodic-content">Drinks black coffee in the morning, never after noon. Allergic to white rabbits in odd ways.</div>
+              <div class="starmem-viewer-episodic-meta">imp·58 · 5d</div>
+            </div>
+            <div class="starmem-viewer-episodic-entry">
+              <div class="starmem-viewer-episodic-content">Met the narrator at a bookstore on Reumannplatz, Vienna, in late autumn.</div>
+              <div class="starmem-viewer-episodic-meta">imp·81 · 12d</div>
+            </div>
+          </div>
+          <div class="starmem-viewer-episodic-subject-group">
+            <h3 class="starmem-viewer-episodic-subject">Theo</h3>
+            <div class="starmem-viewer-episodic-entry">
+              <div class="starmem-viewer-episodic-content">Studies classical guitar at the Konservatorium. Currently learning Villa-Lobos études.</div>
+              <div class="starmem-viewer-episodic-meta">imp·45 · 2d</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="demo-section-label">Memory Viewer · Traces tab—with consolidation events (T4) and tier 0/1/3/Floor labels (T5)</div>
+    <div class="starmem-viewer">
+      <div class="starmem-viewer-header">
+        <h2 class="starmem-viewer-title">Memory Viewer</h2>
+        <button class="starmem-viewer-close" aria-label="Close">✕</button>
+      </div>
+      <div class="starmem-viewer-tabs">
+        <button class="starmem-viewer-tab">Working</button>
+        <button class="starmem-viewer-tab">Episodic</button>
+        <button class="starmem-viewer-tab">Persona</button>
+        <button class="starmem-viewer-tab">Graph</button>
+        <button class="starmem-viewer-tab starmem-viewer-tab-active">Traces</button>
+      </div>
+      <div class="starmem-viewer-body">
+        <ol class="starmem-viewer-traces-list">
+          <li class="starmem-viewer-traces-item">
+            <div class="starmem-viewer-traces-summary"><span class="starmem-tier-badge starmem-tier-badge-event">consolidate</span>13:47:02Z · 7 facts · 412ms · gpt-4o-mini</div>
+          </li>
+          <li class="starmem-viewer-traces-item">
+            <div class="starmem-viewer-traces-summary"><span class="starmem-tier-badge">T3</span>13:46:55Z · relational · top=0.74 · "what does theo study"</div>
+          </li>
+          <li class="starmem-viewer-traces-item">
+            <div class="starmem-viewer-traces-summary"><span class="starmem-tier-badge">T1</span>13:46:51Z · factual · top=0.91 · "alanis brother"</div>
+          </li>
+          <li class="starmem-viewer-traces-item">
+            <div class="starmem-viewer-traces-summary"><span class="starmem-tier-badge">T0</span>13:46:50Z · factual · top=1.00 · "alanis brother"</div>
+          </li>
+          <li class="starmem-viewer-traces-item">
+            <div class="starmem-viewer-traces-summary"><span class="starmem-tier-badge">Floor</span>13:42:11Z ·—· top=n/a · "(empty corpus)"</div>
+          </li>
+        </ol>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="demo-section-label">Settings panel</div>
+    <div class="starmem-settings">
+      <div class="starmem-settings-section">
+        <h3 class="starmem-settings-section-title">Consolidation</h3>
+        <div class="starmem-settings-field">
+          <label class="starmem-settings-label" for="ext-buffer">Buffer size</label>
+          <input id="ext-buffer" type="number" value="10" min="1" max="100">
+          <p class="starmem-settings-help">Working buffer fills up before consolidation runs.</p>
+        </div>
+        <div class="starmem-settings-field">
+          <label class="starmem-settings-label" for="ext-idle">Idle timeout (s)</label>
+          <input id="ext-idle" type="number" value="60" min="10" max="600">
+          <p class="starmem-settings-help">Consolidation also fires after this many seconds of silence.</p>
+        </div>
+      </div>
+      <div class="starmem-settings-section">
+        <h3 class="starmem-settings-section-title">Extraction model</h3>
+        <div class="starmem-settings-field">
+          <label class="starmem-settings-label" for="ext-profile">Connection profile</label>
+          <select id="ext-profile"><option>OpenAI · gpt-4o-mini</option><option>Anthropic · claude-haiku</option></select>
+          <p class="starmem-settings-help">Used during write-time fact extraction. Never on the query path.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="demo-section-label">Consolidation indicator</div>
+    <div style="display: grid; gap: var(--starmem-space-3);">
+      <div class="starmem-indicator-mockup-row">
+        <span class="starmem-indicator starmem-indicator-idle"></span>
+        <span class="indicator-label">starmem · idle</span>
+      </div>
+      <div class="starmem-indicator-mockup-row">
+        <span class="starmem-indicator starmem-indicator-busy"></span>
+        <span class="indicator-label">starmem · consolidating · last 13:47:02Z</span>
+      </div>
+    </div>
+  </section>
+
+</div>
+<script>
+  // Memorable moment: replay the entrance reveal on demand
+  const viewer = document.getElementById('viewer-mockup');
+  const replay = document.getElementById('replay');
+  function reveal() {
+    viewer.classList.remove('is-revealing');
+    void viewer.offsetWidth;  // restart animation
+    viewer.classList.add('is-revealing');
+  }
+  replay.addEventListener('click', reveal);
+  // Auto-play once on first paint
+  requestAnimationFrame(() => requestAnimationFrame(reveal));
+</script>
+</body>
+</html>
