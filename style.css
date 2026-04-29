@@ -21,11 +21,21 @@
     --starmem-fg:           var(--SmartThemeBodyColor, #e8e8e8);
     --starmem-fg-muted:     var(--SmartThemeEmColor, #a0a0a0);
     --starmem-bg:           var(--SmartThemeBlurTintColor, #1a1a1a);
-    --starmem-bg-elevated:  var(--SmartThemeShadowColor, #242424);
+    /* Elevated surface = body color tinted into surface base. Avoids misusing
+       --SmartThemeShadowColor (which semantically means drop-shadow tint, not
+       elevation). Works under any theme since BodyColor contrasts with bg. */
+    --starmem-bg-elevated:  color-mix(in srgb,
+                                      var(--SmartThemeBodyColor, #e8e8e8) 6%,
+                                      var(--SmartThemeBlurTintColor, #1a1a1a));
     --starmem-border:       var(--SmartThemeBorderColor, #3a3a3a);
     --starmem-accent:       #7aa2f7;                      /* STARmem blue */
     --starmem-accent-warm:  #e0af68;                      /* Indicator amber */
-    --starmem-danger:       var(--SmartThemeErrorColor, #f7768e);
+    /* Brand danger color (no ST equivalent — --SmartThemeErrorColor not
+       defined in stock ST, so the var lookup always fell through). */
+    --starmem-danger:       #f7768e;
+    /* Theme-agnostic modal backdrop (intentional: dimming reads correctly
+       under both light and dark themes; tweak opacity in one place). */
+    --starmem-overlay:      rgba(0, 0, 0, 0.55);
     --starmem-radius:       6px;
     --starmem-gap:          0.75rem;
     --starmem-indicator-sz: 10px;
@@ -157,8 +167,7 @@
 }
 
 .starmem-viewer::backdrop {
-    /* exempt: ::backdrop is a pseudo-element the <dialog> owns */
-    background: rgba(0, 0, 0, 0.55);
+    background: var(--starmem-overlay);
     backdrop-filter: blur(2px);
 }
 
