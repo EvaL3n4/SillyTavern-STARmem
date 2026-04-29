@@ -4,18 +4,21 @@
  * Use as a Playwright fixture: `await openST(page)` returns a page navigated
  * to ST's main view with the extension confirmed loaded.
  */
-import { test as base, expect } from '@playwright/test';
+import { test, expect } from '@playwright/test';
 
 /**
  * Navigate to ST and wait for the chat surface to be ready.
- * Throws (and the test fails clearly) if ST isn't reachable.
+ * Skips the calling test (with a clear message) if ST isn't reachable;
+ * otherwise asserts a successful response and the chat surface readiness.
  */
 export async function openST(page) {
     let response;
     try {
         response = await page.goto('/', { waitUntil: 'domcontentloaded', timeout: 5_000 });
     } catch (err) {
-        test.skip(true, `SillyTavern not running at ${page.context()._options.baseURL}: ${err.message}`);
+        // test.skip() reads the active test from Playwright's internal state,
+        // so calling it from a helper invoked inside a test body works.
+        test.skip(true, `SillyTavern not running at http://localhost:8000: ${err.message}`);
         return;
     }
     expect(response.ok()).toBe(true);
@@ -36,5 +39,4 @@ export async function expectExtensionLoaded(page) {
     expect(loaded).toBe(true);
 }
 
-export const test = base;
-export { expect };
+export { test, expect };
