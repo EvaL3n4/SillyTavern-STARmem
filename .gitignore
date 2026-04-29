@@ -46,3 +46,6 @@ __pycache__/
 # (/data/runs/) holds durable copies.
 docs/bench/runs/
 *.log
+
+# Playwright auth state (per-test user sessions)
+tests/e2e/.auth/
