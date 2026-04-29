@@ -40,3 +40,13 @@ test('viewer closes via X button', async ({ page }) => {
     await page.locator('.starmem-viewer-close').click();
     await expect(page.locator('.starmem-viewer')).not.toBeVisible();
 });
+
+test('viewer shell uses Quiet Library serif display face for title', async ({ page }) => {
+    await openST(page);
+    await expectExtensionLoaded(page);
+    await openViewer(page);
+    const title = page.locator('.starmem-viewer-title').first();
+    await expect(title).toBeVisible();
+    const fontFamily = await title.evaluate(el => getComputedStyle(el).fontFamily);
+    expect(fontFamily.toLowerCase()).toMatch(/iowan|palatino|palladio|book antiqua|georgia|serif/);
+});

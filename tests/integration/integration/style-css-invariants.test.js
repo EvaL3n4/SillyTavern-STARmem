@@ -83,6 +83,9 @@ describe('style.css invariants', () => {
 
     test('mobile breakpoint is exactly 639px', () => {
         const mqs = [...css.matchAll(/@media[^{]+/g)].map(m => m[0].trim());
-        expect(mqs).toEqual(['@media (max-width: 639px)']);
+        expect(mqs).toContain('@media (max-width: 639px)');
+        // prefers-reduced-motion is an a11y opt-out, not a layout breakpoint
+        const nonA11y = mqs.filter(m => !m.includes('prefers-reduced-motion'));
+        expect(nonA11y).toEqual(['@media (max-width: 639px)']);
     });
 });

@@ -28,7 +28,7 @@
                                       var(--SmartThemeBodyColor, #e8e8e8) 6%,
                                       var(--SmartThemeBlurTintColor, #1a1a1a));
     --starmem-border:       var(--SmartThemeBorderColor, #3a3a3a);
-    --starmem-accent:       #7aa2f7;                      /* STARmem blue */
+    --starmem-accent:       var(--SmartThemeQuoteColor, #c4a87c);  /* Quiet Library warm tan */
     --starmem-accent-warm:  #e0af68;                      /* Indicator amber */
     /* Brand danger color (no ST equivalent — --SmartThemeErrorColor not
        defined in stock ST, so the var lookup always fell through). */
@@ -39,6 +39,59 @@
     --starmem-radius:       6px;
     --starmem-gap:          0.75rem;
     --starmem-indicator-sz: 10px;
+}
+
+/* =========================================================================
+ * Quiet Library tokens—Phase 16. Spacing/type/elevation/radius/motion are
+ * STARmem's own; color tokens above inherit from ST themes.
+ * ========================================================================= */
+
+:root {
+    /* Typography—serif display, inherited body, monospace for data */
+    --starmem-font-display: 'Iowan Old Style', 'Palatino Linotype', 'Palatino',
+                            'URW Palladio L', 'Book Antiqua', Georgia, serif;
+    --starmem-font-body: inherit;
+    --starmem-font-mono: ui-monospace, 'JetBrains Mono', 'Cascadia Code',
+                         Menlo, Consolas, monospace;
+    --starmem-fs-display-1: 1.5rem;
+    --starmem-fs-display-2: 1.125rem;
+    --starmem-fs-body: 0.9375rem;
+    --starmem-fs-meta: 0.8125rem;
+    --starmem-fs-mono: 0.8125rem;
+    --starmem-lh-tight: 1.25;
+    --starmem-lh-reading: 1.55;
+    --starmem-tracking-display: -0.005em;
+    --starmem-tracking-meta: 0.04em;
+
+    /* Spacing—4px base, 1.5× ratio for major steps */
+    --starmem-space-1: 0.25rem;
+    --starmem-space-2: 0.5rem;
+    --starmem-space-3: 0.75rem;
+    --starmem-space-4: 1rem;
+    --starmem-space-5: 1.5rem;
+    --starmem-space-6: 2.25rem;
+    --starmem-space-7: 3.5rem;
+
+    /* Elevation—paper-like, never glossy */
+    --starmem-border-faint: color-mix(in srgb, var(--SmartThemeBorderColor, #3a3a3a) 50%, transparent);
+    --starmem-elev-0: none;
+    --starmem-elev-1: 0 1px 0 var(--starmem-border-faint);
+    --starmem-elev-2: 0 1px 2px rgba(0, 0, 0, 0.18), 0 0 0 1px var(--starmem-border-faint);
+    --starmem-elev-3: 0 6px 24px rgba(0, 0, 0, 0.28), 0 0 0 1px var(--starmem-border);
+
+    /* Radius—restrained */
+    --starmem-radius-1: 2px;
+    --starmem-radius-2: 4px;
+    --starmem-radius-3: 6px;
+
+    /* Motion */
+    --starmem-ease: cubic-bezier(0.2, 0, 0.1, 1);
+    --starmem-dur-fast: 120ms;
+    --starmem-dur-med: 280ms;
+    --starmem-dur-slow: 600ms;
+
+    /* Bg variants—paper feel */
+    --starmem-bg-paper: color-mix(in srgb, var(--SmartThemeBodyColor, #e8e8e8) 8%, var(--SmartThemeBlurTintColor, #1a1a1a));
 }
 
 /* =========================================================================
@@ -154,85 +207,226 @@
  * Viewer — native <dialog> per Decision 13.A.
  * ========================================================================= */
 
-.starmem-viewer {
+.starmem-viewer.starmem-viewer {
     max-width: min(960px, 95vw);
     max-height: 85vh;
     width: 100%;
     padding: 0;
     border: 1px solid var(--starmem-border);
-    border-radius: calc(var(--starmem-radius) * 2);
-    background: var(--starmem-bg);
+    border-radius: var(--starmem-radius-3);
+    background: var(--starmem-bg-elevated);
+    box-shadow: var(--starmem-elev-3);
     color: var(--starmem-fg);
     overflow: hidden;                                     /* tabs own their scroll */
+    text-align: left;                                     /* ST's .popup-content sets center; reclaim */
 }
 
-.starmem-viewer::backdrop {
+.starmem-viewer.starmem-viewer::backdrop {
     background: var(--starmem-overlay);
     backdrop-filter: blur(2px);
 }
 
-.starmem-viewer-header {
+.starmem-viewer .starmem-viewer-header {
     display: flex;
-    align-items: center;
+    align-items: baseline;
     justify-content: space-between;
-    padding: var(--starmem-gap) calc(var(--starmem-gap) * 1.5);
-    border-bottom: 1px solid var(--starmem-border);
+    padding: var(--starmem-space-5) var(--starmem-space-6) var(--starmem-space-3);
+    border-bottom: 1px solid var(--starmem-border-faint);
     background: var(--starmem-bg-elevated);
 }
 
-.starmem-viewer-title {
-    font-size: 1.1rem;
-    font-weight: 600;
+.starmem-viewer .starmem-viewer-title {
+    font-family: var(--starmem-font-display);
+    font-size: var(--starmem-fs-display-1);
+    font-weight: 400;
+    letter-spacing: var(--starmem-tracking-display);
     margin: 0;
-}
-
-.starmem-viewer-close {
-    background: transparent;
     color: var(--starmem-fg);
-    border: 1px solid var(--starmem-border);
-    border-radius: var(--starmem-radius);
-    padding: 0.25rem 0.5rem;
-    cursor: pointer;
 }
 
-.starmem-viewer-close:hover {
+.starmem-viewer .starmem-viewer-close {
+    background: none;
+    border: none;
+    color: var(--starmem-fg-muted);
+    font-size: 1.25rem;
+    cursor: pointer;
+    padding: var(--starmem-space-1) var(--starmem-space-2);
+    transition: color var(--starmem-dur-fast) var(--starmem-ease);
+}
+
+.starmem-viewer .starmem-viewer-close:hover {
+    color: var(--starmem-fg);
+}
+
+.starmem-viewer .starmem-viewer-filter-row {
+    padding: var(--starmem-space-3) var(--starmem-space-6);
+    border-bottom: 1px solid var(--starmem-border-faint);
+    display: flex;
+    align-items: center;
+    gap: var(--starmem-space-3);
+}
+
+.starmem-viewer .starmem-viewer-filter-row label {
+    font-size: var(--starmem-fs-meta);
+    color: var(--starmem-fg-muted);
+    letter-spacing: var(--starmem-tracking-meta);
+    text-transform: uppercase;
+}
+
+.starmem-viewer .starmem-viewer-subject-input {
     background: var(--starmem-bg);
+    border: 1px solid var(--starmem-border-faint);
+    border-radius: var(--starmem-radius-1);
+    color: var(--starmem-fg);
+    padding: var(--starmem-space-2) var(--starmem-space-3);
+    font: inherit;
+    flex: 1;
+    max-width: 320px;
+    transition: border-color var(--starmem-dur-fast) var(--starmem-ease);
+}
+
+.starmem-viewer .starmem-viewer-subject-input:focus {
+    outline: none;
+    border-color: var(--starmem-accent);
+}
+
+/* -- Form controls inside the viewer ------------------------------------ */
+/* ST's popup CSS targets bare <input>/<select> with stark theme colors;
+ * we reclaim every form control inside .starmem-viewer for our dark
+ * surface. Two-class specificity (.starmem-viewer .X) beats most ST
+ * popup selectors; for elements without a starmem-* class we scope by
+ * tag inside the ancestor. */
+.starmem-viewer input,
+.starmem-viewer select,
+.starmem-viewer textarea {
+    background: var(--starmem-bg);
+    color: var(--starmem-fg);
+    border: 1px solid var(--starmem-border-faint);
+    border-radius: var(--starmem-radius-1);
+    padding: var(--starmem-space-2) var(--starmem-space-3);
+    font-family: inherit;
+    font-size: var(--starmem-fs-body);
+    transition: border-color var(--starmem-dur-fast) var(--starmem-ease);
+}
+
+.starmem-viewer input:focus,
+.starmem-viewer select:focus,
+.starmem-viewer textarea:focus {
+    outline: none;
+    border-color: var(--starmem-accent);
+}
+
+.starmem-viewer button {
+    /* Inherit dark surface for in-content buttons (excluding tab buttons,
+     * which have their own .starmem-viewer-tab rules higher-specificity). */
+    background: var(--starmem-bg);
+    color: var(--starmem-fg);
+    border: 1px solid var(--starmem-border-faint);
+    border-radius: var(--starmem-radius-1);
+    padding: var(--starmem-space-2) var(--starmem-space-3);
+    font-family: inherit;
+    font-size: var(--starmem-fs-body);
+    cursor: pointer;
+    transition: border-color var(--starmem-dur-fast) var(--starmem-ease),
+                background var(--starmem-dur-fast) var(--starmem-ease);
+}
+
+.starmem-viewer button:hover {
+    border-color: var(--starmem-accent);
+}
+
+/* -- Overflow defenses inside viewer ----------------------------------- */
+/* ST's popup wrapper adds chrome around our viewer; without these, narrow
+ * viewports overflow horizontally. */
+.starmem-viewer * {
+    box-sizing: border-box;
+}
+
+.starmem-viewer .starmem-viewer-body {
+    /* min-width: 0 on flex children prevents intrinsic-min-content from
+     * blowing out the parent flex container (subject-input is flex: 1). */
+    min-width: 0;
+}
+
+/* Wrap unbroken strings only on text-bearing descendants. NOT on buttons or
+ * form controls — overflow-wrap: anywhere on a flex-shrinkable button makes
+ * its min-content one character wide and the button collapses to one
+ * letter per line. Anchored on text containers only. */
+.starmem-viewer-body p,
+.starmem-viewer-body span,
+.starmem-viewer-body li,
+.starmem-viewer-body td,
+.starmem-viewer-body .starmem-viewer-empty,
+.starmem-viewer-body .starmem-viewer-working-content,
+.starmem-viewer-body .starmem-viewer-entry {
+    overflow-wrap: anywhere;
+}
+
+/* Buttons must not shrink below their text width. Two-line defense: explicit
+ * white-space + flex-shrink reset. ST's .menu_button class doesn't set
+ * either, and our generic .starmem-viewer button rule doesn't either, so
+ * a flex parent compresses them. */
+.starmem-viewer button {
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
+.starmem-viewer pre,
+.starmem-viewer code {
+    /* Trace raw blocks contain unbroken JSON; force wrap. */
+    white-space: pre-wrap;
+    word-break: break-word;
+    max-width: 100%;
+    overflow-x: auto;
+}
+
+.starmem-viewer .starmem-viewer-filter-row {
+    flex-wrap: wrap;
+}
+
+.starmem-viewer .starmem-viewer-subject-input {
+    /* Restate explicitly — flex children need min-width: 0 to allow
+     * shrinking below intrinsic content size. */
+    min-width: 0;
 }
 
 /* -- Tab strip (desktop) ---------------------------------------------------- */
 
-.starmem-viewer-tabs {
+.starmem-viewer .starmem-viewer-tabs {
     display: flex;
     gap: 0;
-    border-bottom: 1px solid var(--starmem-border);
-    background: var(--starmem-bg-elevated);
+    padding: 0 var(--starmem-space-6);
+    border-bottom: 1px solid var(--starmem-border-faint);
+    background: var(--starmem-bg);
 }
 
-.starmem-viewer-tab {
+.starmem-viewer .starmem-viewer-tab {
     flex: 1 1 0;
-    padding: 0.6rem 0.75rem;
-    background: transparent;
-    color: var(--starmem-fg-muted);
+    padding: var(--starmem-space-3) var(--starmem-space-4);
+    background: none;
     border: none;
-    border-bottom: 2px solid transparent;
+    color: var(--starmem-fg-muted);
+    font-family: var(--starmem-font-display);
+    font-size: var(--starmem-fs-body);
+    letter-spacing: var(--starmem-tracking-meta);
     cursor: pointer;
-    font-family: inherit;
-    font-size: 0.9rem;
-    transition: color 120ms ease-out, border-color 120ms ease-out;
+    border-bottom: 2px solid transparent;
+    transition: color var(--starmem-dur-fast) var(--starmem-ease),
+                border-color var(--starmem-dur-med) var(--starmem-ease);
 }
 
-.starmem-viewer-tab:hover {
+.starmem-viewer .starmem-viewer-tab:hover {
     color: var(--starmem-fg);
 }
 
-.starmem-viewer-tab.starmem-viewer-tab-active {
+.starmem-viewer .starmem-viewer-tab.starmem-viewer-tab-active {
     color: var(--starmem-fg);
     border-bottom-color: var(--starmem-accent);
 }
 
 /* -- Tab strip (mobile, < 640px) ------------------------------------------ */
 
-.starmem-viewer-tab-select {
+.starmem-viewer .starmem-viewer-tab-select {
     display: none;                                        /* shown in media query */
     width: 100%;
     margin: 0.5rem 0;
@@ -244,9 +438,10 @@
     font-family: inherit;
 }
 
-.starmem-viewer-body {
-    padding: var(--starmem-gap);
+.starmem-viewer .starmem-viewer-body {
+    padding: var(--starmem-space-5) var(--starmem-space-6);
     overflow-y: auto;
+    min-height: 280px;
     max-height: calc(85vh - 8rem);                        /* leaves room for header+tabs */
 }
 
@@ -254,7 +449,7 @@
  * Tab-specific — Working / Episodic / Persona / Graph / Traces.
  * ========================================================================= */
 
-.starmem-viewer-entry-list {
+.starmem-viewer .starmem-viewer-entry-list {
     display: flex;
     flex-direction: column;
     gap: 0.5rem;
@@ -263,26 +458,38 @@
     margin: 0;
 }
 
-.starmem-viewer-entry {
+/* Working buffer is an <ol> and inherits browser default padding-left: 40px
+ * for the number-marker gutter. We render our own meta line, so reset. */
+.starmem-viewer .starmem-viewer-working-list {
+    list-style: none;
+    padding-left: 0;
+    margin: 0;
+}
+
+.starmem-viewer .starmem-viewer-working-item {
+    list-style: none;
+}
+
+.starmem-viewer .starmem-viewer-entry {
     padding: 0.5rem 0.75rem;
     border: 1px solid var(--starmem-border);
     border-radius: var(--starmem-radius);
     background: var(--starmem-bg-elevated);
 }
 
-.starmem-viewer-entry-subject {
+.starmem-viewer .starmem-viewer-entry-subject {
     font-weight: 600;
     color: var(--starmem-accent);
     margin-right: 0.5rem;
 }
 
-.starmem-viewer-entry-meta {
+.starmem-viewer .starmem-viewer-entry-meta {
     color: var(--starmem-fg-muted);
     font-size: 0.8rem;
     margin-top: 0.25rem;
 }
 
-.starmem-viewer-entry-tag {
+.starmem-viewer .starmem-viewer-entry-tag {
     display: inline-block;
     padding: 1px 6px;
     margin: 2px 4px 0 0;
@@ -294,17 +501,17 @@
 
 /* -- Persona rebuild progress -- */
 
-.starmem-viewer-persona-rebuild {
+.starmem-viewer .starmem-viewer-persona-rebuild {
     margin-top: 0.5rem;
 }
 
-.starmem-viewer-persona-rebuild-form {
+.starmem-viewer .starmem-viewer-persona-rebuild-form {
     display: flex;
     gap: 0.5rem;
     align-items: center;
 }
 
-.starmem-viewer-progress-line {
+.starmem-viewer .starmem-viewer-progress-line {
     font-family: ui-monospace, Menlo, Consolas, monospace;
     font-size: 0.8rem;
     color: var(--starmem-fg-muted);
@@ -312,7 +519,7 @@
 
 /* -- Graph tab -- */
 
-.starmem-viewer-graph-canvas {
+.starmem-viewer .starmem-viewer-graph-canvas {
     width: 100%;
     height: 400px;
     background: var(--starmem-bg-elevated);
@@ -320,7 +527,7 @@
     border-radius: var(--starmem-radius);
 }
 
-.starmem-viewer-graph-empty {
+.starmem-viewer .starmem-viewer-graph-empty {
     padding: 2rem;
     text-align: center;
     color: var(--starmem-fg-muted);
@@ -328,14 +535,14 @@
 
 /* -- Traces tab -- */
 
-.starmem-viewer-traces-toolbar {
+.starmem-viewer .starmem-viewer-traces-toolbar {
     display: flex;
     gap: 0.5rem;
     justify-content: flex-end;
     margin-bottom: 0.5rem;
 }
 
-.starmem-viewer-trace {
+.starmem-viewer .starmem-viewer-trace {
     padding: 0.5rem;
     border: 1px solid var(--starmem-border);
     border-radius: var(--starmem-radius);
@@ -343,14 +550,14 @@
     background: var(--starmem-bg-elevated);
 }
 
-.starmem-viewer-trace-summary {
+.starmem-viewer .starmem-viewer-trace-summary {
     display: flex;
     gap: 0.75rem;
     font-family: ui-monospace, Menlo, Consolas, monospace;
     font-size: 0.85rem;
 }
 
-.starmem-viewer-trace-raw {
+.starmem-viewer .starmem-viewer-trace-raw {
     display: none;
     white-space: pre-wrap;
     font-family: ui-monospace, Menlo, Consolas, monospace;
@@ -361,7 +568,7 @@
     overflow-y: auto;
 }
 
-.starmem-viewer-trace.starmem-viewer-trace-expanded .starmem-viewer-trace-raw {
+.starmem-viewer .starmem-viewer-trace.starmem-viewer-trace-expanded .starmem-viewer-trace-raw {
     display: block;
 }
 
@@ -371,21 +578,21 @@
  * ========================================================================= */
 
 @media (max-width: 639px) {
-    .starmem-viewer-tabs {
+    .starmem-viewer .starmem-viewer-tabs {
         display: none;
     }
 
-    .starmem-viewer-tab-select {
+    .starmem-viewer .starmem-viewer-tab-select {
         display: block;
     }
 
-    .starmem-viewer {
+    .starmem-viewer.starmem-viewer {
         max-width: 100vw;
         max-height: 100vh;
         border-radius: 0;
     }
 
-    .starmem-viewer-body {
+    .starmem-viewer .starmem-viewer-body {
         max-height: calc(100vh - 7rem);
     }
 
@@ -399,7 +606,47 @@
         min-width: 0;
     }
 
-    .starmem-viewer-graph-canvas {
+    .starmem-viewer .starmem-viewer-graph-canvas {
         height: 250px;
+    }
+}
+
+/* =========================================================================
+ * Memorable moment—staged viewer-open reveal (600 ms total).
+ * ========================================================================= */
+
+.starmem-viewer.starmem-is-revealing .starmem-viewer-header {
+    animation: starmem-fade-up var(--starmem-dur-med) var(--starmem-ease) both;
+}
+
+.starmem-viewer.starmem-is-revealing .starmem-viewer-tab-active {
+    animation: starmem-underline-draw var(--starmem-dur-slow) var(--starmem-ease) 280ms both;
+}
+
+.starmem-viewer.starmem-is-revealing .starmem-viewer-body {
+    animation: starmem-fade-in var(--starmem-dur-med) var(--starmem-ease) 320ms both;
+}
+
+@keyframes starmem-fade-up {
+    from { opacity: 0; transform: translateY(-4px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes starmem-fade-in {
+    from { opacity: 0; }
+    to   { opacity: 1; }
+}
+
+@keyframes starmem-underline-draw {
+    from { border-bottom-color: transparent; }
+    to   { border-bottom-color: var(--starmem-accent); }
+}
+
+/* a11y respect */
+@media (prefers-reduced-motion: reduce) {
+    .starmem-viewer.starmem-is-revealing .starmem-viewer-header,
+    .starmem-viewer.starmem-is-revealing .starmem-viewer-tab-active,
+    .starmem-viewer.starmem-is-revealing .starmem-viewer-body {
+        animation: none;
     }
 }

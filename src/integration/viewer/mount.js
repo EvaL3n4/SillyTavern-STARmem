@@ -81,6 +81,12 @@ export async function openViewer(chatId, opts = {}) {
         state.close = () => { root.remove(); opts.onClose?.(); };
     }
 
+    // Memorable moment: staged entrance reveal. Class drives keyframe animations
+    // in style.css; honored unless prefers-reduced-motion is set.
+    root.classList.add('starmem-is-revealing');
+    // Cleanup so re-renders don't re-animate (post slow + small buffer)
+    setTimeout(() => root.classList.remove('starmem-is-revealing'), 900);
+
     return state;
 }
 
@@ -104,6 +110,11 @@ function buildRootElement(chatId) {
                 <button type="button" role="tab" class="${CSS_PREFIX}-viewer-tab" data-tab="${t}">${titleFor(t)}</button>
             `).join('')}
         </nav>
+        <select class="${CSS_PREFIX}-viewer-tab-select" aria-label="Select tab">
+            ${VIEWER_TABS.map(t => `
+                <option value="${t}">${titleFor(t)}</option>
+            `).join('')}
+        </select>
         <div class="${CSS_PREFIX}-viewer-body" role="tabpanel"></div>
     `;
     return root;
@@ -131,6 +142,20 @@ function wireTabs(state) {
             await renderActiveTab(state);
         });
     }
+
+    // Mobile: <select> mirror of the tab strip. CSS hides the strip and
+    // shows the select at <640px. Both control the same active-tab state.
+    const select = /** @type {HTMLSelectElement | null} */ (
+        state.root.querySelector(`.${CSS_PREFIX}-viewer-tab-select`)
+    );
+    if (select) {
+        select.addEventListener('change', async () => {
+            state.activeTab = select.value;
+            highlightActiveTab(state);
+            await renderActiveTab(state);
+        });
+    }
+
     highlightActiveTab(state);
 }
 
@@ -145,6 +170,13 @@ function highlightActiveTab(state) {
             btn.classList.remove(`${CSS_PREFIX}-viewer-tab-active`);
             btn.setAttribute('aria-selected', 'false');
         }
+    }
+
+    const select = /** @type {HTMLSelectElement | null} */ (
+        state.root.querySelector(`.${CSS_PREFIX}-viewer-tab-select`)
+    );
+    if (select && select.value !== state.activeTab) {
+        select.value = state.activeTab;
     }
 }
 
