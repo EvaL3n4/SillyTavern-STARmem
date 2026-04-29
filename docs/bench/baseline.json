@@ -110,9 +110,11 @@
   "observations": {
     "EXTRACT_MAX_TOKENS": {
       "specDefault": 2048,
-      "recommendation": "lower (candidate target: 256)",
-      "source": "observation: host-side char-proxy distribution over 1182 live Gemma extraction cache entries, 2026-04-23",
-      "note": "OVERBUDGETED (observation only, not an amendment). 9.5 post-cache analysis: p95 extraction response length is ~280 chars \u2248 70 tokens (chars/4 proxy). Spec default 2048 is ~29x overbudget for observed live Gemma output on LoCoMo. A lower default (256 \u2014 still 3.5x the p95 observed) would save latency and token cost without affecting any observed output. Not swept in 9.5 (cache-key-flow Pattern 1 \u2014 EXTRACT_MAX_TOKENS sits in the extraction cache key directly, same cache-invalidation class as BATCH_SIZE). Stored under observations/ rather than tuned/ because it's not in _SWEPT_RETRIEVAL_KEYS (it's a direct LLM param, not a swept retrieval knob). Filed as Phase 11 candidate: sweep against a fresh cache or use a sub-knob design that keeps output-size observations warm."
+      "measured": 4096,
+      "verdict": "AMENDED",
+      "phase": "14",
+      "sweep": "sweeps/2026-04-29-longmemeval-extract-max-tokens-live.md",
+      "note": "AMENDED (Phase 14 Task 6, correctness fix). 2048 ceiling caused truncated extractions on dense LongMemEval-S batches at BATCH_SIZE=15, producing ExtractionParseError on cache replay. 4096 recovers 6 truncation-skipped items (n_scored 393 → 399, coverage 0.8362 → 0.8489 = +1.27pp), MRR 0.9038 → 0.9128 (+0.0090). 6144 sanity check is noise vs 4096 (n_scored 390, coverage 0.8298, MRR 0.9058 = -0.0070). LoCoMo regression smoke at 4096: MRR 0.8134, coverage 0.7397, n_scored 1469/1986, parseFailures 0 — within ±0.005 of historical baselines. Mechanical elbow detector returned 'hold at spec' (axis-flat on ΔMRR/Δknob = 4e-6); overridden on correctness grounds — efficiency-knob gate misapplied to correctness knob. Supersedes 9.5's OVERBUDGETED 256 observation: that was efficiency-framed against LoCoMo (where truncation didn't bind); LongMemEval-S exposed the correctness floor."
     }
   },
   "headlineMetrics": {

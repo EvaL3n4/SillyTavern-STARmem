@@ -159,8 +159,8 @@ describe('setConstantOverrides / resetConstantOverrides', () => {
 
     test('P14 T5.5: EXTRACT_MAX_TOKENS override lands on CONSOLIDATION and restores', () => {
         const before = CONSOLIDATION.EXTRACT_MAX_TOKENS;
-        const restore = setConstantOverrides({ EXTRACT_MAX_TOKENS: 4096 });
-        expect(CONSOLIDATION.EXTRACT_MAX_TOKENS).toBe(4096);
+        const restore = setConstantOverrides({ EXTRACT_MAX_TOKENS: 6144 });
+        expect(CONSOLIDATION.EXTRACT_MAX_TOKENS).toBe(6144);
         restore();
         expect(CONSOLIDATION.EXTRACT_MAX_TOKENS).toBe(before);
     });

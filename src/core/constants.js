@@ -121,13 +121,17 @@ export const CONSOLIDATION = {
     /**
      * LLM max tokens for fact extraction. Spec §6.1.
      *
-     * Phase 12 Task 7: surfaced when the Modal vLLM warmup wrote truncated
-     * responses to the on-disk cache (ceiling hit on dense LongMemEval-S
-     * batches), which then fail to parse on cache replay during sweeps.
-     * Phase 14 Task 6 will sweep {2048, 4096, 6144} to determine the
-     * correct ceiling.
+     * Phase 14 Task 6 amended 2048 → 4096 (correctness fix, not efficiency).
+     * The 2048 ceiling was hit on dense LongMemEval-S batches at
+     * BATCH_SIZE=15, producing truncated responses that failed cache-replay
+     * parsing (ExtractionParseError). Sweep:
+     * docs/bench/sweeps/2026-04-29-longmemeval-extract-max-tokens-live.md.
+     * Mechanical elbow detector returned "hold at spec" — calibrated for
+     * efficiency knobs (ΔMRR/Δknob gate). Overridden on correctness
+     * grounds: 4096 recovers 6 truncation-skipped items (n_scored 393 →
+     * 399), lifts coverage +1.27pp. 6144 is noise vs 4096.
      */
-    EXTRACT_MAX_TOKENS: 2048,
+    EXTRACT_MAX_TOKENS: 4096,
 };
 
 /** Persona rebuild (Enhanced RAPTOR) parameters. Spec §6.4 / wiki/raptor.md. */

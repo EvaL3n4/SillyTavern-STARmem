@@ -167,6 +167,22 @@ Single function: `extractFacts(batch, context) → Entry[]`
 - Output is JSON-schema-constrained (`entries: Entry[]`).
 - No Child/Tertiary distinction in v2—one extraction model, user-configured.
 
+> **Tuning amendment (Phase 14 Task 6, 2026-04-29):** `EXTRACT_MAX_TOKENS` default is **4096** (was 2048).
+> This is a **correctness fix, not an efficiency tuning**. The 2048 ceiling was hit on
+> dense LongMemEval-S batches at BATCH_SIZE=15, producing truncated extractions that
+> failed cache-replay parsing (ExtractionParseError). Sweep:
+> `docs/bench/sweeps/2026-04-29-longmemeval-extract-max-tokens-live.md`.
+> 4096 recovers 6 truncation-skipped items (n_scored 393 → 399), coverage +1.27pp
+> (0.8362 → 0.8489), MRR +0.0090 (0.9038 → 0.9128). 6144 sanity check is noise
+> vs 4096 (n_scored 390, coverage 0.8298, MRR 0.9058 = −0.0070). LoCoMo regression
+> smoke at 4096: MRR 0.8134, coverage 0.7397, n_scored 1469/1986, parseFailures 0 —
+> within ±0.005 of historical baselines, no regression. Mechanical elbow detector
+> returned "hold at spec" (maxΔ/Δknob = 4e-6 ≤ 0.005); detector gates on ΔMRR/Δknob —
+> calibrated for **efficiency knobs**. EXTRACT_MAX_TOKENS is a **correctness knob**;
+> relevant gate is n_scored / coverage, both moved with predicted sign. Override is
+> documented, not silent. Plan flagged this in advance (phase-14-v2-closure.md L774:
+> "expected amend trigger is coverage, not MRR").
+
 ### 6.2 Consolidation Trigger
 
 `maybeConsolidate()` fires when either:

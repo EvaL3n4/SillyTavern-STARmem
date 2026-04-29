@@ -95,6 +95,10 @@ describe('constants', () => {
         expect(CONSOLIDATION.DEDUP_JACCARD_THRESHOLD).toBe(0.7);
     });
 
+    test('EXTRACT_MAX_TOKENS is 4096 (Phase 14 Task 6 amended 2048→4096; see docs/bench/sweeps/2026-04-29-longmemeval-extract-max-tokens-live.md)', () => {
+        expect(CONSOLIDATION.EXTRACT_MAX_TOKENS).toBe(4096);
+    });
+
     test('TRACE_BUFFER_CAP matches Phase 4 decision (spec §12.4 resolution)', () => {
         expect(TRACE_BUFFER_CAP).toBe(128);
     });
