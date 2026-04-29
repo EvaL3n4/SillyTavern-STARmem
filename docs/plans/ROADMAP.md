@@ -533,6 +533,8 @@ _Appended after each phase ships. Format: `## Phase N—<date>`, with notes on s
 
 **Phase 15 closes as honest structural work.** Phase 16+ inherits the test substrate and theme-contract discipline this phase laid down.
 
+**Forward note (2026-04-29):** Public-ship reframe — T6/T7/T8 reopened under custom visual identity in Phase 16 (`docs/plans/phase-16-public-ship.md`). Host-ceiling lesson amended as conditional on internal-vs-public use mode. See `phase-15-retro.md` §6.
+
 ---
 
 ## Phase 14—2026-04-29

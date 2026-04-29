@@ -134,4 +134,44 @@ I'd file this as a candidate but defer the actual skill patch — one datapoint 
 
 ---
 
+---
+
+## 6. Amendment 2026-04-29 — host-ceiling lesson is conditional on use mode
+
+The §3.3 lesson ("Visual ceilings are real and host-imposed") and the §4
+prohibition ("Do not re-attempt T6/T7/T8") were correct under the framing
+in effect when this retro was written: STARmem as a private internal tool,
+where polish-fighting-host-ceiling is corncob work because no one outside
+the author sees the result.
+
+**Public ship inverts the calculus.** The extension installer experiences
+STARmem's surface *as the product*, not as "ST with a corner that doesn't
+matter." First impressions of a public release weight visual quality high
+enough that the ceiling argument no longer dominates. Phase 16
+(`docs/plans/phase-16-public-ship.md`) re-opens T6/T7/T8 as cosmetic tasks
+under a custom visual identity ("Quiet Library") and ships the
+public-readiness pass alongside.
+
+**The amended lesson.** *Visual ceilings are real and host-imposed —
+**conditional on whether the extension's surface is part of its product**.
+For internal-use extensions, default to inheriting and skip cosmetic work.
+For public-ship extensions, the cosmetic acceptance criterion is part of
+the product, not corncob.* The Phase 15 plan was right to drop the work
+**at the time it was drafted**. The Phase 16 plan is right to revive it
+**under the new framing**.
+
+The structural deliverables Phase 15 shipped (Playwright harness, JS color
+guard, CSS token audit) remain load-bearing for Phase 16: the harness
+extends with cosmetic-task assertions; the guard prevents regressions
+during identity work; the token discipline scales to spacing/type/motion.
+
+The §3.1 lesson ("Don't bundle structural work with cosmetic work as a
+single phase") still holds and is enforced more rigorously in Phase 16
+via per-task `[structural] / [cosmetic] / [doc] / [gate] / [public-ship]`
+tags with independent acceptance criteria.
+
+**End of amendment.**
+
+---
+
 **End of retro.**
