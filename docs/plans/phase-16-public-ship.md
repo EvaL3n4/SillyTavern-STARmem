@@ -173,7 +173,7 @@ and public-ship hygiene (manifest bump, README, CHANGELOG, install doc)."
 ```bash
 mkdir -p /tmp/extension-references
 cd /tmp/extension-references
-git clone --depth 1 https://github.com/RivelleDays/SillyTavern-MoonlitEchoes.git MoonlitEchoes 2>&1 | tail -3
+git clone --depth 1 https://github.com/RivelleDays/SillyTavern-MoonlitEchoesTheme.git MoonlitEchoesTheme 2>&1 | tail -3
 # If that URL 404s, try:
 #   git clone --depth 1 https://github.com/RivelleDays/MoonlitEchoes.git MoonlitEchoes
 # If still 404, fall back to a search on the ST extension list and pick a top-installed one.
