@@ -37,6 +37,7 @@ import { CONSOLIDATION } from '../core/constants.js';
 import { addEdge, removeEdge, buildEdges } from '../memory/index.js';
 import { applyUpdateEvent } from '../lifecycle/index.js';
 import { invalidateTier0Cache } from '../retrieval/tier0-exact.js';
+import { logTrace } from '../retrieval/trace.js';
 import { extractFacts, ExtractionParseError } from './extractFacts.js';
 import { findDuplicate } from './dedup.js';
 import { createLogger } from '../core/logger.js';
@@ -89,6 +90,7 @@ export async function consolidate(chatId, opts) {
     }
 
     return withWriteLock(chatId, async () => {
+        const startedAt = Date.now();
         const state = await loadState(chatId);
 
         // In-flight guard. If state.runtime.consolidating is already true from
@@ -160,15 +162,31 @@ export async function consolidate(chatId, opts) {
                     `consolidate: extraction parse failed (responseLength=${err.responseLength ?? '?'}); ` +
                     `dropping batch of ${batchEntries.length} entries`,
                 );
-                const drained = {
+                const clock = now ?? new Date();
+                const trace = {
+                    kind: 'consolidate',
+                    timestamp: clock.toISOString(),
+                    chatId,
+                    summary: {
+                        factCount: 0,
+                        added: 0,
+                        updated: 0,
+                        scope: 'episodic',
+                        error: 'parse_failure',
+                    },
+                    durationMs: Date.now() - startedAt,
+                    extractor: extractorLabel,
+                };
+                let drained = {
                     ...state,
                     workingBuffer: state.workingBuffer.slice(r),
                     runtime: {
                         ...state.runtime,
                         consolidating: false,
-                        lastConsolidation: (now ?? new Date()).toISOString(),
+                        lastConsolidation: clock.toISOString(),
                     },
                 };
+                drained = logTrace(drained, trace);
                 await persistState(chatId, drained);
                 return { added: 0, updated: 0, drained: r, parseFailures: 1, entriesSkipped: 0 };
             }
@@ -249,6 +267,21 @@ export async function consolidate(chatId, opts) {
                 lastConsolidation: clock.toISOString(),
             },
         };
+
+        const trace = {
+            kind: 'consolidate',
+            timestamp: clock.toISOString(),
+            chatId,
+            summary: {
+                factCount: extracted.entries.length,
+                added,
+                updated,
+                scope: 'episodic',
+            },
+            durationMs: Date.now() - startedAt,
+            extractor: extractorLabel,
+        };
+        work = logTrace(work, trace);
 
         await persistState(chatId, work);
         return { added, updated, drained: r, parseFailures: 0, entriesSkipped: extracted.skipped };

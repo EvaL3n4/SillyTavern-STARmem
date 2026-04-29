@@ -95,12 +95,41 @@ function buildTraceItem(trace) {
 
     const summary = document.createElement('div');
     summary.className = `${CSS_PREFIX}-viewer-traces-summary`;
+
+    if (trace.kind === 'consolidate') {
+        const ts = trace.timestamp ? formatTimestamp(trace.timestamp) : '(no ts)';
+        const factCount = trace.summary?.factCount ?? '?';
+        const dur = typeof trace.durationMs === 'number' ? `${trace.durationMs}ms` : '?';
+        const ext = trace.extractor ?? '?';
+        const errMark = trace.summary?.error ? ' · failed' : '';
+        const badge = document.createElement('span');
+        badge.className = `${CSS_PREFIX}-tier-badge ${CSS_PREFIX}-tier-badge-event`;
+        badge.textContent = 'consolidate';
+        summary.appendChild(badge);
+        const text = document.createTextNode(`${ts} · ${factCount} facts · ${dur} · ${ext}${errMark}`);
+        summary.appendChild(text);
+        li.appendChild(summary);
+
+        const details = document.createElement('details');
+        details.className = `${CSS_PREFIX}-viewer-traces-details`;
+        const sumEl = document.createElement('summary');
+        sumEl.textContent = 'raw';
+        details.appendChild(sumEl);
+        const pre = document.createElement('pre');
+        pre.className = `${CSS_PREFIX}-viewer-traces-raw`;
+        pre.textContent = JSON.stringify(trace, null, 2);
+        details.appendChild(pre);
+        li.appendChild(details);
+        return li;
+    }
+
+    // Retrieve (existing path)
     const ts = trace.timestamp ? formatTimestamp(trace.timestamp) : '(no ts)';
     const cls = trace.classifier ?? '?';
     const tier = trace.tierResolved ?? '?';
     const top = getTopScore(trace);
     const query = truncate(trace.query ?? '', 60);
-    summary.textContent = `${ts} • T${tier}/${cls} • top=${top !== null ? top.toFixed(2) : 'n/a'} • "${query}"`;
+    summary.textContent = `${ts} · T${tier}/${cls} · top=${top !== null ? top.toFixed(2) : 'n/a'} · "${query}"`;
     li.appendChild(summary);
 
     const details = document.createElement('details');
