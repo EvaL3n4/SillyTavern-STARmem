@@ -1,4 +1,4 @@
-# Phase 16 — Public Ship: UI/UX Identity + Structural Survivors
+# Phase 16—Public Ship: UI/UX Identity + Structural Survivors
 
 > **For Hermes:** Use `subagent-driven-development` for tasks tagged `[structural]`.
 > Controller-only for `[doc]`, `[gate]`, `[public-ship]`.
@@ -7,7 +7,7 @@
 **Goal:** Ship STARmem v2.0 publicly with a designed UI, the structural survivors from the Phase 15 rescope (T4 trace events, T5 tier label honesty, T9 viewer ARIA), and complete public-ship hygiene (README, CHANGELOG, install doc, repo metadata).
 
 **Architecture:**
-- Visual identity is drafted **once** as an HTML mockup (Task 1) under the `frontend-design` skill's "pick one and execute" rule. Eva eyeballs the mockup as a **gate** (per Phase 15 lesson 3.2). Per-component cosmetic tasks land against the approved mockup — no exploratory cosmetic work after the gate fires.
+- Visual identity is drafted **once** as an HTML mockup (Task 1) under the `frontend-design` skill's "pick one and execute" rule. Eva eyeballs the mockup as a **gate** (per Phase 15 lesson 3.2). Per-component cosmetic tasks land against the approved mockup—no exploratory cosmetic work after the gate fires.
 - Per-task acceptance criteria are tagged `[structural] / [cosmetic] / [doc] / [gate] / [public-ship]`. Structural tasks ship on tests-pass. Cosmetic tasks ship on eyeball + Playwright smoke. Independent verdicts.
 - Tokens: STARmem inherits ST color tokens (`var(--SmartTheme*)`) but **defines its own** spacing, typography, elevation, radius, and motion tokens. Layout/density/rhythm is ours; user theme picks (Catppuccin etc.) still reach color.
 
@@ -23,8 +23,8 @@
 4. **Per-task tags + independent acceptance.** `[structural]` ships on green tests. `[cosmetic]` ships on Eva approve + Playwright smoke green. `[doc] / [public-ship]` ship on Eva approve. A cosmetic-task failure cannot block a structural ship.
 5. **Token strategy.** Color: inherit ST tokens via `var(--SmartTheme*, fallback)` (unchanged). Spacing / typography / elevation / radius / motion: define our own under `--starmem-*` namespace. Phase 15 already laid `--starmem-overlay`, `--starmem-bg-elevated`, `--starmem-danger`; Phase 16 expands this token surface meaningfully.
 6. **Public-ship pass with reference clone.** Task 0.5 clones MoonlitEchoes (or a comparable popular ST extension) into `/tmp/` for reference, files `docs/research/extension-install-conventions.md` capturing the install/README shape; Task 9 calibrates ours against it. Manifest + package.json bump from `2.0.0-dev` to `2.0.0`. README rewrite. CHANGELOG from scratch. `docs/install.md`. One screenshot in repo. GitHub repo description + topics (Eva runs the gh commands; plan provides the exact text).
-7. **Playwright assertion per cosmetic task.** Each cosmetic task adds 1–2 sanity assertions (presence, ARIA role, computed property like `.classList.contains('starmem-X')`, `.style.borderRadius` non-empty) — never pixel snapshots. Keeps the harness compounding without flake.
-8. **Plan size + execution mode.** Target ~1800 lines, 11 tasks. Strict serial dispatch — **no parallel subagent work**. Controller drives `[doc]`, `[gate]`, `[public-ship]`; subagents drive `[structural]`; controller drafts then subagent-dispatches `[cosmetic]` one task at a time, with eyeball verdict between each. Eva owns Task 1 mockup verdict and Task 9 GitHub repo metadata commands.
+7. **Playwright assertion per cosmetic task.** Each cosmetic task adds 1–2 sanity assertions (presence, ARIA role, computed property like `.classList.contains('starmem-X')`, `.style.borderRadius` non-empty)—never pixel snapshots. Keeps the harness compounding without flake.
+8. **Plan size + execution mode.** Target ~1800 lines, 11 tasks. Strict serial dispatch—**no parallel subagent work**. Controller drives `[doc]`, `[gate]`, `[public-ship]`; subagents drive `[structural]`; controller drafts then subagent-dispatches `[cosmetic]` one task at a time, with eyeball verdict between each. Eva owns Task 1 mockup verdict and Task 9 GitHub repo metadata commands.
 9. **Out-of-scope restated.** Not in this phase: pixel-perfect snapshot tests (deferred to v2.1 if appetite); Storybook or component playground (overkill for 4 surfaces); custom font loading from CDN (use system serif stack); animated SVG illustrations (scope creep); v1-to-v2 migration (already cut by spec §11); analytics/telemetry of any kind.
 
 ---
@@ -38,7 +38,7 @@
 | 1 | `[gate]` | `examples/identity-mockup.html` | Visual identity mockup ("Quiet Library") → Eva verdicts |
 | 2 | `[structural]` | `src/consolidation/consolidate.js`, `src/integration/viewer/tabs/traces.js`, tests | T4: Traces consolidation events |
 | 3 | `[structural]` | `src/integration/viewer/tabs/traces.js`, tests | T5: Tier label honesty (post-Phase-14 ladder is `0/1/3/Floor`) |
-| 4 | `[cosmetic]` | `style.css`, `src/integration/viewer/mount.js`, e2e | Visual identity pass — token system + viewer shell |
+| 4 | `[cosmetic]` | `style.css`, `src/integration/viewer/mount.js`, e2e | Visual identity pass—token system + viewer shell |
 | 5 | `[cosmetic]` | `src/integration/indicator.js`, `style.css`, e2e | T6 successor: consolidation indicator |
 | 6 | `[cosmetic]` | `src/integration/viewer/tabs/episodic.js`, `style.css`, e2e | T7 successor: episodic tab visual treatment |
 | 7 | `[cosmetic]` | `src/integration/settingsPanel.js`, `style.css`, e2e | T8 successor: settings panel layout |
@@ -67,14 +67,14 @@ If any of those are off, stop and resync before starting.
 
 ## Task 0: Plan commit + Phase 15 retro amendment + ROADMAP forward pointer
 
-**Tag:** `[doc]` — controller-only.
+**Tag:** `[doc]`—controller-only.
 
 **Objective:** Lock the reframe: Phase 15's "host visual ceiling = corncob" verdict was correct under internal-use constraints; public ship inverts the calculus. Land the amendment + plan + ROADMAP forward pointer in a single commit so future readers see the reframe before stumbling on the dropped-T6/T7/T8 verdict.
 
 **Files:**
 - Create: `docs/plans/phase-16-public-ship.md` (this file, already drafted)
 - Modify: `docs/plans/phase-15-retro.md` (append amendment subsection)
-- Modify: `docs/plans/ROADMAP.md` (append forward-pointer to Phase 15 entry; do NOT rewrite history — layer the reframe)
+- Modify: `docs/plans/ROADMAP.md` (append forward-pointer to Phase 15 entry; do NOT rewrite history—layer the reframe)
 
 **Step 1: Append amendment to `phase-15-retro.md`**
 
@@ -83,7 +83,7 @@ After §5 ("v2.1 candidates filed from Phase 15"), before "**End of retro.**", i
 ```markdown
 ---
 
-## 6. Amendment 2026-04-29 — host-ceiling lesson is conditional on use mode
+## 6. Amendment 2026-04-29—host-ceiling lesson is conditional on use mode
 
 The §3.3 lesson ("Visual ceilings are real and host-imposed") and the §4
 prohibition ("Do not re-attempt T6/T7/T8") were correct under the framing
@@ -98,7 +98,7 @@ enough that the ceiling argument no longer dominates. Phase 16 (`docs/plans/phas
 re-opens T6/T7/T8 as cosmetic tasks under a custom visual identity ("Quiet
 Library") and ships the public-readiness pass alongside.
 
-**The amended lesson.** *Visual ceilings are real and host-imposed —
+**The amended lesson.** *Visual ceilings are real and host-imposed—
 **conditional on whether the extension's surface is part of its product**.
 For internal-use extensions, default to inheriting and skip cosmetic work.
 For public-ship extensions, the cosmetic acceptance criterion is part of
@@ -125,7 +125,7 @@ In `docs/plans/ROADMAP.md`, after the Phase 15 closing line (`**Phase 15 closes 
 
 ```markdown
 
-**Forward note (2026-04-29):** Public-ship reframe — T6/T7/T8 reopened under custom visual identity in Phase 16 (`docs/plans/phase-16-public-ship.md`). Host-ceiling lesson amended as conditional on internal-vs-public use mode. See `phase-15-retro.md` §6.
+**Forward note (2026-04-29):** Public-ship reframe—T6/T7/T8 reopened under custom visual identity in Phase 16 (`docs/plans/phase-16-public-ship.md`). Host-ceiling lesson amended as conditional on internal-vs-public use mode. See `phase-15-retro.md` §6.
 ```
 
 **Step 3: Verify counts**
@@ -160,7 +160,7 @@ and public-ship hygiene (manifest bump, README, CHANGELOG, install doc)."
 
 ## Task 0.5: Reference-extension clone + install conventions doc
 
-**Tag:** `[doc]` — controller-only.
+**Tag:** `[doc]`—controller-only.
 
 **Objective:** Capture how popular ST extensions structure their install instructions, README, and repo metadata, so Task 9's public-ship pass calibrates against community norms instead of inventing them. MoonlitEchoes by RivelleDays is the canonical reference (Eva's pick); fall back to whatever has high install counts on the ST extension list if that one is unreachable.
 
@@ -202,7 +202,7 @@ Create `docs/research/extension-install-conventions.md` with sections:
 
 > Reference notes for STARmem's public-ship pass (Phase 16 Task 9). Captured
 > from MoonlitEchoes (RivelleDays) and other community extensions on
-> 2026-04-29. Not normative — STARmem deviates where the deviation is honest
+> 2026-04-29. Not normative—STARmem deviates where the deviation is honest
 > (e.g. our 8K+ LOC + benchmarking surface justifies a richer docs/ tree
 > than a typical UI-only extension).
 
@@ -226,7 +226,7 @@ Create `docs/research/extension-install-conventions.md` with sections:
 | Compatibility / requires | ... | absent | **add** (we're an interceptor + viewer; ST version matters) |
 | FAQ / troubleshooting | ... | absent | skip in v2.0 |
 | License | present | present | keep |
-| Credits / citations | absent | present | keep (we cite papers — that's our identity) |
+| Credits / citations | absent | present | keep (we cite papers—that's our identity) |
 
 ## 3. Install instructions shape
 
@@ -235,7 +235,7 @@ The community-standard install block looks like:
 ```
 1. In SillyTavern, click the Extensions icon (puzzle piece).
 2. Click "Install Extension" at the top right.
-3. Paste this URL: https://github.com/<owner>/<repo>
+3. Paste this URL: https://github.com/EvaL3n4/SillyTavern-STARmem
 4. Click "Install".
 ```
 
@@ -248,13 +248,13 @@ STARmem's per-AGENTS.md install discipline is git-clone-based.)
 
 Fields observed across reference extensions:
 
-- `display_name` — human-readable, can include emoji
-- `loading_order` — integer, default 100
-- `requires` — array of feature flags ST exposes
-- `optional` — array of soft requirements
-- `version` — semver, no `-dev` suffix on shipped releases
-- `homePage` — repo URL
-- `author` — string
+- `display_name`—human-readable, can include emoji
+- `loading_order`—integer, default 100
+- `requires`—array of feature flags ST exposes
+- `optional`—array of soft requirements
+- `version`—semver, no `-dev` suffix on shipped releases
+- `homePage`—repo URL
+- `author`—string
 
 Our manifest.json: <pull current state, list what we have vs reference>.
 
@@ -281,12 +281,12 @@ Format: Keep a Changelog 1.1.0 conventions, semver headings, ISO dates.
 ## 7. Repo metadata (gh CLI)
 
 ```bash
-gh repo edit <owner>/<repo> --description "<one-line description>"
-gh repo edit <owner>/<repo> --add-topic sillytavern
-gh repo edit <owner>/<repo> --add-topic memory
-gh repo edit <owner>/<repo> --add-topic roleplay
-gh repo edit <owner>/<repo> --add-topic llm
-gh repo edit <owner>/<repo> --add-topic extension
+gh repo edit EvaL3n4/SillyTavern-STARmem --description "<one-line description>"
+gh repo edit EvaL3n4/SillyTavern-STARmem --add-topic sillytavern
+gh repo edit EvaL3n4/SillyTavern-STARmem --add-topic memory
+gh repo edit EvaL3n4/SillyTavern-STARmem --add-topic roleplay
+gh repo edit EvaL3n4/SillyTavern-STARmem --add-topic llm
+gh repo edit EvaL3n4/SillyTavern-STARmem --add-topic extension
 ```
 
 Eva runs these (Task 9). Plan provides the exact strings.
@@ -299,7 +299,7 @@ Eva runs these (Task 9). Plan provides the exact strings.
   We do because spec compliance is structurally enforced. Keep.
 - **`docs/plans/` and `docs/bench/`.** Most extensions don't ship dev
   process artifacts. We do because the phased plan + benchmark substrate
-  is part of the project's discipline. Keep — they're a feature, not
+  is part of the project's discipline. Keep—they're a feature, not
   noise, for technically-curious installers.
 
 ## 9. Deviations from convention STARmem will adopt
@@ -333,9 +333,9 @@ rm -rf /tmp/extension-references
 
 ---
 
-## Task 1: Visual identity mockup — "Quiet Library" (eyeball gate)
+## Task 1: Visual identity mockup—"Quiet Library" (eyeball gate)
 
-**Tag:** `[gate]` — controller-only. **Eva verdicts before any cosmetic task is dispatched.**
+**Tag:** `[gate]`—controller-only. **Eva verdicts before any cosmetic task is dispatched.**
 
 **Objective:** Produce one self-contained HTML file rendering all four cosmetic surfaces (viewer × 3 representative tabs, settings panel, indicator) at the target visual fidelity. Eva opens it in a browser, judges it, and either approves (cosmetic tasks proceed) or sends it back for revision (cheap to redraw at this stage; expensive to rewrite per-component cosmetic work later).
 
@@ -352,8 +352,8 @@ This is the lesson 3.2 fix: schedule the eyeball as a **gate** at Task 1, not a 
 - ✅ Anti-patterns avoided: no SaaS hero pattern, no card grid pile, no random accent colors, motion serves hierarchy not decoration
 
 **Files:**
-- Create: `examples/identity-mockup.html` (self-contained — no external deps, no JS framework, vanilla everything)
-- Create: `examples/.gitignore` (empty placeholder if needed) — actually, examples/ is committed
+- Create: `examples/identity-mockup.html` (self-contained—no external deps, no JS framework, vanilla everything)
+- Create: `examples/.gitignore` (empty placeholder if needed)—actually, examples/ is committed
 - Create: `examples/README.md` (one paragraph: what this is, how to view it)
 
 **Step 1: Author the mockup HTML**
@@ -365,7 +365,7 @@ Create `examples/identity-mockup.html` with:
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <title>STARmem — Quiet Library identity mockup</title>
+  <title>STARmem—Quiet Library identity mockup</title>
   <style>
     /* --- ST token simulation (eyeball-mode only; real install inherits from ST) --- */
     :root {
@@ -391,7 +391,7 @@ Create `examples/identity-mockup.html` with:
       --starmem-overlay: rgba(0, 0, 0, 0.55);
       --starmem-danger: #c66c5a;
 
-      /* Typography — Quiet Library: serif display, inherited body, monospace for data */
+      /* Typography—Quiet Library: serif display, inherited body, monospace for data */
       --starmem-font-display: 'Iowan Old Style', 'Palatino Linotype', 'Palatino', 'URW Palladio L', 'Book Antiqua', Georgia, serif;
       --starmem-font-body: inherit; /* body inherits ST's font choice */
       --starmem-font-mono: ui-monospace, 'JetBrains Mono', 'Cascadia Code', Menlo, Consolas, monospace;
@@ -405,7 +405,7 @@ Create `examples/identity-mockup.html` with:
       --starmem-tracking-display: -0.005em; /* subtle tightening on serif display */
       --starmem-tracking-meta: 0.04em;       /* slight track-out on small caps / labels */
 
-      /* Spacing rhythm — 4px base, 1.5× ratio for major steps */
+      /* Spacing rhythm—4px base, 1.5× ratio for major steps */
       --starmem-space-1: 0.25rem;
       --starmem-space-2: 0.5rem;
       --starmem-space-3: 0.75rem;
@@ -414,13 +414,13 @@ Create `examples/identity-mockup.html` with:
       --starmem-space-6: 2.25rem;
       --starmem-space-7: 3.5rem;
 
-      /* Elevation — paper-like, never glossy */
+      /* Elevation—paper-like, never glossy */
       --starmem-elev-0: none;
       --starmem-elev-1: 0 1px 0 var(--starmem-border-faint);
       --starmem-elev-2: 0 1px 2px rgba(0, 0, 0, 0.18), 0 0 0 1px var(--starmem-border-faint);
       --starmem-elev-3: 0 6px 24px rgba(0, 0, 0, 0.28), 0 0 0 1px var(--starmem-border);
 
-      /* Radius — restrained; serif identity wants modest curves */
+      /* Radius—restrained; serif identity wants modest curves */
       --starmem-radius-1: 2px;
       --starmem-radius-2: 4px;
       --starmem-radius-3: 6px;
@@ -557,7 +557,7 @@ Create `examples/identity-mockup.html` with:
       min-height: 280px;
     }
 
-    /* === Episodic tab content (representative — Task 6 successor) === */
+    /* === Episodic tab content (representative—Task 6 successor) === */
     .starmem-viewer-episodic {
       display: grid;
       gap: var(--starmem-space-5);
@@ -594,7 +594,7 @@ Create `examples/identity-mockup.html` with:
       white-space: nowrap;
     }
 
-    /* === Traces tab content (representative — Task 2 + Task 3) === */
+    /* === Traces tab content (representative—Task 2 + Task 3) === */
     .starmem-viewer-traces-list { list-style: none; padding: 0; margin: 0; }
     .starmem-viewer-traces-item {
       padding: var(--starmem-space-3) 0;
@@ -621,7 +621,7 @@ Create `examples/identity-mockup.html` with:
       border-style: dashed;
     }
 
-    /* === Settings panel (representative — Task 7 successor) === */
+    /* === Settings panel (representative—Task 7 successor) === */
     .starmem-settings {
       background: var(--starmem-bg-elevated);
       border-radius: var(--starmem-radius-3);
@@ -748,7 +748,7 @@ Create `examples/identity-mockup.html` with:
 <div class="demo-frame">
 
   <header>
-    <h1 class="starmem-viewer-title" style="margin-bottom: var(--starmem-space-2)">STARmem — Quiet Library</h1>
+    <h1 class="starmem-viewer-title" style="margin-bottom: var(--starmem-space-2)">STARmem—Quiet Library</h1>
     <p style="color: var(--starmem-fg-muted); margin: 0;">Visual identity mockup for Phase 16. Open this file in a browser; click <span class="reveal-trigger" id="replay">↻ replay reveal</span> to see the entrance animation.</p>
   </header>
 
@@ -800,7 +800,7 @@ Create `examples/identity-mockup.html` with:
   </section>
 
   <section>
-    <div class="demo-section-label">Memory Viewer · Traces tab — with consolidation events (T4) and tier 0/1/3/Floor labels (T5)</div>
+    <div class="demo-section-label">Memory Viewer · Traces tab—with consolidation events (T4) and tier 0/1/3/Floor labels (T5)</div>
     <div class="starmem-viewer">
       <div class="starmem-viewer-header">
         <h2 class="starmem-viewer-title">Memory Viewer</h2>
@@ -828,7 +828,7 @@ Create `examples/identity-mockup.html` with:
             <div class="starmem-viewer-traces-summary"><span class="starmem-tier-badge">T0</span>13:46:50Z · factual · top=1.00 · "alanis brother"</div>
           </li>
           <li class="starmem-viewer-traces-item">
-            <div class="starmem-viewer-traces-summary"><span class="starmem-tier-badge">Floor</span>13:42:11Z · — · top=n/a · "(empty corpus)"</div>
+            <div class="starmem-viewer-traces-summary"><span class="starmem-tier-badge">Floor</span>13:42:11Z ·—· top=n/a · "(empty corpus)"</div>
           </li>
         </ol>
       </div>
@@ -911,15 +911,15 @@ extension at runtime. Open in a browser to view.
 
 Open `examples/identity-mockup.html` in any modern browser. Verdict options:
 
-- **Approve** — cosmetic tasks (4–7) proceed against this mockup. Token values, fonts, motion, spacing land into `style.css` in Task 4. Subsequent cosmetic tasks reuse them.
-- **Approve with notes** — list specific changes (e.g. "subject heading too large", "indicator pulse too slow", "tab underline too thin"). Plan author patches the mockup, Eva re-verdicts, then proceeds.
-- **Reject** — direction is wrong. Discuss alternative direction; redraft mockup; re-verdict. Cosmetic tasks blocked until approval.
+- **Approve**—cosmetic tasks (4–7) proceed against this mockup. Token values, fonts, motion, spacing land into `style.css` in Task 4. Subsequent cosmetic tasks reuse them.
+- **Approve with notes**—list specific changes (e.g. "subject heading too large", "indicator pulse too slow", "tab underline too thin"). Plan author patches the mockup, Eva re-verdicts, then proceeds.
+- **Reject**—direction is wrong. Discuss alternative direction; redraft mockup; re-verdict. Cosmetic tasks blocked until approval.
 
 **Step 4: Commit**
 
 ```bash
 git add examples/identity-mockup.html examples/README.md
-git commit -m "docs(examples): identity mockup — Quiet Library (P16 T1)
+git commit -m "docs(examples): identity mockup—Quiet Library (P16 T1)
 
 Visual identity gate for Phase 16 cosmetic tasks. Editorial-leaning
 literary archive aesthetic; serif display, inherited body, monospace for
@@ -941,20 +941,20 @@ Eva eyeballs this before any cosmetic task is dispatched."
 
 ---
 
-## Task 2: T4 — Memory Viewer Traces consolidation events
+## Task 2: T4—Memory Viewer Traces consolidation events
 
-**Tag:** `[structural]` — subagent-friendly. Ships on green tests.
+**Tag:** `[structural]`—subagent-friendly. Ships on green tests.
 
 **Objective:** Surface consolidation runs in the Traces tab as a distinct row type. The trace shape was pre-scoped in Phase 15 plan Task 4: `{kind: 'consolidate', timestamp, chatId, summary: { factCount, scope }, durationMs, extractor}`. Wire `consolidate()` to push this entry onto `state.runtime.traces`; render it in `traces.js` with a distinguishing badge.
 
-**Why this survives the rescope:** Real value for debugging consolidation issues — the user-facing artifact pairs retrievals and writes on a single timeline, makes "did consolidation run after that turn?" answerable in two glances.
+**Why this survives the rescope:** Real value for debugging consolidation issues—the user-facing artifact pairs retrievals and writes on a single timeline, makes "did consolidation run after that turn?" answerable in two glances.
 
 **Files:**
-- Modify: `src/consolidation/consolidate.js` — append a trace entry on success and on failure
-- Modify: `src/integration/viewer/tabs/traces.js` — render `kind === 'consolidate'` rows distinctly
-- Create: `tests/unit/consolidation/consolidate-trace.test.js` — pin trace-emission shape
-- Create: `tests/unit/integration/viewer/traces-consolidation.test.js` — pin render shape
-- Modify: `tests/integration/viewer/traces.test.js` if existing — extend mixed-kind ordering test
+- Modify: `src/consolidation/consolidate.js`—append a trace entry on success and on failure
+- Modify: `src/integration/viewer/tabs/traces.js`—render `kind === 'consolidate'` rows distinctly
+- Create: `tests/unit/consolidation/consolidate-trace.test.js`—pin trace-emission shape
+- Create: `tests/unit/integration/viewer/traces-consolidation.test.js`—pin render shape
+- Modify: `tests/integration/viewer/traces.test.js` if existing—extend mixed-kind ordering test
 
 **Pre-flight (subagent runs first):**
 
@@ -971,7 +971,7 @@ ls tests/unit/integration/viewer/ 2>&1
 
 If `consolidate()`'s signature differs from `consolidate(chatId): Promise<void>`, stop and patch the plan first.
 
-**Step 1: Trace shape — write the schema test first**
+**Step 1: Trace shape—write the schema test first**
 
 Create `tests/unit/consolidation/consolidate-trace.test.js`:
 
@@ -1049,11 +1049,11 @@ describe('consolidate emits trace entry', () => {
 });
 ```
 
-**Step 2: Run — expect failure**
+**Step 2: Run—expect failure**
 
 ```bash
 npm test -- tests/unit/consolidation/consolidate-trace.test.js 2>&1 | tail -20
-# Expected: FAIL — no trace entry appended (or wrong shape)
+# Expected: FAIL—no trace entry appended (or wrong shape)
 ```
 
 **Step 3: Implement in `consolidate.js`**
@@ -1086,7 +1086,7 @@ if (state.runtime.traces.length > cap) {
 
 For the failure path: on caught error inside `consolidate()`, append a trace with `summary: { factCount: 0, scope: 'episodic', error: err.message }` before re-throwing or logging. Adjust the test if the failure-path shape differs from this proposal.
 
-**Step 4: Run unit test — expect pass**
+**Step 4: Run unit test—expect pass**
 
 ```bash
 npm test -- tests/unit/consolidation/consolidate-trace.test.js 2>&1 | tail -10
@@ -1133,7 +1133,7 @@ function buildTraceItem(trace) {
         return li;
     }
 
-    // Retrieve (existing path) — note the badge addition for parity with Task 3
+    // Retrieve (existing path)—note the badge addition for parity with Task 3
     const ts = trace.timestamp ? formatTimestamp(trace.timestamp) : '(no ts)';
     const cls = trace.classifier ?? '?';
     const tier = trace.tierResolved ?? '?';
@@ -1286,14 +1286,14 @@ Closes Phase 15 candidate T4."
 
 ---
 
-## Task 3: T5 — Tier label honesty (post-Phase-14 ladder is `0/1/3/Floor`)
+## Task 3: T5—Tier label honesty (post-Phase-14 ladder is `0/1/3/Floor`)
 
-**Tag:** `[structural]` — subagent-friendly. Mechanical relabel + helper extraction.
+**Tag:** `[structural]`—subagent-friendly. Mechanical relabel + helper extraction.
 
-**Objective:** Phase 14 demolished Tier 2 (always-seed-Tier-3 ladder). The traces tab still shows `T2` raw from `trace.tierResolved` — but the ladder no longer resolves at Tier 2. New labels: `T0 / T1 / T3 / Floor` (no `T2`). Add a `formatTierLabel(tier)` helper, route both `kind: 'retrieve'` and `kind: 'consolidate'` rendering through it, pin the labels in tests so future ladder changes can't silently drift the UI.
+**Objective:** Phase 14 demolished Tier 2 (always-seed-Tier-3 ladder). The traces tab still shows `T2` raw from `trace.tierResolved`—but the ladder no longer resolves at Tier 2. New labels: `T0 / T1 / T3 / Floor` (no `T2`). Add a `formatTierLabel(tier)` helper, route both `kind: 'retrieve'` and `kind: 'consolidate'` rendering through it, pin the labels in tests so future ladder changes can't silently drift the UI.
 
 **Files:**
-- Modify: `src/integration/viewer/tabs/traces.js` — extract `formatTierLabel`, replace inline tier rendering
+- Modify: `src/integration/viewer/tabs/traces.js`—extract `formatTierLabel`, replace inline tier rendering
 - Create: `tests/unit/integration/viewer/traces-tier-labels.test.js`
 
 **Pre-flight:**
@@ -1314,7 +1314,7 @@ mcp_jcodemunch_get_file_outline repo=local-SillyTavern-STARmem-036d3fcc file_pat
 import { jest } from '@jest/globals';
 import { formatTierLabel, renderTab } from '../../../../src/integration/viewer/tabs/traces.js';
 
-describe('formatTierLabel — post-Phase-14 ladder honesty', () => {
+describe('formatTierLabel—post-Phase-14 ladder honesty', () => {
     test('T0 / T1 / T3 are the only tier numbers', () => {
         expect(formatTierLabel(0)).toBe('T0');
         expect(formatTierLabel(1)).toBe('T1');
@@ -1325,7 +1325,7 @@ describe('formatTierLabel — post-Phase-14 ladder honesty', () => {
         expect(formatTierLabel('floor')).toBe('Floor');
     });
 
-    test('legacy T2 is renamed to T3 (Phase 14 backfill — Tier 2 demolished)', () => {
+    test('legacy T2 is renamed to T3 (Phase 14 backfill—Tier 2 demolished)', () => {
         expect(formatTierLabel(2)).toBe('T3');
     });
 
@@ -1352,7 +1352,7 @@ describe('formatTierLabel — post-Phase-14 ladder honesty', () => {
 });
 ```
 
-**Step 2: Run — expect FAIL** (`formatTierLabel` is not exported yet)
+**Step 2: Run—expect FAIL** (`formatTierLabel` is not exported yet)
 
 ```bash
 npm test -- tests/unit/integration/viewer/traces-tier-labels.test.js 2>&1 | tail -10
@@ -1366,7 +1366,7 @@ Add to the file (export it):
 /**
  * Format a tier value for the tab UI.
  * Post-Phase-14 ladder: Tier 2 is demolished; legacy traces with
- * `tierResolved: 2` (pre-Phase-14) are backfilled to T3 honestly —
+ * `tierResolved: 2` (pre-Phase-14) are backfilled to T3 honestly—
  * Phase 14 tier demolition collapsed seed-into-Tier-3, so a pre-demolition
  * "Tier 2 hit" was the same code path that today resolves at Tier 3.
  *
@@ -1417,19 +1417,19 @@ Closes Phase 15 candidate T5."
 
 ---
 
-## Task 4: Visual identity pass — token system + viewer shell
+## Task 4: Visual identity pass—token system + viewer shell
 
-**Tag:** `[cosmetic]` — controller drafts, subagent dispatches. **Eyeball verdict gates next cosmetic task.**
+**Tag:** `[cosmetic]`—controller drafts, subagent dispatches. **Eyeball verdict gates next cosmetic task.**
 
-**Objective:** Land the Quiet Library token system (spacing, typography, elevation, radius, motion) into `style.css`. Apply to the viewer shell (header, tabs, filter row, body container) and to the staged-reveal entrance animation. Subsequent cosmetic tasks (5/6/7) reuse these tokens — they don't re-introduce literals.
+**Objective:** Land the Quiet Library token system (spacing, typography, elevation, radius, motion) into `style.css`. Apply to the viewer shell (header, tabs, filter row, body container) and to the staged-reveal entrance animation. Subsequent cosmetic tasks (5/6/7) reuse these tokens—they don't re-introduce literals.
 
 **Pre-req:** Task 1 mockup approved. If not approved, do not start this task.
 
 **Files:**
-- Modify: `style.css` — add the full token block, restyle viewer shell + tabs + filter row
-- Modify: `src/integration/viewer/mount.js` — add `is-revealing` class on mount, remove after `--starmem-dur-slow` + buffer
-- Create: `tests/integration/css-tokens-defined.test.js` — invariant: every `--starmem-*` token used in the codebase is also defined
-- Modify: `tests/e2e/viewer.spec.js` — add 1 sanity assertion
+- Modify: `style.css`—add the full token block, restyle viewer shell + tabs + filter row
+- Modify: `src/integration/viewer/mount.js`—add `is-revealing` class on mount, remove after `--starmem-dur-slow` + buffer
+- Create: `tests/integration/css-tokens-defined.test.js`—invariant: every `--starmem-*` token used in the codebase is also defined
+- Modify: `tests/e2e/viewer.spec.js`—add 1 sanity assertion
 - Modify: existing `tests/integration/no-hardcoded-colors.test.js` if needed (token-system additions shouldn't trip it; verify and adjust)
 
 **Pre-flight:**
@@ -1447,11 +1447,11 @@ Append to the `:root` block (after the existing tokens), or restructure into a c
 
 ```css
 /* =========================================================================
- * Quiet Library tokens — Phase 16. Spacing/type/elevation/radius/motion are
+ * Quiet Library tokens—Phase 16. Spacing/type/elevation/radius/motion are
  * STARmem's own; color tokens above inherit from ST themes.
  * ========================================================================= */
 :root {
-    /* Typography — serif display, inherited body, monospace for data */
+    /* Typography—serif display, inherited body, monospace for data */
     --starmem-font-display: 'Iowan Old Style', 'Palatino Linotype', 'Palatino',
                             'URW Palladio L', 'Book Antiqua', Georgia, serif;
     --starmem-font-body: inherit;
@@ -1467,7 +1467,7 @@ Append to the `:root` block (after the existing tokens), or restructure into a c
     --starmem-tracking-display: -0.005em;
     --starmem-tracking-meta: 0.04em;
 
-    /* Spacing — 4px base, 1.5× ratio for major steps */
+    /* Spacing—4px base, 1.5× ratio for major steps */
     --starmem-space-1: 0.25rem;
     --starmem-space-2: 0.5rem;
     --starmem-space-3: 0.75rem;
@@ -1476,14 +1476,14 @@ Append to the `:root` block (after the existing tokens), or restructure into a c
     --starmem-space-6: 2.25rem;
     --starmem-space-7: 3.5rem;
 
-    /* Elevation — paper-like, never glossy */
+    /* Elevation—paper-like, never glossy */
     --starmem-border-faint: color-mix(in srgb, var(--SmartThemeBorderColor, #3a3a3a) 50%, transparent);
     --starmem-elev-0: none;
     --starmem-elev-1: 0 1px 0 var(--starmem-border-faint);
     --starmem-elev-2: 0 1px 2px rgba(0, 0, 0, 0.18), 0 0 0 1px var(--starmem-border-faint);
     --starmem-elev-3: 0 6px 24px rgba(0, 0, 0, 0.28), 0 0 0 1px var(--starmem-border);
 
-    /* Radius — restrained */
+    /* Radius—restrained */
     --starmem-radius-1: 2px;
     --starmem-radius-2: 4px;
     --starmem-radius-3: 6px;
@@ -1494,29 +1494,29 @@ Append to the `:root` block (after the existing tokens), or restructure into a c
     --starmem-dur-med: 280ms;
     --starmem-dur-slow: 600ms;
 
-    /* Bg variants — paper feel */
+    /* Bg variants—paper feel */
     --starmem-bg-paper: color-mix(in srgb, var(--SmartThemeBodyColor, #e8e8e8) 8%, var(--SmartThemeBlurTintColor, #1a1a1a));
     --starmem-accent: var(--SmartThemeQuoteColor, #c4a87c);
 }
 ```
 
-Then update viewer-shell rules. Replace existing `.starmem-viewer*` declarations (or add new ones if absent) so they use the tokens — copy the structure from `examples/identity-mockup.html`'s viewer block. Specifically:
+Then update viewer-shell rules. Replace existing `.starmem-viewer*` declarations (or add new ones if absent) so they use the tokens—copy the structure from `examples/identity-mockup.html`'s viewer block. Specifically:
 
-- `.starmem-viewer` — `bg-elevated`, `radius-3`, `elev-3`, `overflow: hidden`
-- `.starmem-viewer-header` — flex / baseline / `space-5 space-6 space-3` padding / `1px solid border-faint` bottom
-- `.starmem-viewer-title` — `font-display`, `fs-display-1`, weight 400, `tracking-display`
-- `.starmem-viewer-close` — bare button, muted color, hover transitions to fg
-- `.starmem-viewer-filter-row` — `space-3 space-6` padding, flex, baseline-aligned label
-- `.starmem-viewer-subject-input` — bg, `border-faint`, `radius-1`, focus border to accent
-- `.starmem-viewer-tabs` — `0 space-6` padding, `1px solid border-faint` bottom
-- `.starmem-viewer-tab` — `font-display`, `tracking-meta`, transparent border-bottom, color/border transitions
-- `.starmem-viewer-tab-active` — `accent` underline, `fg` color
-- `.starmem-viewer-body` — `space-5 space-6` padding, min-height for empty states
+- `.starmem-viewer`—`bg-elevated`, `radius-3`, `elev-3`, `overflow: hidden`
+- `.starmem-viewer-header`—flex / baseline / `space-5 space-6 space-3` padding / `1px solid border-faint` bottom
+- `.starmem-viewer-title`—`font-display`, `fs-display-1`, weight 400, `tracking-display`
+- `.starmem-viewer-close`—bare button, muted color, hover transitions to fg
+- `.starmem-viewer-filter-row`—`space-3 space-6` padding, flex, baseline-aligned label
+- `.starmem-viewer-subject-input`—bg, `border-faint`, `radius-1`, focus border to accent
+- `.starmem-viewer-tabs`—`0 space-6` padding, `1px solid border-faint` bottom
+- `.starmem-viewer-tab`—`font-display`, `tracking-meta`, transparent border-bottom, color/border transitions
+- `.starmem-viewer-tab-active`—`accent` underline, `fg` color
+- `.starmem-viewer-body`—`space-5 space-6` padding, min-height for empty states
 
 **Step 2: Add the staged-reveal animation to `style.css`**
 
 ```css
-/* Memorable moment — staged viewer-open reveal (600ms total) */
+/* Memorable moment—staged viewer-open reveal (600ms total) */
 .starmem-viewer.is-revealing .starmem-viewer-header {
     animation: starmem-fade-up var(--starmem-dur-med) var(--starmem-ease) both;
 }
@@ -1617,7 +1617,7 @@ test('viewer shell uses Quiet Library serif display face for title', async ({ pa
     const title = page.locator('.starmem-viewer-title').first();
     await expect(title).toBeVisible();
     const fontFamily = await title.evaluate(el => getComputedStyle(el).fontFamily);
-    // Serif stack — first font is Iowan Old Style; downstream fallbacks are all serif.
+    // Serif stack—first font is Iowan Old Style; downstream fallbacks are all serif.
     // Match anywhere in the stack to handle host font availability differences.
     expect(fontFamily.toLowerCase()).toMatch(/iowan|palatino|palladio|book antiqua|georgia|serif/);
 });
@@ -1635,10 +1635,10 @@ npm run typecheck 2>&1 | tail -3
 # E2E only if local ST is running:
 test -n "$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8000 2>/dev/null | grep -E '^[23]')" \
   && npm run test:e2e 2>&1 | tail -10 \
-  || echo "ST offline — skipping e2e (will run in CI / pre-ship)"
+  || echo "ST offline—skipping e2e (will run in CI / pre-ship)"
 ```
 
-**Step 7: Eva eyeball verdict — applied identity**
+**Step 7: Eva eyeball verdict—applied identity**
 
 Have Eva install the extension into a local ST and open the Memory Viewer. Verdict against the mockup:
 - Does the rendered viewer match the mockup's overall feel?
@@ -1682,25 +1682,25 @@ for is-revealing → starmem-is-revealing (no-leaky-css invariant)."
 
 ---
 
-## Task 5: T6 successor — consolidation indicator visual treatment
+## Task 5: T6 successor—consolidation indicator visual treatment
 
-**Tag:** `[cosmetic]` — controller drafts, subagent dispatches.
+**Tag:** `[cosmetic]`—controller drafts, subagent dispatches.
 
 **Pre-req:** Task 4 approved + landed.
 
 **Objective:** Apply Quiet Library tokens to the indicator. Idle = subtle muted dot at 0.4 opacity. Busy = accent-colored dot with a 1.4s gentle pulse (scale 1 → 1.25, opacity 0.4 → 1, ease, infinite). `prefers-reduced-motion` reduces busy state to a static accent dot. Tooltip uses display font for the title text.
 
 **Files:**
-- Modify: `src/integration/indicator.js` — no behavior change, only docstring tweak if needed
-- Modify: `style.css` — replace existing `.starmem-indicator-*` rules with token-driven versions
-- Modify: `tests/e2e/indicator.spec.js` — add 1 sanity assertion
+- Modify: `src/integration/indicator.js`—no behavior change, only docstring tweak if needed
+- Modify: `style.css`—replace existing `.starmem-indicator-*` rules with token-driven versions
+- Modify: `tests/e2e/indicator.spec.js`—add 1 sanity assertion
 
 **Step 1: Style the indicator**
 
 Replace existing indicator CSS in `style.css`:
 
 ```css
-/* Consolidation indicator — quiet by default, gently pulses while busy */
+/* Consolidation indicator—quiet by default, gently pulses while busy */
 #starmem-indicator,
 .starmem-indicator {
     width: 8px;
@@ -1752,7 +1752,7 @@ test('busy indicator uses accent color', async ({ page }) => {
 });
 ```
 
-(`setConsolidatingFixture` shape depends on how harness injects state; refer to existing `tests/e2e/fixtures/`. If absent, file as: open viewer → use a `_setConsolidatingForTests` window export, or skip the test until a fixture exists. The structural shape — assert busy class + non-transparent bg — is the load-bearing part.)
+(`setConsolidatingFixture` shape depends on how harness injects state; refer to existing `tests/e2e/fixtures/`. If absent, file as: open viewer → use a `_setConsolidatingForTests` window export, or skip the test until a fixture exists. The structural shape—assert busy class + non-transparent bg—is the load-bearing part.)
 
 **Step 3: Eyeball verdict**
 
@@ -1762,7 +1762,7 @@ Open ST → trigger consolidation (e.g. paste 12 message turns to fill the buffe
 
 ```bash
 git add style.css tests/e2e/indicator.spec.js
-git commit -m "style(indicator): Quiet Library treatment — accent pulse (P16 T5)
+git commit -m "style(indicator): Quiet Library treatment—accent pulse (P16 T5)
 
 T6 successor from Phase 15 plan. Idle: muted 0.4-opacity dot. Busy:
 accent-colored 1.4s gentle pulse (opacity + scale). Reduced-motion
@@ -1778,19 +1778,19 @@ respected. Tokens reused from Task 4."
 
 ---
 
-## Task 6: T7 successor — episodic tab visual polish
+## Task 6: T7 successor—episodic tab visual polish
 
-**Tag:** `[cosmetic]` — controller drafts, subagent dispatches.
+**Tag:** `[cosmetic]`—controller drafts, subagent dispatches.
 
 **Pre-req:** Task 4 approved + landed.
 
 **Objective:** Apply Quiet Library to the episodic tab. Group entries by subject; each subject is a serif display heading with a hanging-indent left border (literary feel). Entries within a group: dotted-border separators, content-left + monospace meta-right grid, generous reading line-height. Empty state uses the same token system instead of generic muted text.
 
 **Files:**
-- Modify: `src/integration/viewer/tabs/episodic.js` — restructure rendering to grouped-by-subject
-- Modify: `style.css` — add `.starmem-viewer-episodic-*` rules
-- Modify: `tests/unit/integration/viewer/episodic.test.js` — pin grouping + meta shape
-- Modify: `tests/e2e/viewer.spec.js` — add 1 sanity assertion for episodic tab
+- Modify: `src/integration/viewer/tabs/episodic.js`—restructure rendering to grouped-by-subject
+- Modify: `style.css`—add `.starmem-viewer-episodic-*` rules
+- Modify: `tests/unit/integration/viewer/episodic.test.js`—pin grouping + meta shape
+- Modify: `tests/e2e/viewer.spec.js`—add 1 sanity assertion for episodic tab
 
 **Pre-flight:**
 
@@ -1871,7 +1871,7 @@ function formatAge(iso) {
 **Step 2: Style additions in `style.css`**
 
 ```css
-/* Episodic tab — literary archive layout, grouped by subject */
+/* Episodic tab—literary archive layout, grouped by subject */
 .starmem-viewer-episodic {
     display: grid;
     gap: var(--starmem-space-5);
@@ -1987,18 +1987,18 @@ meta-right grid; reading line-height. Tokens reused from Task 4."
 
 ---
 
-## Task 7: T8 successor — settings panel layout pass
+## Task 7: T8 successor—settings panel layout pass
 
-**Tag:** `[cosmetic]` — controller drafts, subagent dispatches.
+**Tag:** `[cosmetic]`—controller drafts, subagent dispatches.
 
 **Pre-req:** Task 4 approved + landed.
 
 **Objective:** Apply Quiet Library to the settings panel. Sections separated by display-font headings with token-driven dividers. Fields use a 220px-label / fluid-input grid for consistent vertical alignment. Help text below each field is muted + italic. Inputs use token-driven borders + focus-on-accent.
 
 **Files:**
-- Modify: `src/integration/settingsPanel.js` — wrap rendered fields in `.starmem-settings-section` + `.starmem-settings-field`
-- Modify: `style.css` — add `.starmem-settings-*` rules
-- Modify: `tests/unit/integration/settingsPanel.test.js` — pin grid + section structure
+- Modify: `src/integration/settingsPanel.js`—wrap rendered fields in `.starmem-settings-section` + `.starmem-settings-field`
+- Modify: `style.css`—add `.starmem-settings-*` rules
+- Modify: `tests/unit/integration/settingsPanel.test.js`—pin grid + section structure
 
 **Step 1: Restructure rendered HTML**
 
@@ -2109,17 +2109,17 @@ reused from Task 4."
 
 ---
 
-## Task 8: T9 — ARIA roles + keyboard navigation for viewer tabs
+## Task 8: T9—ARIA roles + keyboard navigation for viewer tabs
 
-**Tag:** `[structural]` — subagent-friendly. A11y is structural value, distinct from cosmetic.
+**Tag:** `[structural]`—subagent-friendly. A11y is structural value, distinct from cosmetic.
 
 **Objective:** Make the Memory Viewer tab strip keyboard-navigable (Arrow Left/Right, Home, End) and screen-reader-correct (proper `tablist` / `tab` / `tabpanel` ARIA wiring; tabpanel `aria-labelledby`; `aria-controls` from each tab to its panel; focus management on tab switch). Plan 15 already shipped `role="tablist"` and `aria-selected` on tabs; this task completes the spec.
 
 **Files:**
-- Modify: `src/integration/viewer/mount.js` — extend `wireTabs()` with keyboard handler; add `aria-controls` and `tabpanel` `aria-labelledby` linking
-- Create: `tests/unit/integration/viewer/viewer-aria.test.js` — pin ARIA shape
-- Create: `tests/unit/integration/viewer/viewer-keyboard.test.js` — pin keyboard nav
-- Modify: `tests/e2e/viewer.spec.js` — add 1 keyboard sanity assertion
+- Modify: `src/integration/viewer/mount.js`—extend `wireTabs()` with keyboard handler; add `aria-controls` and `tabpanel` `aria-labelledby` linking
+- Create: `tests/unit/integration/viewer/viewer-aria.test.js`—pin ARIA shape
+- Create: `tests/unit/integration/viewer/viewer-keyboard.test.js`—pin keyboard nav
+- Modify: `tests/e2e/viewer.spec.js`—add 1 keyboard sanity assertion
 
 **Pre-flight:**
 
@@ -2254,7 +2254,7 @@ describe('viewer keyboard navigation', () => {
 });
 ```
 
-**Step 2: Run — expect FAIL**
+**Step 2: Run—expect FAIL**
 
 ```bash
 npm test -- tests/unit/integration/viewer/viewer-aria.test.js tests/unit/integration/viewer/viewer-keyboard.test.js 2>&1 | tail -20
@@ -2412,21 +2412,21 @@ Closes Phase 15 candidate T9."
 
 ---
 
-## Task 9: Public-ship pass — version bump, docs, screenshot, repo metadata
+## Task 9: Public-ship pass—version bump, docs, screenshot, repo metadata
 
-**Tag:** `[public-ship]` — controller-only. Eva runs `gh` commands (Step 7).
+**Tag:** `[public-ship]`—controller-only. Eva runs `gh` commands (Step 7).
 
 **Pre-req:** Tasks 0.5 (conventions doc) + all cosmetic + structural tasks landed.
 
 **Objective:** Ship STARmem v2.0 publicly. Bump version, rewrite README, write CHANGELOG from scratch (Phases 0–16), create `docs/install.md`, capture one Memory Viewer screenshot, update GitHub repo metadata.
 
 **Files:**
-- Modify: `manifest.json` — `2.0.0-dev` → `2.0.0`; ensure all conventional fields per `docs/research/extension-install-conventions.md`
-- Modify: `package.json` — `2.0.0-dev` → `2.0.0`
-- Modify: `README.md` — rewrite with hero, screenshot, install block, features, configuration, compatibility, license, citations
-- Create: `CHANGELOG.md` — from scratch, Keep a Changelog 1.1.0 format, with a single `[2.0.0] — 2026-04-29` entry summarizing Phases 0–16
-- Create: `docs/install.md` — both the ST UI install path and the git-clone path
-- Create: `docs/screenshots/viewer.png` — one screenshot of the Memory Viewer (~1200px wide, captured via Playwright against fixture state)
+- Modify: `manifest.json`—`2.0.0-dev` → `2.0.0`; ensure all conventional fields per `docs/research/extension-install-conventions.md`
+- Modify: `package.json`—`2.0.0-dev` → `2.0.0`
+- Modify: `README.md`—rewrite with hero, screenshot, install block, features, configuration, compatibility, license, citations
+- Create: `CHANGELOG.md`—from scratch, Keep a Changelog 1.1.0 format, with a single `[2.0.0]—2026-04-29` entry summarizing Phases 0–16
+- Create: `docs/install.md`—both the ST UI install path and the git-clone path
+- Create: `docs/screenshots/viewer.png`—one screenshot of the Memory Viewer (~1200px wide, captured via Playwright against fixture state)
 
 **Step 1: Version bumps**
 
@@ -2477,7 +2477,7 @@ Replace the current 39-line README with this structure (calibrated per `docs/res
 ```markdown
 # STARmem
 
-> A literary memory extension for SillyTavern — long-form roleplay and
+> A memory extension for SillyTavern—long-form roleplay and
 > narrative chat. Deterministic 4-tier retrieval, single-substrate context
 > tree, offline-only LLM extraction, first-class benchmarking.
 
@@ -2489,7 +2489,7 @@ In SillyTavern:
 
 1. Click the Extensions icon (puzzle piece, top bar).
 2. Click "Install Extension" (top right of the Extensions panel).
-3. Paste this URL: `https://github.com/<owner>/SillyTavern-STARmem`
+3. Paste this URL: `https://github.com/EvaL3n4/SillyTavern-STARmem`
 4. Click "Install".
 
 For local-clone install (development), see [`docs/install.md`](docs/install.md).
@@ -2500,15 +2500,15 @@ For local-clone install (development), see [`docs/install.md`](docs/install.md).
 - **Deterministic retrieval, always.** Tier 0 exact cache → Tier 1 fuzzy cache → Tier 3 intent-routed graph expansion (BM25-seeded). Floor: top-K by `recency × importance × maturity_boost`. **No LLM call on the query path. Ever.**
 - **Single write path.** One `consolidate()` function, lazy-chained: Working → Episodic (triggered at buffer ≥ 10 or idle ≥ 60s) → Persona (explicit rebuild only).
 - **Honest instrumentation.** Every retrieval produces a replayable trace; every consolidation produces a trace; the Memory Viewer surfaces both on a single timeline.
-- **No vector DB. No embeddings. No sidecar files.** State lives in `chatMetadata['STARmem']` — rides ST's native backup.
+- **No vector DB. No embeddings. No sidecar files.** State lives in `chatMetadata['STARmem']`—rides ST's native backup.
 
 ## Configuration
 
 Open the STARmem settings panel from ST's Extensions drawer:
 
-- **Buffer size** — Working buffer threshold for consolidation (default: 10).
-- **Idle timeout** — Seconds of silence before consolidation also fires (default: 60).
-- **Connection profile** — Which ST connection profile to use for fact extraction. Used at write time only.
+- **Buffer size**—Working buffer threshold for consolidation (default: 10).
+- **Idle timeout**—Seconds of silence before consolidation also fires (default: 60).
+- **Connection profile**—Which ST connection profile to use for fact extraction. Used at write time only.
 
 ## Compatibility
 
@@ -2518,28 +2518,28 @@ Open the STARmem settings panel from ST's Extensions drawer:
 
 ## Documentation
 
-- [Design spec](docs/specs/2026-04-20-starmem-v2-design.md) — full architecture
-- [Install guide](docs/install.md) — UI + local-clone paths
-- [Research wiki](docs/wiki/) — paper-by-paper notes for adopted approaches
-- [Benchmarks](docs/bench/) — measured retrieval quality on LoCoMo + LongMemEval-S
-- [Implementation plans](docs/plans/) — phased rollout, retros per phase
+- [Design spec](docs/specs/2026-04-20-starmem-v2-design.md)—full architecture
+- [Install guide](docs/install.md)—UI + local-clone paths
+- [Research wiki](docs/wiki/)—paper-by-paper notes for adopted approaches
+- [Benchmarks](docs/bench/)—measured retrieval quality on LoCoMo + LongMemEval-S
+- [Implementation plans](docs/plans/)—phased rollout, retros per phase
 
 ## Citations
 
 STARmem's design draws on published research:
 
 **Adopted:**
-- **ByteRover** — Nguyen et al. 2026, [arXiv:2604.01599](https://arxiv.org/abs/2604.01599) — substrate design (Context Tree, lifecycle metadata, tiered retrieval)
-- **AdaMem** — Yan et al. 2026, [arXiv:2603.16496](https://arxiv.org/abs/2603.16496) — Working/Episodic/Persona vocabulary
-- **MAGMA** — Jiang et al. 2026, [arXiv:2601.03236](https://arxiv.org/abs/2601.03236) — intent-routed graph expansion
-- **Enhanced RAPTOR** — Liu et al. 2026, [DOI:10.3389/fcomp.2025.1710121](https://doi.org/10.3389/fcomp.2025.1710121) — Persona rebuild pipeline
-- **RAPTOR** — Sarthi et al. 2024, [arXiv:2401.18059](https://arxiv.org/abs/2401.18059) — recursive abstractive tree
+- **ByteRover**—Nguyen et al. 2026, [arXiv:2604.01599](https://arxiv.org/abs/2604.01599)—substrate design (Context Tree, lifecycle metadata, tiered retrieval)
+- **AdaMem**—Yan et al. 2026, [arXiv:2603.16496](https://arxiv.org/abs/2603.16496)—Working/Episodic/Persona vocabulary
+- **MAGMA**—Jiang et al. 2026, [arXiv:2601.03236](https://arxiv.org/abs/2601.03236)—intent-routed graph expansion
+- **Enhanced RAPTOR**—Liu et al. 2026, [DOI:10.3389/fcomp.2025.1710121](https://doi.org/10.3389/fcomp.2025.1710121)—Persona rebuild pipeline
+- **RAPTOR**—Sarthi et al. 2024, [arXiv:2401.18059](https://arxiv.org/abs/2401.18059)—recursive abstractive tree
 
 **Evaluated, not adopted:** A-MEM (multi-hop too weak for roleplay), Zep / Graphiti (full KG overkill at chat scale).
 
 ## License
 
-Apache License 2.0 — see [LICENSE](LICENSE).
+Apache License 2.0—see [LICENSE](LICENSE).
 ```
 
 **Step 4: Write `CHANGELOG.md`**
@@ -2551,9 +2551,9 @@ All notable changes to STARmem are documented here. Format: [Keep a
 Changelog](https://keepachangelog.com/en/1.1.0/) 1.1.0; STARmem follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [2.0.0] — 2026-04-29
+## [2.0.0]—2026-04-29
 
-First public release. Clean break from the v1 private beta — not
+First public release. Clean break from the v1 private beta—not
 migrated; new chats only.
 
 ### Architecture
@@ -2565,34 +2565,34 @@ migrated; new chats only.
 - **Deterministic 4-tier retrieval ladder**: T0 exact cache → T1 fuzzy
   cache → T3 intent-routed graph expansion (BM25-seeded) → Floor
   (recency × importance × maturity_boost). No LLM on the query path.
-- **Single write path** — one `consolidate()` function, lazy-chained
+- **Single write path**—one `consolidate()` function, lazy-chained
   (buffer ≥ 10 or idle ≥ 60s).
-- **AKL-lite lifecycle** — importance (0–100), maturity tiers with
+- **AKL-lite lifecycle**—importance (0–100), maturity tiers with
   hysteresis gaps, recency decay (τ = 30d), multiplicative score.
 
 ### Surface
 
-- **Memory Viewer** — tabbed dashboard (Working / Episodic / Persona /
+- **Memory Viewer**—tabbed dashboard (Working / Episodic / Persona /
   Graph / Traces) with subject filter, JSONL trace export, ARIA + keyboard
   navigation, and the "Quiet Library" visual identity.
-- **Settings panel** — buffer size, idle timeout, connection profile
+- **Settings panel**—buffer size, idle timeout, connection profile
   selection (extraction model picker via ST's connection manager).
-- **Consolidation indicator** — subtle pulse next to the send button
+- **Consolidation indicator**—subtle pulse next to the send button
   while consolidation runs.
-- **Interceptor** — installs into ST's `globalThis.SillyTavern.extensions`,
+- **Interceptor**—installs into ST's `globalThis.SillyTavern.extensions`,
   injects retrieved memories into the prompt at chat-completion time.
 
 ### Benchmarking
 
-- **First-class harness** — `bench/cli.js` with corpus adapters for
+- **First-class harness**—`bench/cli.js` with corpus adapters for
   LoCoMo and LongMemEval-S (6 task types).
-- **Modal-served sweep substrate** — `--mode run-point | run-baselines |
+- **Modal-served sweep substrate**—`--mode run-point | run-baselines |
   run-sweep` with per-corpus parameter sweeps and conversation-level
   parallel fan-out (`run_point_chunk`, 30-container parallelism).
-- **Coverage-aware amendment gate** — `_should_amend(baseline, candidate)`
+- **Coverage-aware amendment gate**—`_should_amend(baseline, candidate)`
   enforces `ΔMRR ≥ 0.02 AND coverage_delta ≥ −5pp` before merging
   parameter tuning.
-- **Honest baselines** — bm25only / recency / random retrievers on both
+- **Honest baselines**—bm25only / recency / random retrievers on both
   corpora, documented in `docs/bench/baselines/*.md`.
 
 ### Test substrate
@@ -2626,20 +2626,20 @@ without API churn.
 ```markdown
 # Install
 
-## Path A — From the SillyTavern UI (recommended)
+## Path A—From the SillyTavern UI (recommended)
 
 1. Open SillyTavern.
 2. Click the Extensions icon (puzzle piece) in the top bar.
 3. Click "Install Extension" at the top right of the panel.
-4. Paste: `https://github.com/<owner>/SillyTavern-STARmem`
+4. Paste: `https://github.com/EvaL3n4/SillyTavern-STARmem`
 5. Click "Install".
 6. STARmem appears in the extension list. Toggle it on.
 
-## Path B — Local clone (development)
+## Path B—Local clone (development)
 
 ```bash
 cd <path-to-SillyTavern>/public/scripts/extensions/third-party
-git clone https://github.com/<owner>/SillyTavern-STARmem.git
+git clone https://github.com/EvaL3n4/SillyTavern-STARmem.git
 ```
 
 Restart SillyTavern. The extension loads from the cloned directory.
@@ -2695,7 +2695,7 @@ grep "docs/screenshots/viewer.png" README.md
 ```bash
 git add manifest.json package.json README.md CHANGELOG.md \
         docs/install.md docs/screenshots/viewer.png
-git commit -m "release(2.0.0): public ship — README + CHANGELOG + install (P16 T9)
+git commit -m "release(2.0.0): public ship—README + CHANGELOG + install (P16 T9)
 
 Bump 2.0.0-dev → 2.0.0. README rewrite with screenshot, install block,
 features, configuration, compatibility, citations. CHANGELOG from
@@ -2710,9 +2710,9 @@ Calibrated against docs/research/extension-install-conventions.md
 Then Eva runs (substitute the actual repo path):
 
 ```bash
-gh repo edit <owner>/SillyTavern-STARmem \
-  --description "A literary memory extension for SillyTavern — deterministic 4-tier retrieval, three memory scopes, offline-only extraction, first-class benchmarking." \
-  --homepage "https://github.com/<owner>/SillyTavern-STARmem" \
+gh repo edit EvaL3n4/SillyTavern-STARmem \
+  --description "A memory extension for SillyTavern—deterministic 4-tier retrieval, three memory scopes, offline-only extraction, first-class benchmarking." \
+  --homepage "https://github.com/EvaL3n4/SillyTavern-STARmem" \
   --add-topic sillytavern \
   --add-topic memory \
   --add-topic roleplay \
@@ -2722,7 +2722,7 @@ gh repo edit <owner>/SillyTavern-STARmem \
   --add-topic raptor
 
 # Tag the release
-git tag -a v2.0.0 -m "STARmem v2.0.0 — first public release"
+git tag -a v2.0.0 -m "STARmem v2.0.0—first public release"
 git push origin v2.0.0
 
 # Optional: GitHub release with auto-generated notes from commits
@@ -2745,38 +2745,38 @@ gh release create v2.0.0 --title "STARmem v2.0.0" --notes-from-tag
 
 ## Task 10: Phase 16 retro + ROADMAP entry
 
-**Tag:** `[doc]` — controller-only.
+**Tag:** `[doc]`—controller-only.
 
 **Objective:** Per the `phased-project-planning` skill's bottom-up close pattern (Pitfall 13): findings → retro → ROADMAP. Tasks 1–9 produce the findings; this task narrates them.
 
 **Files:**
 - Create: `docs/plans/phase-16-retro.md`
-- Modify: `docs/plans/ROADMAP.md` — append `## Phase 16 — 2026-MM-DD` entry above the Phase 15 entry
+- Modify: `docs/plans/ROADMAP.md`—append `## Phase 16—2026-MM-DD` entry above the Phase 15 entry
 
 **Required retro content (mirror the Phase 15 retro template):**
 
-1. **Title.** "Phase 16 Retro — Public Ship: UI/UX Identity + Structural Survivors"
-2. **§0 The honest title** — confirm what shipped matches the plan title; flag any rescope.
-3. **§1 What shipped** — task table with commits, full description.
-4. **§1.x Test counts** — entry baseline 98 / 974 vs close (per `phased-project-planning` Pitfall 13: include both phase-entry and prior-phase-close numbers).
-5. **§2 Decision audit** — every decision held / revised; for each revised, note the why.
-6. **§3 Lessons** — at minimum: the Phase 15 host-ceiling reframe (lesson conditional on internal vs public use); how the eyeball-as-gate pattern performed (vs Phase 15's smoke); how `frontend-design` skill performed against actual implementation; reference-extension calibration value.
-7. **§4 Surprises** — anything that didn't go to plan.
-8. **§5 v2.1 candidates surfaced** — pixel-snapshot tests if appetite; light/high-contrast theme matrix; `prefers-reduced-motion` test coverage gap if any.
-9. **§6 Notes for v2.1+ phases** — what test substrate now exists; what's still gating future visual work.
+1. **Title.** "Phase 16 Retro—Public Ship: UI/UX Identity + Structural Survivors"
+2. **§0 The honest title**—confirm what shipped matches the plan title; flag any rescope.
+3. **§1 What shipped**—task table with commits, full description.
+4. **§1.x Test counts**—entry baseline 98 / 974 vs close (per `phased-project-planning` Pitfall 13: include both phase-entry and prior-phase-close numbers).
+5. **§2 Decision audit**—every decision held / revised; for each revised, note the why.
+6. **§3 Lessons**—at minimum: the Phase 15 host-ceiling reframe (lesson conditional on internal vs public use); how the eyeball-as-gate pattern performed (vs Phase 15's smoke); how `frontend-design` skill performed against actual implementation; reference-extension calibration value.
+7. **§4 Surprises**—anything that didn't go to plan.
+8. **§5 v2.1 candidates surfaced**—pixel-snapshot tests if appetite; light/high-contrast theme matrix; `prefers-reduced-motion` test coverage gap if any.
+9. **§6 Notes for v2.1+ phases**—what test substrate now exists; what's still gating future visual work.
 
 **ROADMAP entry shape:**
 
 ```markdown
-## Phase 16 — 2026-MM-DD
+## Phase 16—2026-MM-DD
 
-**What shipped:** Public-ship release. Quiet Library visual identity (token system: typography / spacing / elevation / radius / motion; serif display face; staged 600ms viewer entrance reveal; reduced-motion respected). Six structural survivors from Phase 15: T4 (Traces consolidation events with shape `{kind: 'consolidate', timestamp, chatId, summary, durationMs, extractor}`), T5 (tier label honesty — T0/T1/T3/Floor; legacy T2 backfilled to T3 since seed-into-Tier-3 is what historical Tier 2 hits exercised), T6 (consolidation indicator visual treatment — accent pulse), T7 (episodic tab — subject groups with display headings + dotted separators), T8 (settings panel — display-font sections + 220px-label grid), T9 (viewer ARIA + keyboard navigation: tablist/tab/tabpanel wired; roving tabindex; Arrow/Home/End/Enter handlers). Public-ship pass: manifest 2.0.0-dev → 2.0.0, README rewrite with screenshot + install block, CHANGELOG from scratch summarizing Phases 0–16, `docs/install.md`, `docs/screenshots/viewer.png`, GitHub repo description + topics + v2.0.0 tag.
+**What shipped:** Public-ship release. Quiet Library visual identity (token system: typography / spacing / elevation / radius / motion; serif display face; staged 600ms viewer entrance reveal; reduced-motion respected). Six structural survivors from Phase 15: T4 (Traces consolidation events with shape `{kind: 'consolidate', timestamp, chatId, summary, durationMs, extractor}`), T5 (tier label honesty—T0/T1/T3/Floor; legacy T2 backfilled to T3 since seed-into-Tier-3 is what historical Tier 2 hits exercised), T6 (consolidation indicator visual treatment—accent pulse), T7 (episodic tab—subject groups with display headings + dotted separators), T8 (settings panel—display-font sections + 220px-label grid), T9 (viewer ARIA + keyboard navigation: tablist/tab/tabpanel wired; roving tabindex; Arrow/Home/End/Enter handlers). Public-ship pass: manifest 2.0.0-dev → 2.0.0, README rewrite with screenshot + install block, CHANGELOG from scratch summarizing Phases 0–16, `docs/install.md`, `docs/screenshots/viewer.png`, GitHub repo description + topics + v2.0.0 tag.
 
 **Test totals:** Entry 98 suites / 974 tests (jest), 58 (pytest), 9 (Playwright). Close: <fill>.
 
-**Commits this phase:** ~12 total — plan + retro amendment (T0), reference-conventions doc (T0.5), identity mockup (T1), T4 trace events (T2), T5 tier labels (T3), T4 token system + viewer shell (T4), T5/T6/T7 cosmetic successors (T5/T6/T7), T9 ARIA + keyboard (T8), public-ship pass (T9), retro (T10).
+**Commits this phase:** ~12 total—plan + retro amendment (T0), reference-conventions doc (T0.5), identity mockup (T1), T4 trace events (T2), T5 tier labels (T3), T4 token system + viewer shell (T4), T5/T6/T7 cosmetic successors (T5/T6/T7), T9 ARIA + keyboard (T8), public-ship pass (T9), retro (T10).
 
-**Execution mode:** Strict serial. Controller-driven for `[doc]` / `[gate]` / `[public-ship]`; subagent-friendly for `[structural]` (T4 trace, T5 labels, T9 a11y); hybrid (controller drafts + subagent dispatches one-at-a-time, eyeball verdict between each) for `[cosmetic]`. No parallel work — Phase 15 lesson 3.1 enforced via per-task acceptance tags.
+**Execution mode:** Strict serial. Controller-driven for `[doc]` / `[gate]` / `[public-ship]`; subagent-friendly for `[structural]` (T4 trace, T5 labels, T9 a11y); hybrid (controller drafts + subagent dispatches one-at-a-time, eyeball verdict between each) for `[cosmetic]`. No parallel work—Phase 15 lesson 3.1 enforced via per-task acceptance tags.
 
 **Decisions held / revised:** <fill from §2 of retro>
 
@@ -2816,18 +2816,18 @@ prevented the Phase 15 mid-execution collapse shape."
 
 Mirror the per-task done-when blocks at the phase boundary:
 
-- [ ] Task 0 — plan + retro amendment + ROADMAP forward pointer committed
-- [ ] Task 0.5 — extension-install conventions doc committed
-- [ ] Task 1 — identity mockup approved by Eva and committed
-- [ ] Task 2 — T4 traces consolidation events shipped
-- [ ] Task 3 — T5 tier label honesty shipped
-- [ ] Task 4 — Quiet Library token system + viewer shell shipped (Eva-approved)
-- [ ] Task 5 — T6 indicator visual shipped (Eva-approved)
-- [ ] Task 6 — T7 episodic tab visual shipped (Eva-approved)
-- [ ] Task 7 — T8 settings panel layout shipped (Eva-approved)
-- [ ] Task 8 — T9 viewer ARIA + keyboard nav shipped
-- [ ] Task 9 — manifest bump + README + CHANGELOG + install doc + screenshot + repo metadata + v2.0.0 tag
-- [ ] Task 10 — Phase 16 retro + ROADMAP entry shipped
+- [ ] Task 0—plan + retro amendment + ROADMAP forward pointer committed
+- [ ] Task 0.5—extension-install conventions doc committed
+- [ ] Task 1—identity mockup approved by Eva and committed
+- [ ] Task 2—T4 traces consolidation events shipped
+- [ ] Task 3—T5 tier label honesty shipped
+- [ ] Task 4—Quiet Library token system + viewer shell shipped (Eva-approved)
+- [ ] Task 5—T6 indicator visual shipped (Eva-approved)
+- [ ] Task 6—T7 episodic tab visual shipped (Eva-approved)
+- [ ] Task 7—T8 settings panel layout shipped (Eva-approved)
+- [ ] Task 8—T9 viewer ARIA + keyboard nav shipped
+- [ ] Task 9—manifest bump + README + CHANGELOG + install doc + screenshot + repo metadata + v2.0.0 tag
+- [ ] Task 10—Phase 16 retro + ROADMAP entry shipped
 - [ ] Full jest suite green
 - [ ] `npm run lint` clean
 - [ ] `npm run typecheck` clean
