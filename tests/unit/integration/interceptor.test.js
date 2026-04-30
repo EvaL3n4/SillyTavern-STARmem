@@ -50,7 +50,11 @@ describe('starmemInterceptor', () => {
                 lockHeldWhenLoaded = _getLockSetForTests().has(id);
                 return structuredClone(initial);
             },
-            write: (_id, v) => { initial.entries = v.entries; initial.workingBuffer = v.workingBuffer; },
+            write: (_id, v) => {
+                const state = /** @type {{ entries: any, workingBuffer: any }} */ (v);
+                initial.entries = state.entries;
+                initial.workingBuffer = state.workingBuffer;
+            },
         });
         _setContextForTests({ chatId, setExtensionPrompt: () => {} });
 
