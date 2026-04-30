@@ -102,6 +102,7 @@ describe('stContextMock', () => {
             'MESSAGE_DELETED',
             'MESSAGE_RECEIVED',
             'MESSAGE_SENT',
+            'MESSAGE_SWIPED',
         ]);
         // Values must be lowercase snake_case matching ST's script.js.
         for (const [k, v] of Object.entries(ET)) {

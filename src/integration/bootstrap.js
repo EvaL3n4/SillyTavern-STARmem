@@ -271,6 +271,73 @@ export async function onMessageDeleted(messageId) {
 }
 
 /**
+ * Event handler: MESSAGE_SWIPED. The user swiped a message to a different
+ * variant (existing or freshly-generated). Drop every working-buffer entry
+ * whose provenance references this messageId — the prior generation's
+ * content is no longer what the user sees, and consolidating it would
+ * pollute long-term memory with rejected drafts.
+ *
+ * Mirrors onMessageDeleted's scrub-and-trim pattern, with two differences:
+ *
+ *   1. Only `scope: 'working'` entries are eligible for eviction. Already-
+ *      consolidated entries (episodic, persona) that happen to reference
+ *      this messageId in their provenance stay put — once a fact has
+ *      graduated to long-term memory, the user controls deletion via the
+ *      forthcoming memory-management UI, not via swipe side effects.
+ *   2. The idle timer is reset: swiping is user activity, not idleness.
+ *
+ * New content (when the swipe triggers fresh generation) lands via the
+ * subsequent MESSAGE_RECEIVED with type='swipe'. Swiping back to an
+ * existing variant emits no MESSAGE_RECEIVED — that case intentionally
+ * leaves the working buffer without a per-mesId entry; Tier 2 BM25 over
+ * chat history still surfaces the content.
+ *
+ * @param {number} messageId
+ */
+export async function onMessageSwiped(messageId) {
+    if (!lastChatId) return;
+    if (!Number.isInteger(messageId)) return;
+    try {
+        // Reset idle timer: swiping is engagement, not idleness.
+        try { resetIdleTimer(lastChatId, buildConsolidateOpts()); }
+        catch (err) { log.warn(`resetIdleTimer on swipe failed: ${err?.message || err}`); }
+
+        await withWriteLock(lastChatId, async () => {
+            const state = await loadState(lastChatId);
+            const buffer = state.workingBuffer || [];
+            if (buffer.length === 0) return;
+
+            /** @type {string[]} */
+            const survivors = [];
+            const dropped = new Set();
+            for (const id of buffer) {
+                const e = state.entries[id];
+                if (e && e.scope === 'working'
+                    && Array.isArray(e.provenance?.sourceMessages)
+                    && e.provenance.sourceMessages.includes(messageId)) {
+                    dropped.add(id);
+                } else {
+                    survivors.push(id);
+                }
+            }
+            if (dropped.size === 0) return;
+
+            const nextEntries = { ...state.entries };
+            for (const id of dropped) delete nextEntries[id];
+
+            await persistState(lastChatId, {
+                ...state,
+                entries: nextEntries,
+                workingBuffer: survivors,
+            });
+            log.info(`onMessageSwiped: dropped ${dropped.size} working entries for mesId=${messageId}`);
+        });
+    } catch (err) {
+        log.warn(`onMessageSwiped error (swallowed): ${err?.message || err}`);
+    }
+}
+
+/**
  * Wire event handlers. Called from index.js on APP_READY. Returns an
  * unsubscribe function for testing; production callers don't need to use it.
  *
@@ -311,6 +378,7 @@ export function bootstrap() {
         [event_types.MESSAGE_SENT, onMessageSent],
         [event_types.MESSAGE_RECEIVED, onMessageReceived],
         [event_types.MESSAGE_DELETED, onMessageDeleted],
+        [event_types.MESSAGE_SWIPED, onMessageSwiped],
     ];
     for (const [evt, handler] of subs) {
         if (!evt) continue;          // defensive: missing event name → skip

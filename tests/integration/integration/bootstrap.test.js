@@ -7,7 +7,7 @@
 import { describe, test, expect, beforeEach, afterEach, jest } from '@jest/globals';
 import {
     bootstrap, buildStateBackend,
-    onChatChanged, onMessageSent, onMessageReceived, onMessageDeleted,
+    onChatChanged, onMessageSent, onMessageReceived, onMessageDeleted, onMessageSwiped,
     _setContextForTests, _resetContextForTests,
 } from '../../../src/integration/bootstrap.js';
 import {
@@ -51,6 +51,7 @@ function makeContext({ chatId = 'chat-A', chat = [], chatMetadata = {} } = {}) {
             MESSAGE_SENT: 'message_sent',
             MESSAGE_RECEIVED: 'message_received',
             MESSAGE_DELETED: 'message_deleted',
+            MESSAGE_SWIPED: 'message_swiped',
         },
     };
 }
@@ -102,12 +103,13 @@ describe('buildStateBackend', () => {
 });
 
 describe('bootstrap', () => {
-    test('subscribes to four events on APP_READY', () => {
+    test('subscribes to five events on APP_READY', () => {
         bootstrap();
         expect(ctx.eventSource._handlers.get('chat_id_changed')?.size).toBe(1);
         expect(ctx.eventSource._handlers.get('message_sent')?.size).toBe(1);
         expect(ctx.eventSource._handlers.get('message_received')?.size).toBe(1);
         expect(ctx.eventSource._handlers.get('message_deleted')?.size).toBe(1);
+        expect(ctx.eventSource._handlers.get('message_swiped')?.size).toBe(1);
     });
 
     test('double-call idempotently replaces subscriptions (no leak)', () => {
@@ -338,6 +340,111 @@ describe('onMessageDeleted', () => {
         ctx.chatMetadata['STARmem'] = { 'chat-A': createEmptyState() };
         await onMessageDeleted(/** @type {any} */ ('not a number'));
         // No throw, state intact (empty).
+        const after = await loadState('chat-A');
+        expect(after.workingBuffer).toEqual([]);
+    });
+});
+
+describe('onMessageSwiped', () => {
+    test('drops working entries whose provenance references the swiped messageId', async () => {
+        bootstrap();
+        // Seed two working entries: one for the swiped mesId (4), one for an
+        // unrelated mesId (6). Only the former should be evicted.
+        const state = createEmptyState();
+        /** @type {any} */
+        const swiped = {
+            id: 'w-swiped', scope: 'working', content: 'rejected draft',
+            subject: null, tags: [], relations: [],
+            provenance: { sourceMessages: [4], extractor: 'x' },
+            lifecycle: {
+                importance: 50, maturity: 'draft',
+                createdAt: '2026-04-30T10:00:00Z', updatedAt: '2026-04-30T10:00:00Z',
+                accessCount: 0, updateCount: 0,
+            },
+        };
+        /** @type {any} */
+        const unrelated = {
+            ...swiped,
+            id: 'w-unrelated', content: 'older reply',
+            provenance: { sourceMessages: [6], extractor: 'x' },
+        };
+        state.entries = { 'w-swiped': swiped, 'w-unrelated': unrelated };
+        state.workingBuffer = ['w-swiped', 'w-unrelated'];
+        ctx.chatMetadata['STARmem'] = { 'chat-A': state };
+
+        await onMessageSwiped(4);
+
+        const after = await loadState('chat-A');
+        expect(after.workingBuffer).toEqual(['w-unrelated']);
+        expect(after.entries['w-swiped']).toBeUndefined();
+        expect(after.entries['w-unrelated']).toBeDefined();
+    });
+
+    test('leaves non-working entries untouched (no retroactive episodic surgery)', async () => {
+        // Already-consolidated entries that happen to reference the swiped
+        // mesId in their provenance must NOT be evicted by a swipe — once a
+        // fact has graduated to episodic, the user controls deletion via the
+        // (forthcoming) memory-management UI, not via swipe side effects.
+        bootstrap();
+        const state = createEmptyState();
+        /** @type {any} */
+        const episodic = {
+            id: 'e1', scope: 'episodic', content: 'graduated fact',
+            subject: null, tags: [], relations: [],
+            provenance: { sourceMessages: [4], extractor: 'consolidation-v1' },
+            lifecycle: {
+                importance: 70, maturity: 'mature',
+                createdAt: '2026-04-30T09:00:00Z', updatedAt: '2026-04-30T09:00:00Z',
+                accessCount: 0, updateCount: 0,
+            },
+        };
+        state.entries = { e1: episodic };
+        // workingBuffer is empty — episodic entries don't live there.
+        state.workingBuffer = [];
+        ctx.chatMetadata['STARmem'] = { 'chat-A': state };
+
+        await onMessageSwiped(4);
+
+        const after = await loadState('chat-A');
+        expect(after.entries.e1).toBeDefined();
+        expect(after.entries.e1.scope).toBe('episodic');
+    });
+
+    test('no-op when no working entry matches the swiped messageId', async () => {
+        bootstrap();
+        const state = createEmptyState();
+        /** @type {any} */
+        const e1 = {
+            id: 'w1', scope: 'working', content: 'one',
+            subject: null, tags: [], relations: [],
+            provenance: { sourceMessages: [4], extractor: 'x' },
+            lifecycle: {
+                importance: 50, maturity: 'draft',
+                createdAt: '2026-04-30T10:00:00Z', updatedAt: '2026-04-30T10:00:00Z',
+                accessCount: 0, updateCount: 0,
+            },
+        };
+        state.entries = { w1: e1 };
+        state.workingBuffer = ['w1'];
+        ctx.chatMetadata['STARmem'] = { 'chat-A': state };
+
+        await onMessageSwiped(999);
+
+        const after = await loadState('chat-A');
+        expect(after.workingBuffer).toEqual(['w1']);
+        expect(after.entries.w1).toBeDefined();
+    });
+
+    test('no-op when no lastChatId', async () => {
+        // No bootstrap() — lastChatId stays null.
+        await onMessageSwiped(4);
+        expect(ctx.chatMetadata['STARmem']).toBeUndefined();
+    });
+
+    test('ignores non-integer messageId', async () => {
+        bootstrap();
+        ctx.chatMetadata['STARmem'] = { 'chat-A': createEmptyState() };
+        await onMessageSwiped(/** @type {any} */ ('not a number'));
         const after = await loadState('chat-A');
         expect(after.workingBuffer).toEqual([]);
     });

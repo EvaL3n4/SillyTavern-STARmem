@@ -32,6 +32,7 @@ export const ET = Object.freeze({
     MESSAGE_SENT: 'message_sent',
     MESSAGE_RECEIVED: 'message_received',
     MESSAGE_DELETED: 'message_deleted',
+    MESSAGE_SWIPED: 'message_swiped',
 });
 
 /**
