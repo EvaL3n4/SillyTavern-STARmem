@@ -4,6 +4,31 @@ All notable changes to STARmem are documented here. Format:
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 1.1.0; STARmem
 follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.1]—2026-04-30
+
+Patch release. Native ST prompt injection, working-buffer fix, viewer
+polish.
+
+### Changed
+
+- **Injection switched to `setExtensionPrompt`**—STARmem now registers
+  its memory fragment via SillyTavern's prompt manager
+  (`IN_CHAT`, depth 4, system role) instead of splicing a synthetic
+  message into `chat`. No more chat-array mutation; cache and recency
+  behavior unchanged.
+- **Memory Viewer header** shortened from "STARmem Memory Viewer" to
+  "Memory Viewer".
+- **Memory Viewer rows** gain breathing room and de-emphasize the
+  importance/recency meta line so subject and content lead the eye.
+
+### Fixed
+
+- **Working buffer no longer re-ingests greetings on chat load.**
+  SillyTavern re-emits `MESSAGE_RECEIVED` with `type='first_message'`
+  whenever a chat is opened or the renderer rehydrates; the bootstrap
+  hook now skips that replay so character-card greetings stop being
+  captured as generated content.
+
 ## [2.0.0]—2026-04-30
 
 First public release. Clean break from the v1 private beta—not

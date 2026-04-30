@@ -1,6 +1,6 @@
 {
     "name": "starmem",
-    "version": "2.0.0",
+    "version": "2.0.1",
     "description": "STARmem—deterministic memory for SillyTavern roleplay",
     "type": "module",
     "private": true,
