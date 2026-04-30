@@ -4,6 +4,35 @@ All notable changes to STARmem are documented here. Format:
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 1.1.0; STARmem
 follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.3]—2026-04-30
+
+Patch release. Reroll/swipe protection: rejected draft generations no
+longer pollute long-term memory.
+
+### Fixed
+
+- **Swipes (rerolls) now scrub the working buffer.** When the user
+  swipes a message to a different variant, every working-buffer entry
+  whose provenance references that message is evicted before the next
+  consolidation pass. Previously, every reroll variant accumulated as a
+  separate working entry; if the buffer crossed the consolidation
+  threshold mid-rerolling, all rejected drafts could graduate to
+  long-term episodic memory alongside the variant the user actually
+  kept. Already-consolidated entries are deliberately left untouched —
+  graduated facts are user-owned and will be deletable via the
+  forthcoming memory-management UI, not via swipe side effects.
+- **Idle timer resets on swipe.** Swiping is user activity, not
+  idleness; the 60s idle-consolidation countdown now restarts on
+  MESSAGE_SWIPED so consolidation does not fire on a user mid-reroll.
+
+### Documentation
+
+- **Spec §8.1 added: Chat-Lifecycle Hooks and the Deletion Contract.**
+  Codifies which lifecycle events may scrub working-buffer entries
+  (MESSAGE_DELETED, MESSAGE_SWIPED) and explicitly forbids retroactive
+  surgery on graduated entries, preserving §6.3's "consolidate() is
+  the only function that mutates long-term storage" invariant.
+
 ## [2.0.2]—2026-04-30
 
 Patch release. Settings panel collapses into ST's standard inline-drawer
