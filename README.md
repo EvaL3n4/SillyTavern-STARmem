@@ -77,8 +77,10 @@ STARmem's design draws on published research:
 - **RAPTOR**—Sarthi et al. 2024, [arXiv:2401.18059](https://arxiv.org/abs/2401.18059)—recursive
   abstractive tree
 
-**Evaluated, not adopted:** A-MEM (multi-hop too weak for roleplay),
-Zep / Graphiti (full KG overkill at chat scale).
+**Evaluated, not adopted:**
+
+- **A-MEM**—Xu et al. 2025, [arXiv:2502.12110](https://arxiv.org/abs/2502.12110)—too weak on multi-hop for roleplay
+- **Zep / Graphiti**—Rasmussen et al. 2025, [arXiv:2501.13956](https://arxiv.org/abs/2501.13956)—full KG engine is overkill at chat scale
 
 ## License
 
