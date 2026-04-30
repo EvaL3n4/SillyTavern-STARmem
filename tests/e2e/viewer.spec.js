@@ -50,3 +50,16 @@ test('viewer shell uses Quiet Library serif display face for title', async ({ pa
     const fontFamily = await title.evaluate(el => getComputedStyle(el).fontFamily);
     expect(fontFamily.toLowerCase()).toMatch(/iowan|palatino|palladio|book antiqua|georgia|serif/);
 });
+
+test('episodic tab exposes Subject as a sort option (P16 T6)', async ({ page }) => {
+    await openST(page);
+    await expectExtensionLoaded(page);
+    await openViewer(page);
+    await page.locator('.starmem-viewer-tab[data-tab="episodic"]').click();
+    const sort = page.locator('#starmem-viewer-episodic-sort');
+    await expect(sort).toBeVisible();
+    const optionValues = await sort.evaluate(
+        el => [...el.options].map(o => o.value),
+    );
+    expect(optionValues).toContain('subject');
+});

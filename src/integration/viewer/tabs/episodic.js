@@ -1,6 +1,15 @@
 /**
  * Episodic tab — render the Episodic scope with subject filter + sort.
  *
+ * Sort modes:
+ *   - importance | recency | added → flat list, sorted globally
+ *   - subject                      → grouped layout: subjects A→Z, entries
+ *                                    within each group sorted by importance ↓
+ *
+ * The grouped layout matches the "Quiet Library" identity (literary archive
+ * with per-subject hanging-indent sections); flat layouts keep the current
+ * data-density-first presentation.
+ *
  * @module integration/viewer/tabs/episodic
  */
 
@@ -23,7 +32,7 @@ export async function renderTab(parent, ctx) {
     root.className = `${CSS_PREFIX}-viewer-episodic`;
     root.appendChild(buildHeader(filtered.length, episodic.length));
     root.appendChild(buildSortControls(root, filtered, ctx.subjectFilter));
-    root.appendChild(buildList(filtered, 'importance'));
+    root.appendChild(buildBody(filtered, 'importance'));
     parent.appendChild(root);
 }
 
@@ -55,11 +64,14 @@ function buildSortControls(root, entries, _subjectFilter) {
         <option value="importance">Importance ↓</option>
         <option value="recency">Recency ↓</option>
         <option value="added">Added ↓</option>
+        <option value="subject">Subject (grouped)</option>
     `;
     select.addEventListener('change', () => {
-        const oldList = root.querySelector(`.${CSS_PREFIX}-viewer-episodic-list`);
-        oldList?.remove();
-        root.appendChild(buildList(entries, select.value));
+        const oldBody = root.querySelector(
+            `.${CSS_PREFIX}-viewer-episodic-list, .${CSS_PREFIX}-viewer-episodic-groups`,
+        );
+        oldBody?.remove();
+        root.appendChild(buildBody(entries, select.value));
     });
 
     wrap.appendChild(label);
@@ -67,16 +79,17 @@ function buildSortControls(root, entries, _subjectFilter) {
     return wrap;
 }
 
-function buildList(entries, sortKey) {
+/**
+ * Body builder — dispatches to flat list or grouped layout based on sortKey.
+ */
+function buildBody(entries, sortKey) {
+    if (sortKey === 'subject') return buildGroupedBody(entries);
+    return buildFlatBody(entries, sortKey);
+}
+
+function buildFlatBody(entries, sortKey) {
     const now = new Date();
-    const sorted = [...entries];
-    if (sortKey === 'importance') {
-        sorted.sort((a, b) => (b.lifecycle?.importance ?? 0) - (a.lifecycle?.importance ?? 0));
-    } else if (sortKey === 'recency') {
-        sorted.sort((a, b) => recencyAt(now, b.lifecycle?.createdAt) - recencyAt(now, a.lifecycle?.createdAt));
-    } else if (sortKey === 'added') {
-        sorted.sort((a, b) => (b.lifecycle?.createdAt || '').localeCompare(a.lifecycle?.createdAt || ''));
-    }
+    const sorted = sortFlat(entries, sortKey, now);
 
     const list = document.createElement('ul');
     list.className = `${CSS_PREFIX}-viewer-episodic-list`;
@@ -86,17 +99,114 @@ function buildList(entries, sortKey) {
     return list;
 }
 
-function buildRow(entry, now) {
+function sortFlat(entries, sortKey, now) {
+    const sorted = [...entries];
+    if (sortKey === 'importance') {
+        sorted.sort((a, b) => (b.lifecycle?.importance ?? 0) - (a.lifecycle?.importance ?? 0));
+    } else if (sortKey === 'recency') {
+        sorted.sort((a, b) => recencyAt(now, b.lifecycle?.createdAt) - recencyAt(now, a.lifecycle?.createdAt));
+    } else if (sortKey === 'added') {
+        sorted.sort((a, b) => (b.lifecycle?.createdAt || '').localeCompare(a.lifecycle?.createdAt || ''));
+    }
+    return sorted;
+}
+
+/**
+ * Subject-grouped body: groups alphabetically (A→Z), within-group sort is
+ * importance ↓. Per-group entry count surfaced in the heading. Flattened
+ * MAX_RENDER cap applies to the whole layout (groups consume the budget
+ * in alphabetical order; trailing groups may be trimmed if cap is exhausted).
+ */
+function buildGroupedBody(entries) {
+    const now = new Date();
+    const groups = groupBySubject(entries);
+
+    const wrap = document.createElement('div');
+    wrap.className = `${CSS_PREFIX}-viewer-episodic-groups`;
+
+    let rendered = 0;
+    for (const [subject, subjectEntries] of groups) {
+        if (rendered >= MAX_RENDER) break;
+
+        // Within-group sort: importance ↓ (decision 2a).
+        const sorted = [...subjectEntries].sort(
+            (a, b) => (b.lifecycle?.importance ?? 0) - (a.lifecycle?.importance ?? 0),
+        );
+
+        const group = document.createElement('section');
+        group.className = `${CSS_PREFIX}-viewer-episodic-group`;
+        group.setAttribute('data-subject', subject);
+
+        const heading = document.createElement('h3');
+        heading.className = `${CSS_PREFIX}-viewer-episodic-group-heading`;
+        const subjectLabel = document.createElement('span');
+        subjectLabel.className = `${CSS_PREFIX}-viewer-episodic-group-subject`;
+        subjectLabel.textContent = subject;
+        const count = document.createElement('span');
+        count.className = `${CSS_PREFIX}-viewer-episodic-group-count`;
+        count.textContent = `${subjectEntries.length}`;
+        heading.appendChild(subjectLabel);
+        heading.appendChild(count);
+        group.appendChild(heading);
+
+        const list = document.createElement('ul');
+        list.className = `${CSS_PREFIX}-viewer-episodic-group-list`;
+        const remaining = MAX_RENDER - rendered;
+        for (const e of sorted.slice(0, remaining)) {
+            list.appendChild(buildRow(e, now, /* inGroup */ true));
+            rendered += 1;
+        }
+        group.appendChild(list);
+        wrap.appendChild(group);
+    }
+    return wrap;
+}
+
+/**
+ * Group entries by subject alphabetically (decision 1a). Empty/missing
+ * subjects bucket under '(no subject)' which sorts last via leading paren.
+ *
+ * @returns {Map<string, any[]>} insertion order = alphabetical
+ */
+function groupBySubject(entries) {
+    const groups = new Map();
+    for (const e of entries) {
+        const subj = (typeof e.subject === 'string' && e.subject) ? e.subject : '(no subject)';
+        if (!groups.has(subj)) groups.set(subj, []);
+        groups.get(subj).push(e);
+    }
+    // Re-emit in alphabetical order. '(no subject)' sorts before letters
+    // by ASCII order; localeCompare keeps locale-friendly subject sorting
+    // for the rest. Re-insert into a fresh Map to lock insertion order.
+    const sortedKeys = [...groups.keys()].sort((a, b) => a.localeCompare(b));
+    const out = new Map();
+    for (const k of sortedKeys) out.set(k, groups.get(k));
+    return out;
+}
+
+/**
+ * Single-entry row. Renders the same shape in both flat and grouped layouts;
+ * grouped layout omits the subject in the meta line (it's the heading).
+ *
+ * @param {any} entry
+ * @param {Date} now
+ * @param {boolean} [inGroup]  true when rendering inside a subject group
+ */
+function buildRow(entry, now, inGroup = false) {
     const li = document.createElement('li');
     li.className = `${CSS_PREFIX}-viewer-episodic-item`;
     li.setAttribute('data-id', entry.id);
 
     const header = document.createElement('div');
     header.className = `${CSS_PREFIX}-viewer-episodic-meta`;
-    const subject = document.createElement('span');
-    subject.className = `${CSS_PREFIX}-viewer-subject`;
-    subject.textContent = entry.subject ?? '(no subject)';
-    header.appendChild(subject);
+
+    if (!inGroup) {
+        const subject = document.createElement('span');
+        subject.className = `${CSS_PREFIX}-viewer-subject`;
+        subject.textContent = entry.subject ?? '(no subject)';
+        header.appendChild(subject);
+    }
+
     const scores = document.createElement('span');
     scores.className = `${CSS_PREFIX}-viewer-scores`;
     const imp = entry.lifecycle?.importance ?? 0;

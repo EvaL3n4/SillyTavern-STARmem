@@ -558,6 +558,161 @@
     color: var(--starmem-fg-muted);
 }
 
+/* -- Episodic tab — Quiet Library treatment ------------------------------ */
+/* Two layouts share the same row primitive (.starmem-viewer-episodic-item):
+ *   - Flat list (.starmem-viewer-episodic-list)        — sort by importance/recency/added
+ *   - Grouped sections (.starmem-viewer-episodic-groups) — sort by subject; each
+ *     subject is a serif heading with a hanging-indent left border (literary feel)
+ */
+
+.starmem-viewer .starmem-viewer-episodic {
+    display: flex;
+    flex-direction: column;
+    gap: var(--starmem-space-3);
+}
+
+.starmem-viewer .starmem-viewer-episodic-header {
+    font-family: var(--starmem-font-display);
+    font-size: var(--starmem-fs-meta);
+    letter-spacing: var(--starmem-tracking-meta);
+    color: var(--starmem-fg-muted);
+    text-transform: uppercase;
+}
+
+.starmem-viewer .starmem-viewer-episodic-controls {
+    display: flex;
+    align-items: center;
+    gap: var(--starmem-space-2);
+    font-size: var(--starmem-fs-meta);
+    color: var(--starmem-fg-muted);
+}
+
+.starmem-viewer .starmem-viewer-episodic-controls label {
+    font-family: var(--starmem-font-display);
+    letter-spacing: var(--starmem-tracking-meta);
+    text-transform: uppercase;
+}
+
+/* Flat list — vertical reading list, dotted separators between rows. */
+.starmem-viewer .starmem-viewer-episodic-list {
+    list-style: none;
+    padding-left: 0;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+}
+
+/* Grouped layout — each section gets a serif heading and a hanging-indent
+ * left border, like sub-chapters in an archive. */
+.starmem-viewer .starmem-viewer-episodic-groups {
+    display: flex;
+    flex-direction: column;
+    gap: var(--starmem-space-5);
+}
+
+.starmem-viewer .starmem-viewer-episodic-group {
+    border-left: 2px solid var(--starmem-border-faint);
+    padding-left: var(--starmem-space-4);
+}
+
+.starmem-viewer .starmem-viewer-episodic-group-heading {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: var(--starmem-space-3);
+    margin: 0 0 var(--starmem-space-2);
+    font-family: var(--starmem-font-display);
+    font-size: var(--starmem-fs-display-2);
+    font-weight: 400;
+    letter-spacing: var(--starmem-tracking-display);
+    color: var(--starmem-fg);
+}
+
+.starmem-viewer .starmem-viewer-episodic-group-subject {
+    /* Subject text fills available space; count sits flush right. */
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.starmem-viewer .starmem-viewer-episodic-group-count {
+    font-family: var(--starmem-font-mono);
+    font-size: var(--starmem-fs-mono);
+    color: var(--starmem-fg-muted);
+    font-weight: 400;
+    flex: 0 0 auto;
+}
+
+.starmem-viewer .starmem-viewer-episodic-group-list {
+    list-style: none;
+    padding-left: 0;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+}
+
+/* Shared row primitive: dotted separators, content-left + meta-right grid,
+ * generous reading line-height on the content. */
+.starmem-viewer .starmem-viewer-episodic-item {
+    list-style: none;
+    padding: var(--starmem-space-3) 0;
+    border-bottom: 1px dotted var(--starmem-border-faint);
+}
+
+.starmem-viewer .starmem-viewer-episodic-item:last-child {
+    border-bottom: none;
+}
+
+/* Meta line — subject (in flat mode only) on the left, mono scores on the right */
+.starmem-viewer .starmem-viewer-episodic-item .starmem-viewer-episodic-meta {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: var(--starmem-space-3);
+    margin-bottom: var(--starmem-space-1);
+}
+
+.starmem-viewer .starmem-viewer-episodic-item .starmem-viewer-subject {
+    font-family: var(--starmem-font-display);
+    font-size: var(--starmem-fs-meta);
+    color: var(--starmem-fg);
+    letter-spacing: var(--starmem-tracking-display);
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.starmem-viewer .starmem-viewer-episodic-item .starmem-viewer-scores {
+    font-family: var(--starmem-font-mono);
+    font-size: var(--starmem-fs-mono);
+    color: var(--starmem-fg-muted);
+    white-space: nowrap;
+    flex: 0 0 auto;
+}
+
+.starmem-viewer .starmem-viewer-episodic-item .starmem-viewer-content {
+    font-size: var(--starmem-fs-body);
+    line-height: var(--starmem-lh-reading);
+    color: var(--starmem-fg);
+}
+
+/* Tag chips — subtle, accent-tinted, theme-aware. */
+.starmem-viewer .starmem-viewer-episodic-item .starmem-viewer-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--starmem-space-1);
+    margin-top: var(--starmem-space-2);
+}
+
+.starmem-viewer .starmem-viewer-episodic-item .starmem-viewer-tag {
+    display: inline-block;
+    padding: 0 var(--starmem-space-2);
+    border-radius: var(--starmem-radius-1);
+    background: color-mix(in srgb, var(--starmem-accent) 18%, transparent);
+    color: var(--starmem-fg-muted);
+    font-family: var(--starmem-font-mono);
+    font-size: var(--starmem-fs-mono);
+    line-height: 1.6;
+}
+
 /* -- Graph tab -- */
 
 .starmem-viewer .starmem-viewer-graph-canvas {
