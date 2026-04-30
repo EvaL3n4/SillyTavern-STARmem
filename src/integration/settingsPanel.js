@@ -268,7 +268,7 @@ function renderWarnings(_parent) {
     const warnings = [];
     const profiles = getConnectionProfiles();
     if (profiles.length === 0) {
-        warnings.push('Connection Manager has no profiles configured — LLM-backed consolidation will fail.');
+        warnings.push('Connection Manager has no profiles configured—LLM-backed consolidation will fail.');
     }
     box.innerHTML = '';
     for (const w of warnings) {

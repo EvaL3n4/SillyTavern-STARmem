@@ -29,7 +29,6 @@
                                       var(--SmartThemeBlurTintColor, #1a1a1a));
     --starmem-border:       var(--SmartThemeBorderColor, #3a3a3a);
     --starmem-accent:       var(--SmartThemeQuoteColor, #c4a87c);  /* Quiet Library warm tan */
-    --starmem-accent-warm:  #e0af68;                      /* Indicator amber */
     /* Brand danger color (no ST equivalent — --SmartThemeErrorColor not
        defined in stock ST, so the var lookup always fell through). */
     --starmem-danger:       #f7768e;
@@ -185,63 +184,172 @@
 
 /* =========================================================================
  * Settings panel — mounts into ST's #extensions_settings container.
+ *
+ * Quiet Library identity: serif <summary> headings as collapsing chapters,
+ * tokenized borders + focus-on-accent for inputs, italic muted help text.
+ * Field flow stays single-row (label · control · slider value) since the
+ * panel mounts inside ST's drawer; a 220px-label grid would fight the
+ * collapsible <details> UX and overflow on narrow viewports. The literary
+ * value lands on typography + focus rhythm, not layout restructure.
  * ========================================================================= */
 
 .starmem-settings-panel {
     display: flex;
     flex-direction: column;
-    gap: var(--starmem-gap);
-    padding: var(--starmem-gap);
+    gap: var(--starmem-space-4);
+    padding: var(--starmem-space-5) var(--starmem-space-5);
     border: 1px solid var(--starmem-border);
-    border-radius: var(--starmem-radius);
+    border-radius: var(--starmem-radius-3);
     color: var(--starmem-fg);
     background: var(--starmem-bg-elevated);
+    box-shadow: var(--starmem-elev-2);
 }
+
+.starmem-settings-title {
+    font-family: var(--starmem-font-display);
+    font-size: var(--starmem-fs-display-1);
+    font-weight: 400;
+    letter-spacing: var(--starmem-tracking-display);
+    margin: 0;
+    color: var(--starmem-fg);
+}
+
+.starmem-settings-subtitle {
+    font-family: var(--starmem-font-display);
+    font-size: var(--starmem-fs-meta);
+    letter-spacing: var(--starmem-tracking-meta);
+    text-transform: uppercase;
+    color: var(--starmem-fg-muted);
+    margin: 0 0 var(--starmem-space-3);
+}
+
+/* Each <details> reads as a collapsing chapter. Border-top divider gives
+ * sections a paginated feel; <summary> uses the display face with a small
+ * disclosure marker. */
+.starmem-settings-section {
+    border-top: 1px solid var(--starmem-border-faint);
+    padding-top: var(--starmem-space-3);
+}
+.starmem-settings-section > summary {
+    font-family: var(--starmem-font-display);
+    font-size: var(--starmem-fs-display-2);
+    font-weight: 400;
+    letter-spacing: var(--starmem-tracking-display);
+    color: var(--starmem-fg);
+    cursor: pointer;
+    /* Suppress native disclosure marker — mobile renderers (especially iOS
+     * Safari + Android Chrome) substitute the triangle with an emoji ▶️
+     * that breaks the literary aesthetic. We draw our own typographic
+     * glyph below with explicit text-presentation. */
+    list-style: none;
+    padding: var(--starmem-space-1) 0 var(--starmem-space-2);
+    transition: color var(--starmem-dur-fast) var(--starmem-ease);
+}
+.starmem-settings-section > summary::-webkit-details-marker {
+    display: none;
+}
+.starmem-settings-section > summary::before {
+    /* U+25B8 BLACK RIGHT-POINTING SMALL TRIANGLE + U+FE0E text-presentation
+     * variation selector. The VS15 tells the renderer "show this as text,
+     * not as emoji" — defeats mobile emoji substitution. */
+    content: "\25B8\FE0E";
+    display: inline-block;
+    width: 1em;
+    margin-right: var(--starmem-space-1);
+    color: var(--starmem-fg-muted);
+    font-family: var(--starmem-font-mono);
+    transition: transform var(--starmem-dur-fast) var(--starmem-ease);
+}
+.starmem-settings-section[open] > summary::before {
+    transform: rotate(90deg);
+}
+.starmem-settings-section > summary:hover { color: var(--starmem-accent); }
+.starmem-settings-section > summary:focus-visible {
+    outline: 2px solid var(--starmem-accent);
+    outline-offset: 2px;
+    border-radius: var(--starmem-radius-1);
+}
+.starmem-settings-section[open] > summary { margin-bottom: var(--starmem-space-2); }
 
 .starmem-settings-row {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: var(--starmem-gap);
+    gap: var(--starmem-space-3);
+    padding: var(--starmem-space-1) 0;
 }
 
-.starmem-settings-label {
+.starmem-settings-row label {
     flex: 0 0 auto;
-    min-width: 8rem;
-    font-weight: 500;
+    min-width: 12rem;
+    font-size: var(--starmem-fs-body);
+    color: var(--starmem-fg);
 }
 
-.starmem-settings-input,
-.starmem-settings-select {
+/* Generic form-control treatment scoped to the settings panel.
+ * Trap 5 defense: ST's .popup input rules don't reach this surface (panel
+ * lives in #extensions_settings, not a popup), but ST's .text_pole class
+ * sets its own background + border that we want to override with our
+ * tokens for visual coherence. */
+.starmem-settings-panel input[type="text"],
+.starmem-settings-panel input[type="number"],
+.starmem-settings-panel select,
+.starmem-settings-panel textarea {
     flex: 1 1 auto;
-    padding: 0.25rem 0.5rem;
+    min-width: 0;
     background: var(--starmem-bg);
     color: var(--starmem-fg);
-    border: 1px solid var(--starmem-border);
-    border-radius: var(--starmem-radius);
-    font-family: inherit;
-    font-size: 0.9rem;
+    border: 1px solid var(--starmem-border-faint);
+    border-radius: var(--starmem-radius-1);
+    padding: var(--starmem-space-1) var(--starmem-space-2);
+    font: inherit;
+    font-size: var(--starmem-fs-body);
+    transition: border-color var(--starmem-dur-fast) var(--starmem-ease);
+}
+.starmem-settings-panel input[type="text"]:focus,
+.starmem-settings-panel input[type="number"]:focus,
+.starmem-settings-panel select:focus,
+.starmem-settings-panel textarea:focus {
+    outline: none;
+    border-color: var(--starmem-accent);
+}
+.starmem-settings-panel input[type="range"] {
+    flex: 1 1 auto;
+    min-width: 0;
+    accent-color: var(--starmem-accent);
 }
 
-.starmem-settings-slider-value {
+/* Slider readout — class name in template is .starmem-settings-value, not
+ * .starmem-settings-slider-value (the previous rule was dead). */
+.starmem-settings-value {
+    flex: 0 0 auto;
     min-width: 3rem;
     text-align: right;
+    font-family: var(--starmem-font-mono);
+    font-size: var(--starmem-fs-mono);
     color: var(--starmem-fg-muted);
     font-variant-numeric: tabular-nums;
 }
 
+.starmem-settings-warnings {
+    display: flex;
+    flex-direction: column;
+    gap: var(--starmem-space-2);
+}
 .starmem-settings-warning {
-    padding: 0.5rem;
-    border-left: 3px solid var(--starmem-accent-warm);
-    background: color-mix(in srgb, var(--starmem-accent-warm) 12%, transparent);
+    padding: var(--starmem-space-2) var(--starmem-space-3);
+    border-left: 2px solid var(--starmem-accent);
+    background: color-mix(in srgb, var(--starmem-accent) 8%, transparent);
     color: var(--starmem-fg);
-    font-size: 0.85rem;
+    font-size: var(--starmem-fs-meta);
+    border-radius: 0 var(--starmem-radius-1) var(--starmem-radius-1) 0;
 }
 
 .starmem-settings-actions {
     display: flex;
-    gap: 0.5rem;
+    gap: var(--starmem-space-2);
     justify-content: flex-end;
+    padding-top: var(--starmem-space-2);
 }
 
 /* =========================================================================
@@ -811,10 +919,10 @@
     .starmem-settings-row {
         flex-direction: column;
         align-items: stretch;
-        gap: 0.25rem;
+        gap: var(--starmem-space-1);
     }
 
-    .starmem-settings-label {
+    .starmem-settings-row label {
         min-width: 0;
     }
 
