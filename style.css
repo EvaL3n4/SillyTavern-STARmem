@@ -252,6 +252,14 @@
     max-width: min(960px, 95vw);
     max-height: 85vh;
     width: 100%;
+    /* Fill the popup-content interior when wrapped by ST's Popup (which is
+     * flex-grown inside popup-body). On the standalone fallback path the
+     * parent has no explicit height and this resolves to auto — max-height
+     * still clamps. Without this, the viewer claims up to 85vh / 100vh
+     * regardless of the popup's actual interior, content overflows past
+     * popup-content's `overflow: hidden`, and scroll chains between the
+     * dead popup wrapper and the live viewer-body. */
+    height: 100%;
     padding: 0;
     border: 1px solid var(--starmem-border);
     border-radius: var(--starmem-radius-3);
@@ -260,6 +268,11 @@
     color: var(--starmem-fg);
     overflow: hidden;                                     /* tabs own their scroll */
     text-align: left;                                     /* ST's .popup-content sets center; reclaim */
+    /* Flex column so the body fills whatever interior the popup gives us
+     * and scrolls inside. Avoids viewport-relative max-height math that
+     * desyncs from the actual dialog height when wrapped by ST's Popup. */
+    display: flex;
+    flex-direction: column;
 }
 
 .starmem-viewer.starmem-viewer::backdrop {
@@ -482,8 +495,15 @@
 .starmem-viewer .starmem-viewer-body {
     padding: var(--starmem-space-5) var(--starmem-space-6);
     overflow-y: auto;
-    min-height: 280px;
-    max-height: calc(85vh - 8rem);                        /* leaves room for header+tabs */
+    /* Fill the remaining flex space inside the dialog. min-height: 0 lets
+     * the flex item shrink below its content's intrinsic size so overflow-y
+     * actually engages instead of pushing the parent. */
+    flex: 1 1 auto;
+    min-height: 0;
+    /* Stop wheel/touch scroll from chaining out into ST's popup wrapper
+     * once we hit top/bottom — without this, momentum scroll bounces back
+     * up because the parent .popup-content briefly accepts the delta. */
+    overscroll-behavior: contain;
 }
 
 /* =========================================================================
@@ -786,10 +806,6 @@
         max-width: 100vw;
         max-height: 100vh;
         border-radius: 0;
-    }
-
-    .starmem-viewer .starmem-viewer-body {
-        max-height: calc(100vh - 7rem);
     }
 
     .starmem-settings-row {
