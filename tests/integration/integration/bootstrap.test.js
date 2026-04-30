@@ -449,3 +449,56 @@ describe('onMessageSwiped', () => {
         expect(after.workingBuffer).toEqual([]);
     });
 });
+
+describe('idle timer wiring', () => {
+    // These tests prove the handlers call resetIdleTimer — the trigger
+    // mechanism itself is exhaustively covered in tests/unit/consolidation/
+    // triggers.test.js. Here we only assert that user activity (sending or
+    // swiping) actually arms the timer; a leaked or skipped reset is the
+    // bug shape these tests catch.
+
+    beforeEach(() => jest.useFakeTimers());
+    afterEach(() => jest.useRealTimers());
+
+    test('onMessageSent arms the idle timer', () => {
+        bootstrap();
+        // bootstrap() itself does not arm the idle timer.
+        expect(jest.getTimerCount()).toBe(0);
+
+        onMessageSent(0);
+        // Exactly one outstanding timer: the idle countdown.
+        expect(jest.getTimerCount()).toBe(1);
+    });
+
+    test('onMessageSwiped arms the idle timer (swipe is engagement, not idleness)', async () => {
+        bootstrap();
+        ctx.chatMetadata['STARmem'] = { 'chat-A': createEmptyState() };
+        expect(jest.getTimerCount()).toBe(0);
+
+        await onMessageSwiped(0);
+        expect(jest.getTimerCount()).toBe(1);
+    });
+
+    test('onMessageSwiped DEBOUNCES — a swipe within the idle window pushes the deadline back', async () => {
+        bootstrap();
+        ctx.chatMetadata['STARmem'] = { 'chat-A': createEmptyState() };
+
+        // Arm the timer via a normal message.
+        onMessageSent(0);
+        // Advance most of the way to the idle threshold (60s default).
+        jest.advanceTimersByTime(59_000);
+        // Swipe — should reset the deadline.
+        await onMessageSwiped(0);
+        // Advance another 59s — total 118s wall-clock, but only 59s since
+        // the swipe. The idle timer must NOT have fired yet.
+        jest.advanceTimersByTime(59_000);
+        // One outstanding timer survives — the post-swipe one.
+        expect(jest.getTimerCount()).toBe(1);
+    });
+
+    test('onMessageSwiped no-op (no lastChatId) does not arm a timer', async () => {
+        // No bootstrap() — lastChatId stays null.
+        await onMessageSwiped(0);
+        expect(jest.getTimerCount()).toBe(0);
+    });
+});
