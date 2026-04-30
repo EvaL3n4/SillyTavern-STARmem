@@ -48,11 +48,8 @@ Open the STARmem settings panel from ST's Extensions drawer:
 
 ## Compatibility
 
-- **Requires** SillyTavern 1.13.0+.
+- **Requires** SillyTavern 1.17.0+.
 - **Tested on** Catppuccin, Midnight, and stock dark themes.
-- **Not migrated from v1.** STARmem v2 is a clean break (per the
-  [design spec §11](docs/specs/2026-04-20-starmem-v2-design.md)). New
-  chats only.
 
 ## Documentation
 
