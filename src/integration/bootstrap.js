@@ -166,10 +166,22 @@ export function onMessageSent(_messageId) {
  * Event handler: MESSAGE_RECEIVED. Create a `scope: 'working'` entry for the
  * assistant's reply, append its id to workingBuffer, then maybeConsolidate.
  *
+ * Skips replays of the character's first message: ST emits MESSAGE_RECEIVED
+ * with `type === 'first_message'` every time a 1-message chat is loaded
+ * (chat switch, swipe-back-to-greeting, character switch, ST restart — see
+ * script.js#getChatResult and group-chats.js). Capturing it as memory is
+ * wrong (it's character-card lore, not generated content) and would re-add
+ * the same entry on every load.
+ *
  * @param {number} messageId - ST's chat index for the newly-received message
+ * @param {string} [type] - generation type; 'first_message' indicates a replay
  */
-export async function onMessageReceived(messageId) {
+export async function onMessageReceived(messageId, type) {
     if (!lastChatId) return;
+    if (type === 'first_message') {
+        log.debug('skipping first_message replay (character greeting, not generated content)');
+        return;
+    }
     try {
         const ctx = resolveContext();
         const chat = Array.isArray(ctx.chat) ? ctx.chat : null;

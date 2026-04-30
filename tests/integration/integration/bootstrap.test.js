@@ -224,6 +224,49 @@ describe('onMessageReceived', () => {
         // Nothing thrown, nothing persisted.
         expect(ctx.chatMetadata['STARmem']).toBeUndefined();
     });
+
+    test("skips type='first_message' replay (character greeting, not generated content)", async () => {
+        // ST emits MESSAGE_RECEIVED with type='first_message' every time a
+        // 1-message chat is loaded — chat switch, swipe-back-to-greeting,
+        // character switch, ST restart. See script.js#getChatResult and
+        // group-chats.js. Without this skip, the same entry gets re-added
+        // on every load.
+        bootstrap();
+        ctx.chatMetadata['STARmem'] = { 'chat-A': createEmptyState() };
+        ctx.chat = [
+            { name: 'c', is_user: false, is_system: false, send_date: '', mes: 'character greeting' },
+        ];
+        await onMessageReceived(0, 'first_message');
+        const state = await loadState('chat-A');
+        expect(state.workingBuffer).toHaveLength(0);
+        expect(Object.keys(state.entries)).toHaveLength(0);
+    });
+
+    test('captures normal replies even when type is omitted (back-compat)', async () => {
+        // Older ST versions or non-standard emit sites may pass undefined as
+        // the type arg; we still want to capture those as working memory.
+        bootstrap();
+        ctx.chatMetadata['STARmem'] = { 'chat-A': createEmptyState() };
+        ctx.chat = [
+            { name: 'u', is_user: true, is_system: false, send_date: '', mes: 'hi' },
+            { name: 'c', is_user: false, is_system: false, send_date: '', mes: 'reply' },
+        ];
+        await onMessageReceived(1);  // no type arg
+        const state = await loadState('chat-A');
+        expect(state.workingBuffer).toHaveLength(1);
+    });
+
+    test("captures normal replies when type is 'normal' or other non-first_message", async () => {
+        bootstrap();
+        ctx.chatMetadata['STARmem'] = { 'chat-A': createEmptyState() };
+        ctx.chat = [
+            { name: 'u', is_user: true, is_system: false, send_date: '', mes: 'hi' },
+            { name: 'c', is_user: false, is_system: false, send_date: '', mes: 'reply' },
+        ];
+        await onMessageReceived(1, 'normal');
+        const state = await loadState('chat-A');
+        expect(state.workingBuffer).toHaveLength(1);
+    });
 });
 
 describe('onMessageDeleted', () => {
