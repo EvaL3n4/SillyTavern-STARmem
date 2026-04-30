@@ -46,7 +46,7 @@ function buildHeader(shown, total) {
     const el = document.createElement('div');
     el.className = `${CSS_PREFIX}-viewer-episodic-header`;
     const limitNote = shown > MAX_RENDER ? ` (showing first ${MAX_RENDER})` : '';
-    el.textContent = `Episodic — ${shown}/${total} entries${limitNote}`;
+    el.textContent = `Episodic—${shown}/${total} entries${limitNote}`;
     return el;
 }
 
