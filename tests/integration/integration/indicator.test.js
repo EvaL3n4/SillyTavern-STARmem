@@ -25,16 +25,16 @@ afterEach(() => {
 });
 
 describe('indicator — mount / unmount', () => {
-    test('mountIndicator creates a dot inside #send_but_container when present', () => {
+    test('mountIndicator creates a dot inside #send_form when present', () => {
         const anchor = document.createElement('div');
-        anchor.id = 'send_but_container';
+        anchor.id = 'send_form';
         document.body.appendChild(anchor);
 
         mountIndicator(() => 'chat-A');
 
         const dot = document.getElementById(`${CSS_PREFIX}-indicator`);
         expect(dot).not.toBeNull();
-        expect(dot?.parentElement?.id).toBe('send_but_container');
+        expect(dot?.parentElement?.id).toBe('send_form');
         expect(dot?.classList.contains(`${CSS_PREFIX}-indicator`)).toBe(true);
         expect(dot?.classList.contains(`${CSS_PREFIX}-indicator-floating`)).toBe(false);
     });

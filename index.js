@@ -7,7 +7,7 @@
  *      `generate_interceptor` at this global, and calls it on every generation.
  *   2. On APP_READY:
  *        a. bootstrap()            — event subscriptions, state backend, scorer
- *        b. mountIndicator()       — subtle consolidation dot in #send_but_container
+ *        b. mountIndicator()       — subtle consolidation dot anchored in #send_form
  *        c. renderSettingsPanel()  — extensions-drawer settings UI (host =
  *                                    #extensions_settings2, our loading_order=100
  *                                    lands us in the right-hand column)

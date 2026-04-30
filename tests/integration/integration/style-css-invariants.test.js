@@ -84,8 +84,14 @@ describe('style.css invariants', () => {
     test('mobile breakpoint is exactly 639px', () => {
         const mqs = [...css.matchAll(/@media[^{]+/g)].map(m => m[0].trim());
         expect(mqs).toContain('@media (max-width: 639px)');
-        // prefers-reduced-motion is an a11y opt-out, not a layout breakpoint
+        // prefers-reduced-motion is an a11y opt-out, not a layout breakpoint.
+        // Multiple 639px blocks are fine — co-locating responsive rules with
+        // their base rules is preferred over a single bottom-of-file dump.
+        // The invariant is "only 639px is used as a breakpoint value."
         const nonA11y = mqs.filter(m => !m.includes('prefers-reduced-motion'));
-        expect(nonA11y).toEqual(['@media (max-width: 639px)']);
+        expect(nonA11y.length).toBeGreaterThan(0);
+        for (const mq of nonA11y) {
+            expect(mq).toBe('@media (max-width: 639px)');
+        }
     });
 });

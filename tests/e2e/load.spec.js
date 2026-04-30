@@ -27,11 +27,10 @@ test('extension loads with no console errors', async ({ page }) => {
     expect(ourErrors).toEqual([]);
 });
 
-test('indicator mounts at send-button anchor', async ({ page }) => {
+test('indicator mounts at send-form anchor', async ({ page }) => {
     await openST(page);
     await expectExtensionLoaded(page);
-    // Decision 14.B: indicator mounts inside #send_but_container or
-    // floats fixed bottom-right.
+    // P16 T5: indicator mounts inside #send_form (or floats fixed if absent).
     const indicator = page.locator('.starmem-indicator');
     await expect(indicator).toHaveCount(1);
     await expect(indicator).toBeVisible();

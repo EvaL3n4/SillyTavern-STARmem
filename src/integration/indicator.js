@@ -3,11 +3,22 @@
  * running. Mounted once on APP_READY; polls state.runtime.consolidating via
  * loadState() on a 1-second interval.
  *
- * Invisible when consolidating=false; visible + animated when consolidating=true.
+ * Idle state: a quiet always-visible muted dot at 0.4 opacity.
+ * Busy state: theme-accent dot with a 1.4s gentle pulse (Quiet Library).
  *
- * Decision 14.B: mount inside `#send_but_container` (ST's stable send-button
- * wrapper). Fall back to document.body with fixed positioning if that anchor
- * isn't present at mount time.
+ * Mount target: `#send_form` (ST's stable input-bar wrapper). On desktop the
+ * CSS uses `position: fixed` + bottom-right viewport coordinates so the dot
+ * sits in the bottom corner regardless of DOM parent. On mobile, the CSS
+ * switches to `position: absolute` + top-right relative to `#send_form` so
+ * the dot rides at the top edge of the send bar instead of being clipped by
+ * the on-screen keyboard or send-form chrome that covers the viewport
+ * bottom-right corner. Falls back to `document.body` + fixed positioning
+ * if `#send_form` isn't present at mount time (defensive — should be rare,
+ * since send_form is part of the always-rendered chat surface).
+ *
+ * Note: an earlier draft (Phase 8 Decision 14.B) targeted `#send_but_container`,
+ * which never existed in current SillyTavern. P16 T5 corrected this to
+ * `#send_form` and pinned mobile behavior at the same time.
  *
  * @module integration/indicator
  * @see docs/specs/2026-04-20-starmem-v2-design.md §8
@@ -46,15 +57,15 @@ export function mountIndicator(getChatId) {
     dot.title = 'STARmem: idle';
     dot.classList.add(`${CSS_PREFIX}-indicator-idle`);
 
-    // Decision 14.B: prefer ST's send-button container as anchor.
-    // style.css sets `#send_but_container { position: relative }` so our
-    // absolute-positioned dot anchors there. Fall back to document.body
-    // with fixed positioning if the container isn't mounted yet (defensive).
-    const anchor = document.getElementById('send_but_container');
+    // Mount inside ST's send form. style.css sets `#send_form { position:
+    // relative }` so the mobile breakpoint's `position: absolute` rule
+    // anchors here. On desktop the CSS uses `position: fixed` regardless
+    // of DOM parent, so the dot sits in the viewport's bottom-right corner.
+    const anchor = document.getElementById('send_form');
     if (anchor) {
         anchor.appendChild(dot);
     } else {
-        log.debug('#send_but_container not found; falling back to document.body');
+        log.debug('#send_form not found; falling back to document.body');
         dot.classList.add(`${CSS_PREFIX}-indicator-floating`);
         document.body.appendChild(dot);
     }
