@@ -13,7 +13,8 @@ describe('integration barrel', () => {
         const expected = [
             // constants
             'SETTINGS_KEY', 'SETTINGS_SCHEMA_VERSION', 'SETTINGS_DEFAULTS',
-            'SETTINGS_BOUNDS', 'INJECTION_KEY', 'INJECTION_ROLE',
+            'SETTINGS_BOUNDS', 'INJECTION_PROMPT_KEY', 'INJECTION_DEPTH',
+            'INJECTION_POSITION_IN_CHAT', 'INJECTION_ROLE_SYSTEM',
             'VIEWER_TABS', 'CSS_PREFIX',
             // settings
             'getSettings', 'setSettings', 'resetSettings', 'validateSettings',

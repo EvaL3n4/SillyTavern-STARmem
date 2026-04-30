@@ -1,16 +1,16 @@
 /**
- * Interceptor — pre-generate retrieval + chat[-4] injection.
+ * Interceptor — pre-generate retrieval + setExtensionPrompt injection.
  *
  * Non-JSDOM: mocks SillyTavern.getContext() and operates on plain arrays.
  */
-import { describe, test, expect, beforeEach, afterEach } from '@jest/globals';
+import { describe, test, expect, beforeEach, afterEach, jest } from '@jest/globals';
 import {
-    starmemInterceptor, extractLastUserQuery, formatMemoryMessage,
-    buildInjectionMessage, computeInjectionPosition,
+    starmemInterceptor, extractLastUserQuery, formatMemoryMessage, injectMemoryPrompt,
     _setContextForTests, _resetContextForTests,
 } from '../../../src/integration/interceptor.js';
-import { INJECTION_KEY } from '../../../src/integration/constants.js';
-import { INJECTION_DEPTH } from '../../../src/core/constants.js';
+import {
+    INJECTION_PROMPT_KEY, INJECTION_DEPTH, INJECTION_POSITION_IN_CHAT, INJECTION_ROLE_SYSTEM,
+} from '../../../src/integration/constants.js';
 import { setBackend, _resetBackendForTests, loadState } from '../../../src/core/state.js';
 import { _resetLocksForTests } from '../../../src/core/lock.js';
 import { createEmptyState } from '../../../src/core/schema.js';
@@ -18,6 +18,8 @@ import { createEntry } from '../../../src/memory/entry.js';
 
 /** @type {Map<string, unknown>} */
 let store;
+/** @type {jest.Mock} */
+let setExtensionPrompt;
 
 function makeChat(userText) {
     return [
@@ -34,7 +36,8 @@ beforeEach(() => {
     store = new Map();
     setBackend({ read: id => store.get(id), write: (id, v) => { store.set(id, v); } });
     _resetLocksForTests();
-    _setContextForTests({ chatId: 'chat-A' });
+    setExtensionPrompt = jest.fn();
+    _setContextForTests({ chatId: 'chat-A', setExtensionPrompt });
 });
 
 afterEach(() => {
@@ -81,50 +84,62 @@ describe('interceptor — pure helpers', () => {
         expect(formatMemoryMessage([])).toBe('');
     });
 
-    test('buildInjectionMessage marks the system message with INJECTION_KEY', () => {
-        const m = buildInjectionMessage('hello');
-        expect(m.is_user).toBe(false);
-        expect(m.is_system).toBe(true);
-        expect(m.mes).toBe('hello');
-        expect(m.extra?.[INJECTION_KEY]).toBe(true);
+    test('injectMemoryPrompt registers with stable key, IN_CHAT depth, SYSTEM role', () => {
+        const fn = jest.fn();
+        injectMemoryPrompt(fn, 'hello body');
+        expect(fn).toHaveBeenCalledTimes(1);
+        const [key, value, position, depth, scan, role] = fn.mock.calls[0];
+        expect(key).toBe(INJECTION_PROMPT_KEY);
+        expect(value).toBe('hello body');
+        expect(position).toBe(INJECTION_POSITION_IN_CHAT);
+        expect(depth).toBe(INJECTION_DEPTH);
+        expect(scan).toBe(false);
+        expect(role).toBe(INJECTION_ROLE_SYSTEM);
     });
 
-    test('computeInjectionPosition clamps at 0 for short chats', () => {
-        expect(computeInjectionPosition(0, 4)).toBe(0);
-        expect(computeInjectionPosition(3, 4)).toBe(0);
-        expect(computeInjectionPosition(4, 4)).toBe(0);
-    });
-
-    test('computeInjectionPosition returns length - depth for long chats', () => {
-        expect(computeInjectionPosition(10, 4)).toBe(6);
-        expect(computeInjectionPosition(100, 4)).toBe(96);
+    test('injectMemoryPrompt coerces non-string body to empty string', () => {
+        const fn = jest.fn();
+        injectMemoryPrompt(fn, /** @type {any} */ (null));
+        expect(fn.mock.calls[0][1]).toBe('');
     });
 });
 
 describe('interceptor — flow', () => {
-    test('no chatId → no-op, chat unchanged', async () => {
-        _setContextForTests({ chatId: null });
+    test('no chatId → clears injection slot, chat unchanged', async () => {
+        _setContextForTests({ chatId: null, setExtensionPrompt });
         const chat = makeChat('anything');
         const before = chat.length;
         await starmemInterceptor(chat, 4096, () => {}, 'normal');
         expect(chat.length).toBe(before);
+        expect(setExtensionPrompt).toHaveBeenCalledTimes(1);
+        expect(setExtensionPrompt.mock.calls[0][1]).toBe('');
     });
 
-    test('no user query → no-op, chat unchanged', async () => {
+    test('no user query → clears injection slot, chat unchanged', async () => {
         const chat = [{ name: 'c', is_user: false, is_system: false, send_date: '', mes: 'hi' }];
         await starmemInterceptor(chat, 4096, () => {}, 'normal');
         expect(chat.length).toBe(1);
+        expect(setExtensionPrompt).toHaveBeenCalledTimes(1);
+        expect(setExtensionPrompt.mock.calls[0][1]).toBe('');
     });
 
-    test('empty retrieval result → no injection', async () => {
+    test('empty retrieval result → registers empty body (clears slot)', async () => {
         store.set('chat-A', createEmptyState());  // no entries
         const chat = makeChat('anything');
         const before = chat.length;
         await starmemInterceptor(chat, 4096, () => {}, 'normal');
         expect(chat.length).toBe(before);
+        expect(setExtensionPrompt).toHaveBeenCalledTimes(1);
+        const [key, value, position, depth, scan, role] = setExtensionPrompt.mock.calls[0];
+        expect(key).toBe(INJECTION_PROMPT_KEY);
+        expect(value).toBe('');
+        expect(position).toBe(INJECTION_POSITION_IN_CHAT);
+        expect(depth).toBe(INJECTION_DEPTH);
+        expect(scan).toBe(false);
+        expect(role).toBe(INJECTION_ROLE_SYSTEM);
     });
 
-    test('injects at chat.length - INJECTION_DEPTH when entries returned', async () => {
+    test('retrieval hits → registers formatted body, never mutates chat', async () => {
         const now = new Date('2026-04-20T10:00:00Z');
         const entry = createEntry({
             scope: 'episodic', content: 'alice traveled to paris', subject: 'alice',
@@ -138,35 +153,22 @@ describe('interceptor — flow', () => {
         });
 
         const chat = makeChat('tell me about paris');
-        const expectedPos = chat.length - INJECTION_DEPTH;  // = 2
+        const before = JSON.stringify(chat);
         await starmemInterceptor(chat, 4096, () => {}, 'normal');
 
-        expect(chat.length).toBe(7);
-        expect(chat[expectedPos].is_system).toBe(true);
-        expect(chat[expectedPos].extra?.[INJECTION_KEY]).toBe(true);
-        expect(chat[expectedPos].mes).toContain('[STARmem] Retrieved memories:');
-    });
+        // Chat untouched.
+        expect(JSON.stringify(chat)).toBe(before);
 
-    test('short chat → injected at position 0', async () => {
-        const now = new Date();
-        const entry = createEntry({
-            scope: 'episodic', content: 'alice likes coffee', subject: 'alice',
-            tags: ['coffee'], relations: [],
-            provenance: { sourceMessages: [0], extractor: 't@v1' },
-            now,
-        });
-        store.set('chat-A', {
-            ...createEmptyState(),
-            entries: { [entry.id]: entry },
-        });
-
-        const chat = [
-            { name: 'u', is_user: true, is_system: false, send_date: '', mes: 'what does alice like' },
-        ];
-        await starmemInterceptor(chat, 4096, () => {}, 'normal');
-
-        expect(chat.length).toBe(2);
-        expect(chat[0].is_system).toBe(true);
+        // Injection registered with the right shape.
+        expect(setExtensionPrompt).toHaveBeenCalledTimes(1);
+        const [key, value, position, depth, scan, role] = setExtensionPrompt.mock.calls[0];
+        expect(key).toBe(INJECTION_PROMPT_KEY);
+        expect(value).toContain('[STARmem] Retrieved memories:');
+        expect(value).toContain('alice traveled to paris');
+        expect(position).toBe(INJECTION_POSITION_IN_CHAT);
+        expect(depth).toBe(INJECTION_DEPTH);
+        expect(scan).toBe(false);
+        expect(role).toBe(INJECTION_ROLE_SYSTEM);
     });
 
     test('applyAccessEvent fires for returned entries (exactly once via ladder)', async () => {
@@ -188,7 +190,6 @@ describe('interceptor — flow', () => {
 
         const after = await loadState('chat-A');
         const stored = after.entries[entry.id];
-        // Entry was returned → access count bumped exactly once (by ladder).
         expect(stored.lifecycle.accessCount).toBe(initialAccessCount + 1);
     });
 
@@ -216,11 +217,10 @@ describe('interceptor — flow', () => {
         await starmemInterceptor(chat, 4096, () => {}, 'normal');
 
         const after = await loadState('chat-A');
-        // Irrelevant entry wasn't returned → access count unchanged.
         expect(after.entries[irrelevant.id].lifecycle.accessCount).toBe(irrelevantAccessBefore);
     });
 
-    test('thrown errors are swallowed — chat is never corrupted', async () => {
+    test('thrown errors are swallowed — chat is never corrupted, slot is cleared', async () => {
         // Force an error by feeding a bogus backend that throws on read.
         setBackend({
             read: () => { throw new Error('BOOM'); },
@@ -231,5 +231,17 @@ describe('interceptor — flow', () => {
         await starmemInterceptor(chat, 4096, () => {}, 'normal');
         // Chat must be untouched.
         expect(JSON.stringify(chat)).toBe(before);
+        // The error path should also clear the prior injection so stale
+        // memories don't leak into the next turn.
+        expect(setExtensionPrompt).toHaveBeenCalled();
+        const lastCall = setExtensionPrompt.mock.calls[setExtensionPrompt.mock.calls.length - 1];
+        expect(lastCall[1]).toBe('');
+    });
+
+    test('missing setExtensionPrompt in context → no crash, no injection', async () => {
+        _setContextForTests({ chatId: 'chat-A', setExtensionPrompt: null });
+        store.set('chat-A', createEmptyState());
+        const chat = makeChat('anything');
+        await expect(starmemInterceptor(chat, 4096, () => {}, 'normal')).resolves.toBeUndefined();
     });
 });

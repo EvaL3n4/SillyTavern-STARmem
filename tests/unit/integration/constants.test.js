@@ -4,7 +4,8 @@
 import { describe, test, expect } from '@jest/globals';
 import {
     SETTINGS_KEY, SETTINGS_SCHEMA_VERSION, SETTINGS_DEFAULTS, SETTINGS_BOUNDS,
-    INJECTION_KEY, INJECTION_ROLE, VIEWER_TABS, CSS_PREFIX,
+    INJECTION_PROMPT_KEY, INJECTION_DEPTH, INJECTION_POSITION_IN_CHAT, INJECTION_ROLE_SYSTEM,
+    VIEWER_TABS, CSS_PREFIX,
 } from '../../../src/integration/constants.js';
 
 describe('integration/constants', () => {
@@ -39,12 +40,22 @@ describe('integration/constants', () => {
         }
     });
 
-    test('INJECTION_KEY is namespaced under STARmem', () => {
-        expect(INJECTION_KEY.startsWith('STARmem:')).toBe(true);
+    test('INJECTION_PROMPT_KEY is stable + namespaced under STARmem', () => {
+        expect(INJECTION_PROMPT_KEY).toBe('STARmem');
     });
 
-    test('INJECTION_ROLE matches ST convention', () => {
-        expect(INJECTION_ROLE).toBe('system');
+    test('INJECTION_DEPTH matches ST in-chat convention', () => {
+        expect(INJECTION_DEPTH).toBe(4);
+    });
+
+    test('INJECTION_POSITION_IN_CHAT mirrors ST extension_prompt_types.IN_CHAT', () => {
+        // Source of truth: public/script.js -> extension_prompt_types.IN_CHAT = 1.
+        expect(INJECTION_POSITION_IN_CHAT).toBe(1);
+    });
+
+    test('INJECTION_ROLE_SYSTEM mirrors ST extension_prompt_roles.SYSTEM', () => {
+        // Source of truth: public/script.js -> extension_prompt_roles.SYSTEM = 0.
+        expect(INJECTION_ROLE_SYSTEM).toBe(0);
     });
 
     test('VIEWER_TABS are frozen and match spec §8', () => {

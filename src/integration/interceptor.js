@@ -3,7 +3,7 @@
  *
  * Contract (from ST's extensions.js#runGenerationInterceptors):
  *   globalThis.STARmemInterceptor(chat, contextSize, abort, type)
- *   - chat: array (coreChat copy; mutate in place, don't reassign)
+ *   - chat: array (coreChat copy; we read it but no longer mutate it)
  *   - contextSize: number (max prompt tokens — informational for us)
  *   - abort: (immediately: boolean) => void
  *   - type: string (generation type, e.g. "normal", "continue", "impersonate")
@@ -11,23 +11,35 @@
  * Flow:
  *   1. Resolve chatId from SillyTavern.getContext(). Bail on missing.
  *   2. Extract last user query from chat. Bail if none (impersonation, etc.).
- *   3. loadState(chatId), then retrieve(state, query, { now }) — the ladder
- *      fires `applyAccessEvent` for returned entries AND logs the trace as
- *      part of its own state-transition contract. We just persist the
- *      returned state under the write lock.
- *   4. Format returned entries into an is_system message.
- *   5. Splice at Math.max(0, chat.length - INJECTION_DEPTH).
+ *   3. loadState(chatId) under withWriteLock, retrieve(state, query, { now }) —
+ *      the ladder fires `applyAccessEvent` for returned entries AND logs the
+ *      trace as part of its own state-transition contract. We persist the
+ *      returned state inside the same lock.
+ *   4. Format returned entries into a memory body string.
+ *   5. Register the body via ST's setExtensionPrompt at IN_CHAT depth=4
+ *      with SYSTEM role. ST owns final placement, prompt budgeting, and
+ *      cleanup; we just maintain the registered value.
+ *
+ * The IN_CHAT/depth=4 position lands the memory block close enough to the
+ * latest exchange that providers cache it across turns (cache-friendly), while
+ * staying recent enough for the model to weigh it. Depth 4 matches ST's
+ * default for in-chat injections (slash-commands.js).
  *
  * Errors:
  *   All thrown errors are caught, logged, and swallowed. A broken memory system
- *   must not break generation.
+ *   must not break generation. On error we also clear our prior injection so
+ *   stale memories can't leak into the next turn.
  *
  * @module integration/interceptor
  * @see docs/specs/2026-04-20-starmem-v2-design.md §8
  */
 
-import { INJECTION_DEPTH } from '../core/constants.js';
-import { INJECTION_KEY, INJECTION_ROLE } from './constants.js';
+import {
+    INJECTION_PROMPT_KEY,
+    INJECTION_DEPTH,
+    INJECTION_POSITION_IN_CHAT,
+    INJECTION_ROLE_SYSTEM,
+} from './constants.js';
 import { retrieve } from '../retrieval/index.js';
 import { loadState, persistState } from '../core/state.js';
 import { createLogger } from '../core/logger.js';
@@ -53,14 +65,25 @@ export function _setContextForTests(ctx) { testContext = ctx; }
 /** Test-only: clear injected context. */
 export function _resetContextForTests() { testContext = null; }
 
-/** @returns {{ chatId: string | null }} */
+/**
+ * Resolve the SillyTavern context. Returns a thin wrapper around the bits we
+ * need so test seams stay narrow.
+ *
+ * @returns {{ chatId: string | null, setExtensionPrompt: ((key: string, value: string, position: number, depth: number, scan: boolean, role: number) => void) | null }}
+ */
 function resolveContext() {
-    if (testContext !== null) return testContext;
+    if (testContext !== null) {
+        return {
+            chatId: typeof testContext.chatId === 'string' && testContext.chatId.length > 0 ? testContext.chatId : null,
+            setExtensionPrompt: typeof testContext.setExtensionPrompt === 'function' ? testContext.setExtensionPrompt : null,
+        };
+    }
     const st = /** @type {any} */ (globalThis).SillyTavern;
-    if (!st || typeof st.getContext !== 'function') return { chatId: null };
+    if (!st || typeof st.getContext !== 'function') return { chatId: null, setExtensionPrompt: null };
     const ctx = st.getContext();
     return {
         chatId: typeof ctx?.chatId === 'string' && ctx.chatId.length > 0 ? ctx.chatId : null,
+        setExtensionPrompt: typeof ctx?.setExtensionPrompt === 'function' ? ctx.setExtensionPrompt : null,
     };
 }
 
@@ -82,51 +105,40 @@ export function extractLastUserQuery(chat) {
 }
 
 /**
- * Compose the text body of an injected memory message. Keeps the format
- * simple + LLM-neutral; Phase 9 can A/B test fancier formats later.
+ * Compose the body of an injected memory block. Keeps the format simple and
+ * LLM-neutral; Phase 9 can A/B test fancier formats later.
  *
  * @param {{ id: string, content: string, scope: string }[]} entries
  * @returns {string}
  */
 export function formatMemoryMessage(entries) {
-    if (entries.length === 0) return '';
+    if (!Array.isArray(entries) || entries.length === 0) return '';
     const lines = entries.map(e => `- [${e.scope}] ${e.content}`);
     return ['[STARmem] Retrieved memories:', ...lines].join('\n');
 }
 
 /**
- * Build the synthetic chat message we splice into the array.
+ * Register a memory body with ST's prompt manager. Empty body clears the slot
+ * so a previous turn's memories don't bleed into the current one when
+ * retrieval returns nothing.
  *
- * @param {string} text
- * @returns {ChatMessage}
+ * @param {(key: string, value: string, position: number, depth: number, scan: boolean, role: number) => void} setExtensionPrompt
+ * @param {string} body
  */
-export function buildInjectionMessage(text) {
-    return {
-        name: 'System',
-        is_user: false,
-        is_system: true,
-        send_date: new Date().toISOString(),
-        mes: text,
-        extra: { [INJECTION_KEY]: true, role: INJECTION_ROLE },
-    };
+export function injectMemoryPrompt(setExtensionPrompt, body) {
+    setExtensionPrompt(
+        INJECTION_PROMPT_KEY,
+        typeof body === 'string' ? body : '',
+        INJECTION_POSITION_IN_CHAT,
+        INJECTION_DEPTH,
+        /* scan */ false,
+        INJECTION_ROLE_SYSTEM,
+    );
 }
 
 /**
- * Compute the splice position: `chat.length - INJECTION_DEPTH`, clamped to
- * [0, chat.length]. If chat is shorter than depth, prepend.
- *
- * @param {number} chatLength
- * @param {number} depth
- * @returns {number}
- */
-export function computeInjectionPosition(chatLength, depth) {
-    if (chatLength <= 0) return 0;
-    return Math.max(0, chatLength - depth);
-}
-
-/**
- * Main entry point — invoked by SillyTavern. Always mutates `chat` in place;
- * never reassigns.
+ * Main entry point — invoked by SillyTavern. Reads `chat` for the user query
+ * but never mutates it; injection happens via setExtensionPrompt.
  *
  * @param {ChatMessage[]} chat
  * @param {number} _contextSize
@@ -135,16 +147,22 @@ export function computeInjectionPosition(chatLength, depth) {
  * @returns {Promise<void>}
  */
 export async function starmemInterceptor(chat, _contextSize, _abort, _type) {
+    const { chatId, setExtensionPrompt } = resolveContext();
     try {
-        const { chatId } = resolveContext();
+        if (!setExtensionPrompt) {
+            log.debug('no setExtensionPrompt in context — skipping injection');
+            return;
+        }
         if (!chatId) {
-            log.debug('no chatId — skipping retrieval');
+            log.debug('no chatId — clearing injection and skipping retrieval');
+            injectMemoryPrompt(setExtensionPrompt, '');
             return;
         }
 
         const query = extractLastUserQuery(chat);
         if (!query) {
-            log.debug('no user query in chat — skipping retrieval');
+            log.debug('no user query in chat — clearing injection and skipping retrieval');
+            injectMemoryPrompt(setExtensionPrompt, '');
             return;
         }
 
@@ -162,19 +180,18 @@ export async function starmemInterceptor(chat, _contextSize, _abort, _type) {
             return Array.isArray(result?.entries) ? result.entries : [];
         });
 
-        if (entries.length === 0) {
-            log.debug('retrieval returned zero entries');
-            return;
-        }
-
-        // Splice into chat.
         const body = formatMemoryMessage(entries);
-        if (!body) return;
-        const originalLen = chat.length;
-        const pos = computeInjectionPosition(originalLen, INJECTION_DEPTH);
-        chat.splice(pos, 0, buildInjectionMessage(body));
-        log.debug(`injected ${entries.length} entries at pos=${pos} (chat.length was ${originalLen})`);
+        injectMemoryPrompt(setExtensionPrompt, body);
+        if (entries.length === 0) {
+            log.debug('retrieval returned zero entries — cleared injection slot');
+        } else {
+            log.debug(`injected ${entries.length} entries via setExtensionPrompt (depth=${INJECTION_DEPTH})`);
+        }
     } catch (err) {
         log.warn('interceptor error (swallowed to protect generation):', err);
+        // Clear any prior injection so stale memories don't leak into this turn.
+        if (setExtensionPrompt) {
+            try { injectMemoryPrompt(setExtensionPrompt, ''); } catch { /* ignore */ }
+        }
     }
 }

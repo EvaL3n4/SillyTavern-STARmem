@@ -47,14 +47,33 @@ export const SETTINGS_BOUNDS = Object.freeze({
     tracesMaxLen: { min: 16, max: 1024 },
 });
 
-/** Memory injection marker — stamped onto `extra` so we can identify + skip
- *  previously-injected messages if the same interceptor runs twice on a chat
- *  slice (defensive; ST copies chat into coreChat before calling us, so in
- *  practice we never see our own injections again). */
-export const INJECTION_KEY = 'STARmem:memory';
+/**
+ * Stable key registered with ST's setExtensionPrompt. ST uses this to look
+ * up + replace our injection on each call; same key across calls means we
+ * overwrite ourselves, not stack.
+ */
+export const INJECTION_PROMPT_KEY = 'STARmem';
 
-/** Role for the injected memory message. */
-export const INJECTION_ROLE = 'system';
+/**
+ * Chat-depth for memory injection, counted from the end of the chat array.
+ * 4 matches ST's default for in-chat injections (slash-commands.js).
+ *
+ * @see src/integration/interceptor.js
+ */
+export const INJECTION_DEPTH = 4;
+
+/**
+ * ST's `extension_prompt_types.IN_CHAT`. Mirrored locally as a numeric literal
+ * to avoid importing from `script.js` (which is loaded by ST itself, not via
+ * our module graph). Source of truth: `public/script.js`.
+ */
+export const INJECTION_POSITION_IN_CHAT = 1;
+
+/**
+ * ST's `extension_prompt_roles.SYSTEM`. Mirrored locally for the same reason
+ * as INJECTION_POSITION_IN_CHAT.
+ */
+export const INJECTION_ROLE_SYSTEM = 0;
 
 /** Frozen list of Memory Viewer tab IDs (render order).
  *  Matches spec §8: Working / Episodic / Persona / Graph / Traces. */

@@ -52,7 +52,7 @@ describe('starmemInterceptor', () => {
             },
             write: (_id, v) => { initial.entries = v.entries; initial.workingBuffer = v.workingBuffer; },
         });
-        _setContextForTests({ chatId });
+        _setContextForTests({ chatId, setExtensionPrompt: () => {} });
 
         const chat = [
             { name: 'U', is_user: true, is_system: false, send_date: '', mes: 'where does alice live?' },

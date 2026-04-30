@@ -9,7 +9,6 @@ import {
     CONSOLIDATION,
     PERSONA_REBUILD,
     TRACE_BUFFER_CAP,
-    INJECTION_DEPTH,
 } from '../../../src/core/constants.js';
 
 describe('constants', () => {
@@ -101,10 +100,6 @@ describe('constants', () => {
 
     test('TRACE_BUFFER_CAP matches Phase 4 decision (spec §12.4 resolution)', () => {
         expect(TRACE_BUFFER_CAP).toBe(128);
-    });
-
-    test('INJECTION_DEPTH matches ST in-chat convention', () => {
-        expect(INJECTION_DEPTH).toBe(4);
     });
 
     test('PERSONA_REBUILD matches spec §6.4 verbatim', () => {

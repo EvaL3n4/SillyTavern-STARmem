@@ -161,15 +161,6 @@ export const PERSONA_REBUILD = Object.freeze({
 /** Trace ring buffer cap. Spec §9.1; resolution of §12.4 "make configurable"—default 128, settings hook deferred to Phase 8. */
 export const TRACE_BUFFER_CAP = 128;
 
-/**
- * Chat-depth position for memory injection, counted from the end of the chat
- * array. ST convention: 4 (matches slash-commands.js default for in-chat
- * injections). If chat.length < INJECTION_DEPTH, fallback is to append.
- *
- * @see src/integration/interceptor.js
- */
-export const INJECTION_DEPTH = 4;
-
 
 /**
  * Phase 9 benchmarking: per-sweep override mechanism.
