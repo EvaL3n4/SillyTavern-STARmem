@@ -1,65 +1,72 @@
 <div class="starmem-settings-panel">
-    <h3 class="starmem-settings-title">STARmem</h3>
-    <p class="starmem-settings-subtitle">Deterministic roleplay memory—v2</p>
+    <div class="inline-drawer">
+        <div class="inline-drawer-toggle inline-drawer-header">
+            <b>STARmem</b>
+            <div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div>
+        </div>
+        <div class="inline-drawer-content">
+            <p class="starmem-settings-subtitle">Deterministic roleplay memory—v2</p>
 
-    <details open class="starmem-settings-section">
-        <summary>Connection profiles</summary>
-        <div class="starmem-settings-row">
-            <label for="starmem-settings-profile-id">Extractor LLM:</label>
-            <select id="starmem-settings-profile-id" class="text_pole"></select>
-        </div>
-        <div class="starmem-settings-row">
-            <label for="starmem-settings-embed-profile-id">Embeddings (persona rebuild):</label>
-            <select id="starmem-settings-embed-profile-id" class="text_pole"></select>
-        </div>
-        <div class="starmem-settings-row">
-            <label for="starmem-settings-extraction-label">Extractor label (provenance):</label>
-            <input type="text" id="starmem-settings-extraction-label" class="text_pole"
-                placeholder="e.g. gemma-4-31b@consolidation-v1" />
-        </div>
-    </details>
+            <details open class="starmem-settings-section">
+                <summary>Connection profiles</summary>
+                <div class="starmem-settings-row">
+                    <label for="starmem-settings-profile-id">Extractor LLM:</label>
+                    <select id="starmem-settings-profile-id" class="text_pole"></select>
+                </div>
+                <div class="starmem-settings-row">
+                    <label for="starmem-settings-embed-profile-id">Embeddings (persona rebuild):</label>
+                    <select id="starmem-settings-embed-profile-id" class="text_pole"></select>
+                </div>
+                <div class="starmem-settings-row">
+                    <label for="starmem-settings-extraction-label">Extractor label (provenance):</label>
+                    <input type="text" id="starmem-settings-extraction-label" class="text_pole"
+                        placeholder="e.g. gemma-4-31b@consolidation-v1" />
+                </div>
+            </details>
 
-    <details class="starmem-settings-section">
-        <summary>Triggers</summary>
-        <div class="starmem-settings-row">
-            <label for="starmem-settings-buffer-size">Buffer size (drain at):</label>
-            <input type="range" id="starmem-settings-buffer-size" min="1" max="50" step="1" />
-            <span id="starmem-settings-buffer-size-value" class="starmem-settings-value"></span>
-        </div>
-        <div class="starmem-settings-row">
-            <label for="starmem-settings-idle-timeout">Idle timeout (seconds):</label>
-            <input type="range" id="starmem-settings-idle-timeout" min="5" max="600" step="5" />
-            <span id="starmem-settings-idle-timeout-value" class="starmem-settings-value"></span>
-        </div>
-    </details>
+            <details class="starmem-settings-section">
+                <summary>Triggers</summary>
+                <div class="starmem-settings-row">
+                    <label for="starmem-settings-buffer-size">Buffer size (drain at):</label>
+                    <input type="range" id="starmem-settings-buffer-size" min="1" max="50" step="1" />
+                    <span id="starmem-settings-buffer-size-value" class="starmem-settings-value"></span>
+                </div>
+                <div class="starmem-settings-row">
+                    <label for="starmem-settings-idle-timeout">Idle timeout (seconds):</label>
+                    <input type="range" id="starmem-settings-idle-timeout" min="5" max="600" step="5" />
+                    <span id="starmem-settings-idle-timeout-value" class="starmem-settings-value"></span>
+                </div>
+            </details>
 
-    <details class="starmem-settings-section">
-        <summary>Retrieval</summary>
-        <div class="starmem-settings-row">
-            <label for="starmem-settings-scorer">Scorer:</label>
-            <select id="starmem-settings-scorer" class="text_pole"></select>
-        </div>
-    </details>
+            <details class="starmem-settings-section">
+                <summary>Retrieval</summary>
+                <div class="starmem-settings-row">
+                    <label for="starmem-settings-scorer">Scorer:</label>
+                    <select id="starmem-settings-scorer" class="text_pole"></select>
+                </div>
+            </details>
 
-    <details class="starmem-settings-section">
-        <summary>Debug</summary>
-        <div class="starmem-settings-row">
-            <label for="starmem-settings-traces-max">Traces buffer cap:</label>
-            <input type="range" id="starmem-settings-traces-max" min="16" max="1024" step="16" />
-            <span id="starmem-settings-traces-max-value" class="starmem-settings-value"></span>
-        </div>
-        <div class="starmem-settings-row">
-            <label>
-                <input type="checkbox" id="starmem-settings-debug-mode" />
-                Debug logging
-            </label>
-        </div>
-    </details>
+            <details class="starmem-settings-section">
+                <summary>Debug</summary>
+                <div class="starmem-settings-row">
+                    <label for="starmem-settings-traces-max">Traces buffer cap:</label>
+                    <input type="range" id="starmem-settings-traces-max" min="16" max="1024" step="16" />
+                    <span id="starmem-settings-traces-max-value" class="starmem-settings-value"></span>
+                </div>
+                <div class="starmem-settings-row">
+                    <label>
+                        <input type="checkbox" id="starmem-settings-debug-mode" />
+                        Debug logging
+                    </label>
+                </div>
+            </details>
 
-    <div class="starmem-settings-actions">
-        <button type="button" id="starmem-settings-reset" class="menu_button">Reset to defaults</button>
-        <button type="button" id="starmem-settings-open-viewer" class="menu_button">Open Memory Viewer</button>
+            <div class="starmem-settings-actions">
+                <button type="button" id="starmem-settings-reset" class="menu_button">Reset to defaults</button>
+                <button type="button" id="starmem-settings-open-viewer" class="menu_button">Open Memory Viewer</button>
+            </div>
+
+            <div id="starmem-settings-warnings" class="starmem-settings-warnings" aria-live="polite"></div>
+        </div>
     </div>
-
-    <div id="starmem-settings-warnings" class="starmem-settings-warnings" aria-live="polite"></div>
 </div>

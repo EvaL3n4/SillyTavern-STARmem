@@ -4,6 +4,21 @@ All notable changes to STARmem are documented here. Format:
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 1.1.0; STARmem
 follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.2]—2026-04-30
+
+Patch release. Settings panel collapses into ST's standard inline-drawer
+chrome instead of taking up persistent space.
+
+### Changed
+
+- **Settings panel is now a collapsible drawer.** STARmem's settings panel
+  in the Extensions tab now lives inside SillyTavern's standard
+  `inline-drawer` markup (header + collapsible content), matching the
+  convention used by Vector Storage, Summarize, Quick Reply, and other
+  built-in extensions. The panel collapses by default; click the
+  "STARmem" header to open it. Card chrome (border, shadow, padding)
+  removed since the drawer carries it.
+
 ## [2.0.1]—2026-04-30
 
 Patch release. Native ST prompt injection, working-buffer fix, viewer

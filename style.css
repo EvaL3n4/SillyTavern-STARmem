@@ -193,25 +193,21 @@
  * value lands on typography + focus rhythm, not layout restructure.
  * ========================================================================= */
 
-.starmem-settings-panel {
-    display: flex;
-    flex-direction: column;
-    gap: var(--starmem-space-4);
-    padding: var(--starmem-space-5) var(--starmem-space-5);
-    border: 1px solid var(--starmem-border);
-    border-radius: var(--starmem-radius-3);
+/* The panel mounts inside ST's standard inline-drawer chrome (drawer header
+ * + collapsible content), so it carries no card chrome of its own — border,
+ * padding, and background come from the drawer. We keep the class as a stable
+ * test/integration anchor and use it only for inner spacing rhythm.
+ *
+ * Don't override `display` on .inline-drawer-content — ST's global click
+ * handler animates it via jQuery slideToggle(), which sets inline display
+ * styles. Fighting that would break the open/close animation. */
+/* exempt: .inline-drawer-content is ST's standard collapsible-section host. */
+.starmem-settings-panel .inline-drawer-content {
+    padding: var(--starmem-space-3) 0 var(--starmem-space-2);
     color: var(--starmem-fg);
-    background: var(--starmem-bg-elevated);
-    box-shadow: var(--starmem-elev-2);
 }
-
-.starmem-settings-title {
-    font-family: var(--starmem-font-display);
-    font-size: var(--starmem-fs-display-1);
-    font-weight: 400;
-    letter-spacing: var(--starmem-tracking-display);
-    margin: 0;
-    color: var(--starmem-fg);
+.starmem-settings-panel .inline-drawer-content > * + * {
+    margin-top: var(--starmem-space-3);
 }
 
 .starmem-settings-subtitle {
@@ -220,7 +216,7 @@
     letter-spacing: var(--starmem-tracking-meta);
     text-transform: uppercase;
     color: var(--starmem-fg-muted);
-    margin: 0 0 var(--starmem-space-3);
+    margin: 0 0 var(--starmem-space-2);
 }
 
 /* Each <details> reads as a collapsing chapter. Border-top divider gives
