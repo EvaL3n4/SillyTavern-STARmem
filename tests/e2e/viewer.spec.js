@@ -63,3 +63,14 @@ test('episodic tab exposes Subject as a sort option (P16 T6)', async ({ page }) 
     );
     expect(optionValues).toContain('subject');
 });
+
+test('keyboard navigates tabs with ArrowRight (P16 T8)', async ({ page }) => {
+    await openST(page);
+    await expectExtensionLoaded(page);
+    await openViewer(page);
+    const firstTab = page.locator('[role="tab"]').first();
+    await firstTab.focus();
+    await page.keyboard.press('ArrowRight');
+    const second = page.locator('[role="tab"]').nth(1);
+    await expect(second).toHaveAttribute('aria-selected', 'true');
+});

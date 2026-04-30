@@ -96,6 +96,10 @@ function buildRootElement(chatId) {
     root.className = `${CSS_PREFIX}-viewer`;
     root.setAttribute('data-chat-id', chatId);
 
+    const safeChatId = chatId.replace(/[^a-z0-9-]/gi, '-');
+    const panelId = `${CSS_PREFIX}-tabpanel-${safeChatId}`;
+    const tabIds = VIEWER_TABS.map(t => `${CSS_PREFIX}-tab-${t}`);
+
     root.innerHTML = `
         <div class="${CSS_PREFIX}-viewer-header">
             <h2 class="${CSS_PREFIX}-viewer-title">STARmem Memory Viewer</h2>
@@ -105,9 +109,9 @@ function buildRootElement(chatId) {
             <label for="${CSS_PREFIX}-viewer-subject">Subject:</label>
             <input type="text" id="${CSS_PREFIX}-viewer-subject" class="${CSS_PREFIX}-viewer-subject-input" placeholder="(all subjects)" />
         </div>
-        <nav class="${CSS_PREFIX}-viewer-tabs" role="tablist">
-            ${VIEWER_TABS.map(t => `
-                <button type="button" role="tab" class="${CSS_PREFIX}-viewer-tab" data-tab="${t}">${titleFor(t)}</button>
+        <nav class="${CSS_PREFIX}-viewer-tabs" role="tablist" aria-label="Memory views">
+            ${VIEWER_TABS.map((t, i) => `
+                <button type="button" role="tab" id="${tabIds[i]}" aria-controls="${panelId}" tabindex="-1" class="${CSS_PREFIX}-viewer-tab" data-tab="${t}">${titleFor(t)}</button>
             `).join('')}
         </nav>
         <select class="${CSS_PREFIX}-viewer-tab-select" aria-label="Select tab">
@@ -115,7 +119,7 @@ function buildRootElement(chatId) {
                 <option value="${t}">${titleFor(t)}</option>
             `).join('')}
         </select>
-        <div class="${CSS_PREFIX}-viewer-body" role="tabpanel"></div>
+        <div class="${CSS_PREFIX}-viewer-body" id="${panelId}" role="tabpanel" aria-labelledby="${tabIds[0]}" tabindex="0"></div>
     `;
     return root;
 }
@@ -156,21 +160,58 @@ function wireTabs(state) {
         });
     }
 
+    wireTabKeyboard(state);
     highlightActiveTab(state);
+}
+
+function wireTabKeyboard(state) {
+    const buttons = [...state.root.querySelectorAll(`.${CSS_PREFIX}-viewer-tab`)];
+    const tablist = state.root.querySelector(`.${CSS_PREFIX}-viewer-tabs`);
+    if (!tablist) return;
+    tablist.addEventListener('keydown', async (ev) => {
+        const target = ev.target;
+        if (!(target instanceof HTMLElement) || target.getAttribute('role') !== 'tab') return;
+        const idx = buttons.indexOf(target);
+        if (idx < 0) return;
+        let nextIdx = -1;
+        switch (ev.key) {
+            case 'ArrowRight': nextIdx = (idx + 1) % buttons.length; break;
+            case 'ArrowLeft':  nextIdx = (idx - 1 + buttons.length) % buttons.length; break;
+            case 'Home':       nextIdx = 0; break;
+            case 'End':        nextIdx = buttons.length - 1; break;
+            case 'Enter':
+            case ' ':          nextIdx = idx; break;
+            default: return;
+        }
+        ev.preventDefault();
+        const next = /** @type {HTMLElement} */ (buttons[nextIdx]);
+        const tab = next.dataset.tab;
+        if (!tab) return;
+        state.activeTab = tab;
+        highlightActiveTab(state);
+        next.focus();
+        await renderActiveTab(state);
+    });
 }
 
 function highlightActiveTab(state) {
     const buttons = state.root.querySelectorAll(`.${CSS_PREFIX}-viewer-tab`);
+    const panel = state.root.querySelector('[role="tabpanel"]');
+    let activeId = null;
     for (const btn of buttons) {
         const tab = /** @type {HTMLElement} */ (btn).dataset.tab;
         if (tab === state.activeTab) {
             btn.classList.add(`${CSS_PREFIX}-viewer-tab-active`);
             btn.setAttribute('aria-selected', 'true');
+            btn.setAttribute('tabindex', '0');
+            activeId = btn.id;
         } else {
             btn.classList.remove(`${CSS_PREFIX}-viewer-tab-active`);
             btn.setAttribute('aria-selected', 'false');
+            btn.setAttribute('tabindex', '-1');
         }
     }
+    if (panel && activeId) panel.setAttribute('aria-labelledby', activeId);
 
     const select = /** @type {HTMLSelectElement | null} */ (
         state.root.querySelector(`.${CSS_PREFIX}-viewer-tab-select`)
