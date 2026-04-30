@@ -268,6 +268,20 @@ Pure ByteRover math. Multiplicative score (§5.2). Nothing more.
 
 The **Traces tab** in Memory Viewer is the benchmarking surface: last 100 retrieval traces, each showing resolved tier, intermediate scores, final ranked list, and (optionally) what was injected into the prompt. JSONL export supported.
 
+### 8.1 Chat-Lifecycle Hooks and the Deletion Contract
+
+STARmem subscribes to ST's chat-lifecycle events: `CHAT_CHANGED`, `MESSAGE_SENT`, `MESSAGE_RECEIVED`, `MESSAGE_DELETED`, `MESSAGE_SWIPED`. Working-buffer state is kept in sync with what the user sees:
+
+- **MESSAGE_DELETED** scrubs every working-buffer entry whose `provenance.sourceMessages` references the deleted message.
+- **MESSAGE_SWIPED** scrubs every `scope: 'working'` entry whose `provenance.sourceMessages` references the swiped message, and resets the idle timer (swiping is engagement, not idleness). Rejected drafts must not consolidate alongside the variant the user kept.
+
+Both hooks deliberately operate on `scope: 'working'` only. **Once a fact has graduated to `episodic` or `persona` (via `consolidate()`), no chat-lifecycle event can retract it.** Deletion of graduated entries is reserved for a future user-initiated memory-management UI (Memory Viewer → row → delete). This preserves two invariants:
+
+1. **One mutation path for long-term storage.** §6.3's "`consolidate()` is the only function that mutates long-term storage" stays load-bearing — chat-lifecycle hooks are not a back door. The memory-management UI, when added, will become a second sanctioned mutation path with its own write-lock acquisition and audit trail.
+2. **User intent over implicit cleanup.** A swipe means "I prefer this variant over that one"; it does not mean "retract every fact already extracted from the rejected one." Retroactive episodic surgery on swipe would silently rewrite history the user has no UI to inspect.
+
+When the memory-management UI ships, this section gets updated with the explicit deletion API and its lock semantics; until then, treat graduated entries as user-owned and durable across all chat-lifecycle events.
+
 ---
 
 ## 9. Benchmarking Hooks
