@@ -633,10 +633,37 @@
     list-style: none;
     padding-left: 0;
     margin: 0;
+    display: flex;
+    flex-direction: column;
 }
 
 .starmem-viewer .starmem-viewer-working-item {
     list-style: none;
+    /* Match the episodic-item rhythm: vertical padding + dotted separators
+     * so the buffer reads like a list of items, not a wall of text. */
+    padding: var(--starmem-space-4) 0;
+    border-bottom: 1px dotted var(--starmem-border-faint);
+}
+
+.starmem-viewer .starmem-viewer-working-item:last-child {
+    border-bottom: none;
+}
+
+.starmem-viewer .starmem-viewer-working-meta {
+    /* De-emphasize the timestamp + msg-id breadcrumb so the assistant text
+     * is the primary read. Smaller, mono, color-mixed muted for a tertiary
+     * weight tier (below body, below muted). */
+    font-family: var(--starmem-font-mono);
+    font-size: var(--starmem-fs-mono);
+    letter-spacing: var(--starmem-tracking-meta);
+    color: color-mix(in srgb, var(--starmem-fg-muted) 75%, transparent);
+    margin-bottom: var(--starmem-space-2);
+}
+
+.starmem-viewer .starmem-viewer-working-content {
+    font-size: var(--starmem-fs-body);
+    line-height: var(--starmem-lh-reading);
+    color: var(--starmem-fg);
 }
 
 .starmem-viewer .starmem-viewer-entry {
@@ -782,7 +809,10 @@
  * generous reading line-height on the content. */
 .starmem-viewer .starmem-viewer-episodic-item {
     list-style: none;
-    padding: var(--starmem-space-3) 0;
+    /* Increased vertical padding gives each row breathing room — the
+     * dotted separator + space lets the reader scan one entry at a time
+     * instead of seeing a dense block. */
+    padding: var(--starmem-space-4) 0;
     border-bottom: 1px dotted var(--starmem-border-faint);
 }
 
@@ -796,7 +826,7 @@
     align-items: baseline;
     justify-content: space-between;
     gap: var(--starmem-space-3);
-    margin-bottom: var(--starmem-space-1);
+    margin-bottom: var(--starmem-space-2);
 }
 
 .starmem-viewer .starmem-viewer-episodic-item .starmem-viewer-subject {
@@ -811,7 +841,10 @@
 .starmem-viewer .starmem-viewer-episodic-item .starmem-viewer-scores {
     font-family: var(--starmem-font-mono);
     font-size: var(--starmem-fs-mono);
-    color: var(--starmem-fg-muted);
+    /* Tertiary muted: scores are diagnostic information, not the read.
+     * color-mix puts them a step quieter than other meta text so the
+     * subject + content carry the row's visual weight. */
+    color: color-mix(in srgb, var(--starmem-fg-muted) 70%, transparent);
     white-space: nowrap;
     flex: 0 0 auto;
 }
@@ -827,14 +860,18 @@
     display: flex;
     flex-wrap: wrap;
     gap: var(--starmem-space-1);
-    margin-top: var(--starmem-space-2);
+    /* Extra margin-top separates the chip row from the content paragraph
+     * above so it reads as supplementary metadata, not part of the prose. */
+    margin-top: var(--starmem-space-3);
 }
 
 .starmem-viewer .starmem-viewer-episodic-item .starmem-viewer-tag {
     display: inline-block;
     padding: 0 var(--starmem-space-2);
     border-radius: var(--starmem-radius-1);
-    background: color-mix(in srgb, var(--starmem-accent) 18%, transparent);
+    /* Lower the accent tint and shift toward fg-muted for a quieter chip;
+     * tags are filterable but shouldn't compete with the body text. */
+    background: color-mix(in srgb, var(--starmem-accent) 10%, transparent);
     color: var(--starmem-fg-muted);
     font-family: var(--starmem-font-mono);
     font-size: var(--starmem-fs-mono);
