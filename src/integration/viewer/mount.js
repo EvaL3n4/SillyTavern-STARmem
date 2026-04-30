@@ -102,7 +102,7 @@ function buildRootElement(chatId) {
 
     root.innerHTML = `
         <div class="${CSS_PREFIX}-viewer-header">
-            <h2 class="${CSS_PREFIX}-viewer-title">STARmem Memory Viewer</h2>
+            <h2 class="${CSS_PREFIX}-viewer-title">Memory Viewer</h2>
             <button type="button" class="${CSS_PREFIX}-viewer-close" aria-label="Close">✕</button>
         </div>
         <div class="${CSS_PREFIX}-viewer-filter-row">
