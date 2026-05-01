@@ -269,6 +269,117 @@ describe('onMessageReceived', () => {
         const state = await loadState('chat-A');
         expect(state.workingBuffer).toHaveLength(1);
     });
+
+    describe('reasoning/CoT strip', () => {
+        // Mimic ST's parseReasoningFromString: returns { reasoning, content }
+        // when prefix/suffix match; passthrough { reasoning: '', content: raw }
+        // otherwise. Custom template support is the whole point of this hook.
+        function makeParser({ prefix, suffix }) {
+            return (str) => {
+                if (typeof str !== 'string') return { reasoning: '', content: '' };
+                const escape = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                const re = new RegExp(`${escape(prefix)}([\\s\\S]*?)${escape(suffix)}`);
+                const m = str.match(re);
+                if (!m) return { reasoning: '', content: str };
+                return {
+                    reasoning: m[1].trim(),
+                    content: str.replace(re, '').trim(),
+                };
+            };
+        }
+
+        test("strips default <think>…</think> block before storing as working entry", async () => {
+            ctx.parseReasoningFromString = makeParser({ prefix: '<think>', suffix: '</think>' });
+            bootstrap();
+            ctx.chatMetadata['STARmem'] = { 'chat-A': createEmptyState() };
+            ctx.chat = [
+                { name: 'c', is_user: false, is_system: false, send_date: '', mes: '<think>plan a reply</think>\n\nHello there.' },
+            ];
+            await onMessageReceived(0, 'normal');
+            const state = await loadState('chat-A');
+            expect(state.workingBuffer).toHaveLength(1);
+            const [id] = state.workingBuffer;
+            expect(state.entries[id].content).toBe('Hello there.');
+        });
+
+        test('honours custom user-defined reasoning template (not just <think>)', async () => {
+            // User configured a non-default template via SillyTavern's
+            // reasoning settings — e.g. [REASONING]…[/REASONING]. STARmem
+            // must not hardcode <think>; it has to ask ST.
+            ctx.parseReasoningFromString = makeParser({
+                prefix: '[REASONING]',
+                suffix: '[/REASONING]',
+            });
+            bootstrap();
+            ctx.chatMetadata['STARmem'] = { 'chat-A': createEmptyState() };
+            ctx.chat = [
+                {
+                    name: 'c', is_user: false, is_system: false, send_date: '',
+                    mes: '[REASONING]secret thoughts[/REASONING]\nVisible answer.',
+                },
+            ];
+            await onMessageReceived(0, 'normal');
+            const state = await loadState('chat-A');
+            const [id] = state.workingBuffer;
+            expect(state.entries[id].content).toBe('Visible answer.');
+        });
+
+        test('passes raw mes through when no reasoning block matches', async () => {
+            ctx.parseReasoningFromString = makeParser({ prefix: '<think>', suffix: '</think>' });
+            bootstrap();
+            ctx.chatMetadata['STARmem'] = { 'chat-A': createEmptyState() };
+            ctx.chat = [
+                { name: 'c', is_user: false, is_system: false, send_date: '', mes: 'plain reply, no CoT' },
+            ];
+            await onMessageReceived(0, 'normal');
+            const state = await loadState('chat-A');
+            const [id] = state.workingBuffer;
+            expect(state.entries[id].content).toBe('plain reply, no CoT');
+        });
+
+        test('skips capture when message is only a reasoning block (empty after strip)', async () => {
+            ctx.parseReasoningFromString = makeParser({ prefix: '<think>', suffix: '</think>' });
+            bootstrap();
+            ctx.chatMetadata['STARmem'] = { 'chat-A': createEmptyState() };
+            ctx.chat = [
+                { name: 'c', is_user: false, is_system: false, send_date: '', mes: '<think>only thoughts, no answer yet</think>' },
+            ];
+            await onMessageReceived(0, 'normal');
+            const state = await loadState('chat-A');
+            expect(state.workingBuffer).toHaveLength(0);
+        });
+
+        test('falls back to raw mes when parser is missing on context (back-compat)', async () => {
+            // Older ST builds don't expose parseReasoningFromString on the
+            // context. We must not crash and must still capture the reply.
+            // Note: ctx has no parseReasoningFromString here.
+            bootstrap();
+            ctx.chatMetadata['STARmem'] = { 'chat-A': createEmptyState() };
+            ctx.chat = [
+                { name: 'c', is_user: false, is_system: false, send_date: '', mes: '<think>raw</think>\nbody' },
+            ];
+            await onMessageReceived(0, 'normal');
+            const state = await loadState('chat-A');
+            expect(state.workingBuffer).toHaveLength(1);
+            const [id] = state.workingBuffer;
+            // No strip happened — that's the back-compat contract.
+            expect(state.entries[id].content).toBe('<think>raw</think>\nbody');
+        });
+
+        test('falls back to raw mes when parser throws', async () => {
+            ctx.parseReasoningFromString = () => { throw new Error('boom'); };
+            bootstrap();
+            ctx.chatMetadata['STARmem'] = { 'chat-A': createEmptyState() };
+            ctx.chat = [
+                { name: 'c', is_user: false, is_system: false, send_date: '', mes: 'reply with no CoT' },
+            ];
+            await onMessageReceived(0, 'normal');
+            const state = await loadState('chat-A');
+            expect(state.workingBuffer).toHaveLength(1);
+            const [id] = state.workingBuffer;
+            expect(state.entries[id].content).toBe('reply with no CoT');
+        });
+    });
 });
 
 describe('onMessageDeleted', () => {

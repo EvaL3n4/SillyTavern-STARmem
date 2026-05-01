@@ -195,10 +195,37 @@ export async function onMessageReceived(messageId, type) {
         if (!received || received.is_user || received.is_system) return;
         if (typeof received.mes !== 'string' || received.mes.trim().length === 0) return;
 
+        // Strip inline CoT/reasoning blocks (e.g. <think>…</think>, custom
+        // user-defined prefix/suffix templates) so we don't capture the
+        // model's chain-of-thought as memory. ST exposes a parser bound to
+        // power_user.reasoning, which honours custom templates regardless
+        // of whether auto_parse is enabled or which extension wins the
+        // MESSAGE_RECEIVED listener race.
+        let content = received.mes;
+        const parseReasoning = typeof ctx.parseReasoningFromString === 'function'
+            ? ctx.parseReasoningFromString
+            : null;
+        if (parseReasoning) {
+            try {
+                const parsed = parseReasoning(received.mes, { strict: false });
+                // A non-null parsed result means the parser ran. If it
+                // extracted reasoning OR rewrote content, trust its content
+                // (even when empty — empty after strip means "only CoT,
+                // nothing worth memorising").
+                if (parsed && typeof parsed.content === 'string'
+                    && (parsed.reasoning || parsed.content !== received.mes)) {
+                    content = parsed.content;
+                }
+            } catch (err) {
+                log.debug(`reasoning strip failed (using raw mes): ${err?.message || err}`);
+            }
+        }
+        if (typeof content !== 'string' || content.trim().length === 0) return;
+
         const now = new Date();
         const entry = createEntry({
             scope: 'working',
-            content: received.mes,
+            content,
             subject: null,
             tags: [],
             relations: [],
