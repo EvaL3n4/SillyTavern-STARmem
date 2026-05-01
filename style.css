@@ -612,15 +612,160 @@
 
 /* =========================================================================
  * Tab-specific — Working / Episodic / Persona / Graph / Traces.
+ *
+ * Shared atoms first (used across multiple tabs); per-tab rules below.
  * ========================================================================= */
 
-.starmem-viewer .starmem-viewer-entry-list {
+/* -- Shared row content + diagnostics ------------------------------------ */
+/* These atoms render in every tab's body. Scoping them under the viewer
+ * (not the episodic-item) keeps Persona/Graph rows from inheriting body
+ * styles and lets each tab compose them into its own row primitive. */
+
+.starmem-viewer .starmem-viewer-content {
+    font-size: var(--starmem-fs-body);
+    line-height: var(--starmem-lh-reading);
+    color: var(--starmem-fg);
+}
+
+.starmem-viewer .starmem-viewer-subject {
+    font-family: var(--starmem-font-display);
+    font-size: var(--starmem-fs-meta);
+    color: var(--starmem-fg);
+    letter-spacing: var(--starmem-tracking-display);
+}
+
+.starmem-viewer .starmem-viewer-scores {
+    font-family: var(--starmem-font-mono);
+    font-size: var(--starmem-fs-mono);
+    color: color-mix(in srgb, var(--starmem-fg-muted) 70%, transparent);
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+}
+
+.starmem-viewer .starmem-viewer-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--starmem-space-1);
+    margin-top: var(--starmem-space-2);
+}
+
+.starmem-viewer .starmem-viewer-tag {
+    display: inline-block;
+    padding: 0 var(--starmem-space-2);
+    border-radius: var(--starmem-radius-1);
+    background: color-mix(in srgb, var(--starmem-accent) 10%, transparent);
+    color: var(--starmem-fg-muted);
+    font-family: var(--starmem-font-mono);
+    font-size: var(--starmem-fs-mono);
+    line-height: 1.6;
+}
+
+/* Provenance line — italicized, muted; reads as supplementary attribution
+ * below content rows in Persona/Episodic. */
+.starmem-viewer .starmem-viewer-provenance {
+    margin-top: var(--starmem-space-2);
+    font-family: var(--starmem-font-mono);
+    font-size: var(--starmem-fs-mono);
+    color: color-mix(in srgb, var(--starmem-fg-muted) 75%, transparent);
+    font-style: italic;
+}
+
+/* Empty / loading / error / footnote states — calm, centered prose. */
+.starmem-viewer .starmem-viewer-empty,
+.starmem-viewer .starmem-viewer-loading,
+.starmem-viewer .starmem-viewer-error,
+.starmem-viewer .starmem-viewer-note {
+    margin: var(--starmem-space-5) 0;
+    padding: var(--starmem-space-4) var(--starmem-space-5);
+    font-family: var(--starmem-font-display);
+    font-size: var(--starmem-fs-meta);
+    letter-spacing: var(--starmem-tracking-meta);
+    color: var(--starmem-fg-muted);
+    text-align: center;
+    border-top: 1px solid var(--starmem-border-faint);
+    border-bottom: 1px solid var(--starmem-border-faint);
+}
+
+.starmem-viewer .starmem-viewer-loading::after {
+    /* Animated single-character ellipsis for the loading state — quieter
+     * than a spinner; respects reduced-motion. */
+    content: "";
+    display: inline-block;
+    width: 1em;
+    text-align: left;
+    animation: starmem-ellipsis 1.4s steps(4, end) infinite;
+}
+
+.starmem-viewer .starmem-viewer-error {
+    color: var(--starmem-danger);
+    border-top-color: color-mix(in srgb, var(--starmem-danger) 40%, transparent);
+    border-bottom-color: color-mix(in srgb, var(--starmem-danger) 40%, transparent);
+}
+
+.starmem-viewer .starmem-viewer-note {
+    border: none;
+    margin: var(--starmem-space-3) 0 0;
+    padding: var(--starmem-space-2) 0 0;
+    text-align: left;
+    text-transform: none;
+    font-family: var(--starmem-font-body);
+    font-size: var(--starmem-fs-meta);
+    letter-spacing: 0;
+    font-style: italic;
+}
+
+/* "(more)" expand button on truncated content — looks like a footnote link,
+ * not a button. */
+.starmem-viewer .starmem-viewer-expand {
+    background: none;
+    border: none;
+    padding: 0 var(--starmem-space-1);
+    margin-left: var(--starmem-space-1);
+    color: var(--starmem-accent);
+    font-family: var(--starmem-font-body);
+    font-size: var(--starmem-fs-meta);
+    font-style: italic;
+    cursor: pointer;
+    white-space: nowrap;
+}
+
+.starmem-viewer .starmem-viewer-expand:hover {
+    color: var(--starmem-fg);
+    border-color: transparent;
+}
+
+@keyframes starmem-ellipsis {
+    0%   { content: ""; }
+    25%  { content: "."; }
+    50%  { content: ".."; }
+    75%  { content: "..."; }
+    100% { content: ""; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .starmem-viewer .starmem-viewer-loading::after {
+        animation: none;
+        content: "…";
+    }
+}
+
+/* -- Working buffer ------------------------------------------------------- */
+
+/* Tab-level container — column flow + breathing room around the header */
+.starmem-viewer .starmem-viewer-working {
     display: flex;
     flex-direction: column;
-    gap: 0.5rem;
-    list-style: none;
-    padding: 0;
-    margin: 0;
+    gap: var(--starmem-space-3);
+}
+
+/* Header reads as a quiet section caption: serif display face, uppercase
+ * meta-tracking, muted color. Same rhythm as the Episodic header. */
+.starmem-viewer .starmem-viewer-working-header {
+    font-family: var(--starmem-font-display);
+    font-size: var(--starmem-fs-meta);
+    letter-spacing: var(--starmem-tracking-meta);
+    color: var(--starmem-fg-muted);
+    text-transform: uppercase;
 }
 
 /* Working buffer is an <ol> and inherits browser default padding-left: 40px
@@ -660,53 +805,6 @@
     font-size: var(--starmem-fs-body);
     line-height: var(--starmem-lh-reading);
     color: var(--starmem-fg);
-}
-
-.starmem-viewer .starmem-viewer-entry {
-    padding: 0.5rem 0.75rem;
-    border: 1px solid var(--starmem-border);
-    border-radius: var(--starmem-radius);
-    background: var(--starmem-bg-elevated);
-}
-
-.starmem-viewer .starmem-viewer-entry-subject {
-    font-weight: 600;
-    color: var(--starmem-accent);
-    margin-right: 0.5rem;
-}
-
-.starmem-viewer .starmem-viewer-entry-meta {
-    color: var(--starmem-fg-muted);
-    font-size: 0.8rem;
-    margin-top: 0.25rem;
-}
-
-.starmem-viewer .starmem-viewer-entry-tag {
-    display: inline-block;
-    padding: 1px 6px;
-    margin: 2px 4px 0 0;
-    border-radius: 10px;
-    background: color-mix(in srgb, var(--starmem-accent) 25%, transparent);
-    color: var(--starmem-fg);
-    font-size: 0.75rem;
-}
-
-/* -- Persona rebuild progress -- */
-
-.starmem-viewer .starmem-viewer-persona-rebuild {
-    margin-top: 0.5rem;
-}
-
-.starmem-viewer .starmem-viewer-persona-rebuild-form {
-    display: flex;
-    gap: 0.5rem;
-    align-items: center;
-}
-
-.starmem-viewer .starmem-viewer-progress-line {
-    font-family: ui-monospace, Menlo, Consolas, monospace;
-    font-size: 0.8rem;
-    color: var(--starmem-fg-muted);
 }
 
 /* -- Episodic tab — Quiet Library treatment ------------------------------ */
@@ -874,23 +972,320 @@
     line-height: 1.6;
 }
 
-/* -- Graph tab -- */
+/* -- Persona tab — grouped subjects, chapter rhythm ---------------------- */
+/* Persona is per-subject sections, one ranked list per subject, with a
+ * Rebuild button on the heading row. Visually mirrors the Episodic grouped
+ * layout (left-rule + serif heading) so the two tabs read as siblings. */
 
-.starmem-viewer .starmem-viewer-graph-canvas {
-    width: 100%;
-    height: 400px;
-    background: var(--starmem-bg-elevated);
-    border: 1px solid var(--starmem-border);
-    border-radius: var(--starmem-radius);
+.starmem-viewer .starmem-viewer-persona {
+    display: flex;
+    flex-direction: column;
+    gap: var(--starmem-space-5);
 }
 
-.starmem-viewer .starmem-viewer-graph-empty {
-    padding: 2rem;
-    text-align: center;
+.starmem-viewer .starmem-viewer-persona-header {
+    font-family: var(--starmem-font-display);
+    font-size: var(--starmem-fs-meta);
+    letter-spacing: var(--starmem-tracking-meta);
     color: var(--starmem-fg-muted);
+    text-transform: uppercase;
 }
 
-/* -- Traces tab -- */
+.starmem-viewer .starmem-viewer-persona-group {
+    border-left: 2px solid var(--starmem-border-faint);
+    padding-left: var(--starmem-space-4);
+}
+
+.starmem-viewer .starmem-viewer-persona-group-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: var(--starmem-space-3);
+    margin: 0 0 var(--starmem-space-3);
+}
+
+.starmem-viewer .starmem-viewer-persona-subject {
+    font-family: var(--starmem-font-display);
+    font-size: var(--starmem-fs-display-2);
+    font-weight: 400;
+    letter-spacing: var(--starmem-tracking-display);
+    color: var(--starmem-fg);
+    margin: 0;
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+/* Rebuild button — quiet by default, accent-bordered when ready. The
+ * generic `.starmem-viewer button` rule above gives it the surface; we
+ * just refine sizing + active state here. */
+.starmem-viewer .starmem-viewer-persona-rebuild {
+    flex: 0 0 auto;
+    padding: var(--starmem-space-1) var(--starmem-space-3);
+    font-size: var(--starmem-fs-meta);
+    letter-spacing: var(--starmem-tracking-meta);
+    text-transform: uppercase;
+}
+
+.starmem-viewer .starmem-viewer-persona-rebuild[disabled] {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.starmem-viewer .starmem-viewer-persona-rebuild[data-active="1"] {
+    border-color: var(--starmem-accent);
+    color: var(--starmem-accent);
+}
+
+/* Standalone form shown when no Persona entries exist yet. */
+.starmem-viewer .starmem-viewer-persona-rebuild-form {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--starmem-space-2);
+    align-items: center;
+    margin-top: var(--starmem-space-3);
+}
+
+.starmem-viewer .starmem-viewer-persona-subject-input {
+    flex: 1 1 220px;
+    min-width: 0;
+}
+
+.starmem-viewer .starmem-viewer-persona-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+}
+
+.starmem-viewer .starmem-viewer-persona-item {
+    list-style: none;
+    padding: var(--starmem-space-3) 0;
+    border-bottom: 1px dotted var(--starmem-border-faint);
+}
+
+.starmem-viewer .starmem-viewer-persona-item:last-child {
+    border-bottom: none;
+}
+
+/* Progress lines — appended live during a Rebuild run. Mono micro-text,
+ * stacks vertically below the list. */
+.starmem-viewer .starmem-viewer-persona-progress {
+    display: flex;
+    flex-direction: column;
+    gap: var(--starmem-space-1);
+    margin-top: var(--starmem-space-2);
+}
+
+.starmem-viewer .starmem-viewer-progress-line {
+    font-family: var(--starmem-font-mono);
+    font-size: var(--starmem-fs-mono);
+    color: var(--starmem-fg-muted);
+    line-height: var(--starmem-lh-tight);
+}
+
+/* -- Graph tab — adjacency listing --------------------------------------- */
+/* The Graph tab renders a textual adjacency list (not a canvas). Each row
+ * is a node with a serif subject + monospace preview, and a nested list
+ * of typed edges underneath. Two-column rhythm: subject left, preview
+ * right (truncated), so the eye scans subjects vertically. */
+
+.starmem-viewer .starmem-viewer-graph {
+    display: flex;
+    flex-direction: column;
+    gap: var(--starmem-space-3);
+}
+
+.starmem-viewer .starmem-viewer-graph-header {
+    font-family: var(--starmem-font-display);
+    font-size: var(--starmem-fs-meta);
+    letter-spacing: var(--starmem-tracking-meta);
+    color: var(--starmem-fg-muted);
+    text-transform: uppercase;
+}
+
+.starmem-viewer .starmem-viewer-graph-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+}
+
+.starmem-viewer .starmem-viewer-graph-item {
+    list-style: none;
+    padding: var(--starmem-space-3) 0;
+    border-bottom: 1px dotted var(--starmem-border-faint);
+}
+
+.starmem-viewer .starmem-viewer-graph-item:last-child {
+    border-bottom: none;
+}
+
+.starmem-viewer .starmem-viewer-graph-node-header {
+    display: flex;
+    align-items: baseline;
+    gap: var(--starmem-space-3);
+    margin-bottom: var(--starmem-space-2);
+}
+
+.starmem-viewer .starmem-viewer-graph-node-header .starmem-viewer-subject {
+    flex: 0 0 auto;
+    font-size: var(--starmem-fs-body);
+    color: var(--starmem-fg);
+}
+
+.starmem-viewer .starmem-viewer-graph-node-preview {
+    flex: 1 1 auto;
+    min-width: 0;
+    color: var(--starmem-fg-muted);
+    font-size: var(--starmem-fs-meta);
+    line-height: var(--starmem-lh-tight);
+    /* Single-line ellipsis — preview is a teaser; full content lives in
+     * Episodic / Persona. */
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.starmem-viewer .starmem-viewer-graph-neighbors {
+    list-style: none;
+    padding: 0;
+    margin: 0 0 0 var(--starmem-space-4);
+    display: flex;
+    flex-direction: column;
+    gap: var(--starmem-space-1);
+    border-left: 1px solid var(--starmem-border-faint);
+    padding-left: var(--starmem-space-3);
+}
+
+.starmem-viewer .starmem-viewer-graph-neighbor {
+    font-family: var(--starmem-font-mono);
+    font-size: var(--starmem-fs-mono);
+    color: var(--starmem-fg-muted);
+    line-height: var(--starmem-lh-tight);
+    /* Long neighbor lines stay on one row with ellipsis — the typed prefix
+     * (e.g. "[mentions] (w=0.42) →") is the scan target, not the tail. */
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.starmem-viewer .starmem-viewer-graph-neighbor-more {
+    font-family: var(--starmem-font-body);
+    font-size: var(--starmem-fs-meta);
+    color: color-mix(in srgb, var(--starmem-fg-muted) 75%, transparent);
+    font-style: italic;
+}
+
+/* -- Traces tab — replayable retrieval log ------------------------------- */
+/* The dead `.starmem-viewer-trace` (singular) rules from a previous
+ * design have been removed; the JS emits `.starmem-viewer-traces-item`
+ * (plural). Each row is a one-line summary with a tier badge + optional
+ * cause badge, plus a collapsible <details> for the raw JSON. */
+
+.starmem-viewer .starmem-viewer-traces {
+    display: flex;
+    flex-direction: column;
+    gap: var(--starmem-space-3);
+}
+
+.starmem-viewer .starmem-viewer-traces-header {
+    font-family: var(--starmem-font-display);
+    font-size: var(--starmem-fs-meta);
+    letter-spacing: var(--starmem-tracking-meta);
+    color: var(--starmem-fg-muted);
+    text-transform: uppercase;
+}
+
+.starmem-viewer .starmem-viewer-traces-controls {
+    display: flex;
+    gap: var(--starmem-space-2);
+    justify-content: flex-end;
+    /* Quiet divider below the controls so they read as a toolbar, not
+     * loose buttons floating above the list. */
+    padding-bottom: var(--starmem-space-2);
+    border-bottom: 1px solid var(--starmem-border-faint);
+}
+
+.starmem-viewer .starmem-viewer-traces-export,
+.starmem-viewer .starmem-viewer-traces-clear {
+    font-size: var(--starmem-fs-meta);
+    letter-spacing: var(--starmem-tracking-meta);
+    text-transform: uppercase;
+    padding: var(--starmem-space-1) var(--starmem-space-3);
+}
+
+/* The Clear button is destructive — accent-on-hover via the generic
+ * button rule above is fine, but we tint the border quieter so it doesn't
+ * compete with Export. */
+.starmem-viewer .starmem-viewer-traces-clear:hover {
+    border-color: var(--starmem-danger);
+    color: var(--starmem-danger);
+}
+
+.starmem-viewer .starmem-viewer-traces-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+}
+
+.starmem-viewer .starmem-viewer-traces-item {
+    list-style: none;
+    padding: var(--starmem-space-3) 0;
+    border-bottom: 1px dotted var(--starmem-border-faint);
+}
+
+.starmem-viewer .starmem-viewer-traces-item:last-child {
+    border-bottom: none;
+}
+
+.starmem-viewer .starmem-viewer-traces-summary {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: var(--starmem-space-2);
+    font-family: var(--starmem-font-mono);
+    font-size: var(--starmem-fs-mono);
+    color: var(--starmem-fg);
+    line-height: var(--starmem-lh-tight);
+}
+
+.starmem-viewer .starmem-viewer-traces-details {
+    margin-top: var(--starmem-space-2);
+}
+
+.starmem-viewer .starmem-viewer-traces-details > summary {
+    font-family: var(--starmem-font-body);
+    font-size: var(--starmem-fs-meta);
+    color: var(--starmem-fg-muted);
+    letter-spacing: var(--starmem-tracking-meta);
+    text-transform: uppercase;
+    padding: var(--starmem-space-1) 0;
+}
+
+.starmem-viewer .starmem-viewer-traces-details > summary:hover {
+    color: var(--starmem-accent);
+}
+
+.starmem-viewer .starmem-viewer-traces-raw {
+    /* Replayable trace JSON — fenced in a quiet panel so it doesn't fight
+     * the surrounding row rhythm. Theme-aware surface, soft border. */
+    margin: var(--starmem-space-2) 0 0;
+    padding: var(--starmem-space-3) var(--starmem-space-4);
+    background: var(--starmem-bg);
+    border: 1px solid var(--starmem-border-faint);
+    border-radius: var(--starmem-radius-2);
+    font-family: var(--starmem-font-mono);
+    font-size: var(--starmem-fs-mono);
+    color: var(--starmem-fg-muted);
+    line-height: var(--starmem-lh-reading);
+    max-height: 320px;
+    overflow: auto;
+    overscroll-behavior: contain;
+}
 
 /* Tier + cause badges — small, monospaced, accent-tinted chips that sit
  * alongside the trace summary text. Theme-aware: pulls from ST CSS vars
@@ -918,41 +1313,30 @@
     font-style: italic;
 }
 
-.starmem-viewer .starmem-viewer-traces-toolbar {
-    display: flex;
-    gap: 0.5rem;
-    justify-content: flex-end;
-    margin-bottom: 0.5rem;
+/* Trace tab uses native <details> for the "raw" toggle (traces.js).
+ * Suppress browser default markers (which render as emoji triangles on
+ * mobile/Catppuccin terminals) and substitute a text-presentation triangle,
+ * matching the settings sections. VS15 (U+FE0E) forces text glyph. */
+.starmem-viewer-traces-details > summary {
+    list-style: none;
+    cursor: pointer;
+    user-select: none;
 }
-
-.starmem-viewer .starmem-viewer-trace {
-    padding: 0.5rem;
-    border: 1px solid var(--starmem-border);
-    border-radius: var(--starmem-radius);
-    margin-bottom: 0.5rem;
-    background: var(--starmem-bg-elevated);
-}
-
-.starmem-viewer .starmem-viewer-trace-summary {
-    display: flex;
-    gap: 0.75rem;
-    font-family: ui-monospace, Menlo, Consolas, monospace;
-    font-size: 0.85rem;
-}
-
-.starmem-viewer .starmem-viewer-trace-raw {
+.starmem-viewer-traces-details > summary::-webkit-details-marker {
     display: none;
-    white-space: pre-wrap;
-    font-family: ui-monospace, Menlo, Consolas, monospace;
-    font-size: 0.75rem;
-    color: var(--starmem-fg-muted);
-    margin-top: 0.5rem;
-    max-height: 200px;
-    overflow-y: auto;
 }
-
-.starmem-viewer .starmem-viewer-trace.starmem-viewer-trace-expanded .starmem-viewer-trace-raw {
-    display: block;
+.starmem-viewer-traces-details > summary::marker {
+    content: "";
+}
+.starmem-viewer-traces-details > summary::before {
+    content: "\25B8\FE0E";
+    display: inline-block;
+    width: 1em;
+    color: var(--starmem-fg-muted);
+    transition: transform 0.1s ease;
+}
+.starmem-viewer-traces-details[open] > summary::before {
+    transform: rotate(90deg);
 }
 
 /* =========================================================================
