@@ -4,6 +4,25 @@ All notable changes to STARmem are documented here. Format:
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 1.1.0; STARmem
 follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.5]—2026-05-01
+
+Patch release. Honest trace labels for swipe / continue / regenerate.
+
+### Added
+
+- **Cause badge in the Memory Viewer Traces tab.** Retrieval traces
+  now carry a `cause` field threaded through from SillyTavern's
+  `runGenerationInterceptors(chat, contextSize, type)` call. The
+  Traces tab renders a small italic chip alongside the tier badge for
+  non-normal causes — `swipe`, `continue`, `regen` (regenerate),
+  `impersonate`, `quiet` — so consecutive same-query traces from
+  rerolls/continuations read as honest "same retrieval, different
+  generation" instead of being misread as the working buffer
+  re-growing. Normal turns get no chip; the common case stays
+  visually quiet. Hover tooltip exposes the raw cause string for
+  power users. Legacy traces (pre-2.0.5) without a `cause` field
+  render without crashing and without spurious badges.
+
 ## [2.0.4]—2026-05-01
 
 Patch release. Stop capturing model chain-of-thought as memory.
