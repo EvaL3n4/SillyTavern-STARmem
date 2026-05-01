@@ -143,10 +143,12 @@ export function injectMemoryPrompt(setExtensionPrompt, body) {
  * @param {ChatMessage[]} chat
  * @param {number} _contextSize
  * @param {(immediately: boolean) => void} _abort
- * @param {string} _type
+ * @param {string} [type] - generation type ('normal', 'swipe', 'continue',
+ *     'regenerate', 'impersonate', 'quiet'). Threaded into the retrieval
+ *     trace so the Memory Viewer can label same-query reruns honestly.
  * @returns {Promise<void>}
  */
-export async function starmemInterceptor(chat, _contextSize, _abort, _type) {
+export async function starmemInterceptor(chat, _contextSize, _abort, type) {
     const { chatId, setExtensionPrompt } = resolveContext();
     try {
         if (!setExtensionPrompt) {
@@ -171,9 +173,10 @@ export async function starmemInterceptor(chat, _contextSize, _abort, _type) {
         // overwritten by our stale snapshot (finding #12). retrieve() is
         // pure; we keep trace persistence for the zero-entry case because
         // the ladder logs a trace even when no entries survive.
+        const cause = typeof type === 'string' && type.length > 0 ? type : 'normal';
         const entries = await withWriteLock(chatId, async () => {
             const state = await loadState(chatId);
-            const result = retrieve(state, query, { now: new Date() });
+            const result = retrieve(state, query, { now: new Date(), cause });
             if (result?.state) {
                 await persistState(chatId, result.state);
             }

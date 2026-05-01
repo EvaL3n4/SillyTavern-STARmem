@@ -156,6 +156,11 @@ function buildTraceItem(trace) {
     badge.className = `${CSS_PREFIX}-tier-badge`;
     badge.textContent = formatTierLabel(tier);
     summary.appendChild(badge);
+    // Cause badge: only render for non-normal generation types so the
+    // "swipe / continue / regenerate" same-query reruns are visually
+    // distinct from a fresh user turn.
+    const causeBadge = buildCauseBadge(trace.cause);
+    if (causeBadge) summary.appendChild(causeBadge);
     const topStr = top !== null ? top.toFixed(2) : 'n/a';
     const text = document.createTextNode(`${ts} · ${cls} · top=${topStr} · "${query}"`);
     summary.appendChild(text);
@@ -182,6 +187,50 @@ function getTopScore(trace) {
     if (!Array.isArray(per) || per.length === 0) return null;
     const top = per[0];
     return typeof top?.score === 'number' ? top.score : null;
+}
+
+/**
+ * Map a generation cause to a short, viewer-friendly label. Returns null for
+ * causes that don't warrant a badge (normal turns and unknown/missing values
+ * — "no badge" reads as "fresh user turn", which is the common case).
+ *
+ * Recognised values come from SillyTavern's Generate(type) call site
+ * (script.js): 'swipe', 'continue', 'regenerate', 'impersonate', 'quiet'.
+ *
+ * @param {string|undefined|null} cause
+ * @returns {'swipe'|'continue'|'regen'|'impersonate'|'quiet'|null}
+ */
+export function formatCauseLabel(cause) {
+    if (typeof cause !== 'string') return null;
+    switch (cause) {
+        case 'swipe':       return 'swipe';
+        case 'continue':    return 'continue';
+        case 'regenerate':  return 'regen';
+        case 'impersonate': return 'impersonate';
+        case 'quiet':       return 'quiet';
+        case 'normal':
+        case '':
+            return null;
+        default:
+            return null;
+    }
+}
+
+/**
+ * Build a `<span>` badge for a non-normal cause, or null when no badge is
+ * warranted. Pure DOM construction; no event wiring.
+ *
+ * @param {string|undefined|null} cause
+ * @returns {HTMLSpanElement|null}
+ */
+function buildCauseBadge(cause) {
+    const label = formatCauseLabel(cause);
+    if (!label) return null;
+    const span = document.createElement('span');
+    span.className = `${CSS_PREFIX}-tier-badge ${CSS_PREFIX}-cause-badge ${CSS_PREFIX}-cause-${label}`;
+    span.textContent = label;
+    span.title = `Generation type: ${cause}`;
+    return span;
 }
 
 function formatTimestamp(iso) {

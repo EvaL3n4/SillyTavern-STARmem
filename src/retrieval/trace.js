@@ -18,6 +18,7 @@ import { TRACE_BUFFER_CAP } from '../core/constants.js';
  *   perTier: Record<string, unknown>,
  *   finalRanking: string[],
  *   scorerId: string,
+ *   cause?: 'normal' | 'swipe' | 'continue' | 'regenerate' | 'impersonate' | 'quiet' | string,
  * }} Trace
  */
 

@@ -94,7 +94,7 @@ function applyAccessEventsToReturned(state, entries) {
  * @param {Entry[]} working
  * @param {Date} now
  * @param {number} k
- * @param {{ perTier2?: { id: string, bm25: number, score: number }[] }} [tracePrefix]
+ * @param {{ perTier2?: { id: string, bm25: number, score: number }[], cause?: string }} [tracePrefix]
  * @returns {RetrieveResult}
  */
 function runFloorBranch(state, queryStr, classifier, scorerId, working, now, k, tracePrefix = {}) {
@@ -116,6 +116,7 @@ function runFloorBranch(state, queryStr, classifier, scorerId, working, now, k, 
         perTier,
         finalRanking: prepended.map(r => r.entry.id),
         scorerId,
+        ...(tracePrefix.cause ? { cause: tracePrefix.cause } : {}),
     });
     const nextState = logTrace(s1, trace);
     return {
@@ -132,11 +133,11 @@ function runFloorBranch(state, queryStr, classifier, scorerId, working, now, k, 
  *
  * @param {State} state
  * @param {string} queryStr
- * @param {{ now?: Date, k?: number }} [opts]
+ * @param {{ now?: Date, k?: number, cause?: string }} [opts]
  * @returns {RetrieveResult}
  */
 export function retrieve(state, queryStr, opts = {}) {
-    const { now = new Date(), k = 5 } = opts;
+    const { now = new Date(), k = 5, cause } = opts;
     const classifier = classify(queryStr);
     const scorerId = getScorerId();
     const working = workingEntriesOf(state);
@@ -155,6 +156,7 @@ export function retrieve(state, queryStr, opts = {}) {
             perTier: { '0': t0.entries.map(e => ({ id: e.id })) },
             finalRanking: prepended.map(r => r.entry.id),
             scorerId,
+            ...(cause ? { cause } : {}),
         });
         const nextState = logTrace(final.state, trace);
         return {
@@ -179,6 +181,7 @@ export function retrieve(state, queryStr, opts = {}) {
             perTier: { '1': t1.entries.map(e => ({ id: e.id })) },
             finalRanking: prepended.map(r => r.entry.id),
             scorerId,
+            ...(cause ? { cause } : {}),
         });
         const nextState = logTrace(final.state, trace);
         return {
@@ -206,6 +209,7 @@ export function retrieve(state, queryStr, opts = {}) {
         if (t3Scored.length === 0) {
             return runFloorBranch(state, queryStr, classifier, scorerId, working, now, k, {
                 perTier2: t2.scored.map(r => ({ id: r.entry.id, bm25: r.bm25, score: r.score })),
+                ...(cause ? { cause } : {}),
             });
         }
 
@@ -226,6 +230,7 @@ export function retrieve(state, queryStr, opts = {}) {
             },
             finalRanking: prepended.map(r => r.entry.id),
             scorerId,
+            ...(cause ? { cause } : {}),
         });
         const nextState = logTrace(final.state, trace);
         return {
@@ -237,5 +242,6 @@ export function retrieve(state, queryStr, opts = {}) {
     }
 
     // --- Floor ---
-    return runFloorBranch(state, queryStr, classifier, scorerId, working, now, k);
+    return runFloorBranch(state, queryStr, classifier, scorerId, working, now, k,
+        cause ? { cause } : {});
 }

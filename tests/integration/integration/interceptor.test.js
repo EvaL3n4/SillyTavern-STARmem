@@ -244,4 +244,27 @@ describe('interceptor — flow', () => {
         const chat = makeChat('anything');
         await expect(starmemInterceptor(chat, 4096, () => {}, 'normal')).resolves.toBeUndefined();
     });
+
+    test("threads ST's generation type into the retrieval trace as `cause`", async () => {
+        // The Memory Viewer's Traces tab uses trace.cause to render a small
+        // "swipe / continue / regen" badge so internal users don't read
+        // consecutive identical traces as the working buffer re-growing.
+        // The interceptor must forward ST's `type` arg verbatim.
+        store.set('chat-A', createEmptyState());
+        const chat = makeChat('anything');
+        await starmemInterceptor(chat, 4096, () => {}, 'swipe');
+        const after = await loadState('chat-A');
+        const traces = after.runtime?.traces ?? [];
+        expect(traces.length).toBeGreaterThan(0);
+        expect(traces[traces.length - 1].cause).toBe('swipe');
+    });
+
+    test("missing/empty type defaults to cause='normal'", async () => {
+        store.set('chat-A', createEmptyState());
+        const chat = makeChat('anything');
+        await starmemInterceptor(chat, 4096, () => {});  // no type arg
+        const after = await loadState('chat-A');
+        const traces = after.runtime?.traces ?? [];
+        expect(traces[traces.length - 1].cause).toBe('normal');
+    });
 });

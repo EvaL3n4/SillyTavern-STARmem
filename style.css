@@ -892,6 +892,32 @@
 
 /* -- Traces tab -- */
 
+/* Tier + cause badges — small, monospaced, accent-tinted chips that sit
+ * alongside the trace summary text. Theme-aware: pulls from ST CSS vars
+ * via the --starmem-* layer so Catppuccin and other custom themes remap
+ * correctly without hardcoded RGB. */
+.starmem-viewer .starmem-tier-badge {
+    display: inline-block;
+    padding: 0 var(--starmem-space-2);
+    border-radius: var(--starmem-radius-1);
+    background: color-mix(in srgb, var(--starmem-accent) 14%, transparent);
+    color: var(--starmem-fg-muted);
+    font-family: var(--starmem-font-mono);
+    font-size: var(--starmem-fs-mono);
+    line-height: 1.6;
+    /* keep tier and cause badges tight in the same row */
+    margin-right: var(--starmem-space-1);
+}
+
+/* Cause badge: a quieter variant — same shape, less tint, so the tier
+ * badge stays the primary signal and the cause sits alongside as
+ * supplementary metadata. Hover tooltip shows the raw cause string. */
+.starmem-viewer .starmem-cause-badge {
+    background: color-mix(in srgb, var(--starmem-fg-muted) 12%, transparent);
+    /* Italic so it visually parses as a modifier, not a status. */
+    font-style: italic;
+}
+
 .starmem-viewer .starmem-viewer-traces-toolbar {
     display: flex;
     gap: 0.5rem;
