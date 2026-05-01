@@ -15,6 +15,7 @@
 
 import { CSS_PREFIX } from '../../constants.js';
 import { recencyAt, maturityBoost } from '../../../lifecycle/index.js';
+import { isMaturity } from '../../../core/schema.js';
 
 const MAX_RENDER = 500;
 
@@ -211,8 +212,15 @@ function buildRow(entry, now, inGroup = false) {
     scores.className = `${CSS_PREFIX}-viewer-scores`;
     const imp = entry.lifecycle?.importance ?? 0;
     const rec = recencyAt(now, entry.lifecycle?.createdAt);
-    const mat = entry.lifecycle?.maturity ?? '(?)';
-    const boost = entry.lifecycle ? maturityBoost(entry.lifecycle.maturity) : 1;
+    // Display-layer tolerance: legacy/corrupt entries may carry a maturity
+    // tier outside the v2 enum (draft|validated|core). The lifecycle module
+    // is allowed to throw on those — we render them with a neutral boost so
+    // a single corrupt entry doesn't crash the tab. Render the raw string
+    // verbatim so the operator can see what's wrong.
+    const matRaw = entry.lifecycle?.maturity;
+    const matValid = isMaturity(matRaw);
+    const mat = matRaw ?? '(?)';
+    const boost = matValid ? maturityBoost(matRaw) : 1;
     scores.textContent = `I=${imp.toFixed(0)}  R=${rec.toFixed(2)}  ${mat}·${boost.toFixed(2)}`;
     header.appendChild(scores);
     li.appendChild(header);
