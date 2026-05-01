@@ -4,6 +4,26 @@ All notable changes to STARmem are documented here. Format:
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 1.1.0; STARmem
 follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.4]—2026-05-01
+
+Patch release. Stop capturing model chain-of-thought as memory.
+
+### Fixed
+
+- **Reasoning/CoT blocks are stripped before working entries are stored.**
+  When SillyTavern's reasoning template (`<think>…</think>` by default,
+  or any custom prefix/suffix configured in user settings) appears
+  inline in an assistant reply, STARmem now asks ST's own
+  `parseReasoningFromString` to remove it before pushing the entry into
+  the working buffer. Previously, the model's chain-of-thought leaked
+  into memory and could surface in retrieval. The fix is
+  template-aware (honours custom CoT markers, not just `<think>`),
+  order-independent (works whether STARmem or ST's reasoning auto-parser
+  wins the `MESSAGE_RECEIVED` listener race), and `auto_parse`-agnostic.
+  When the message is *only* a reasoning block (empty after strip), the
+  entry is skipped entirely. Falls back to the raw `mes` if the parser
+  is missing (older ST builds) or throws.
+
 ## [2.0.3]—2026-04-30
 
 Patch release. Reroll/swipe protection: rejected draft generations no
