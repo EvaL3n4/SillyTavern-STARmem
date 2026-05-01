@@ -106,11 +106,19 @@ export function cosineSimilarity(a, b) {
  * @returns {EmbeddingClient}
  */
 function makeDefaultClient() {
-    const g = /** @type {any} */ (globalThis);
-    const getHeaders = () => {
-        if (typeof g.getRequestHeaders === 'function') return g.getRequestHeaders();
-        // Fallback minimal headers; real ST provides CSRF + auth.
-        return { 'Content-Type': 'application/json' };
+    // Dynamic import: resolved lazily on first fetch so jest (which injects a
+    // synthetic client via `_setEmbeddingClientForTests`) never tries to load
+    // ST's script.js — that path doesn't resolve outside the browser.
+    // From this file (src/consolidation/raptor/embeddings.js) it's 7 levels up
+    // to reach `public/script.js`.
+    /** @type {Promise<{ getRequestHeaders: () => Record<string, string> }> | null} */
+    let stHeadersModule = null;
+    const getHeaders = async () => {
+        if (!stHeadersModule) {
+            stHeadersModule = import('../../../../../../../script.js');
+        }
+        const { getRequestHeaders } = await stHeadersModule;
+        return getRequestHeaders();
     };
     return {
         async createCollection(_collectionId) {
@@ -120,7 +128,7 @@ function makeDefaultClient() {
         async insertChunks(collectionId, items) {
             const response = await fetch('/api/vector/insert', {
                 method: 'POST',
-                headers: getHeaders(),
+                headers: await getHeaders(),
                 body: JSON.stringify({ collectionId, items }),
             });
             if (!response.ok) {
@@ -130,7 +138,7 @@ function makeDefaultClient() {
         async queryKNN(collectionId, text, k) {
             const response = await fetch('/api/vector/query', {
                 method: 'POST',
-                headers: getHeaders(),
+                headers: await getHeaders(),
                 body: JSON.stringify({ collectionId, searchText: text, topK: k }),
             });
             if (!response.ok) {
@@ -150,7 +158,7 @@ function makeDefaultClient() {
         async purgeCollection(collectionId) {
             const response = await fetch('/api/vector/purge', {
                 method: 'POST',
-                headers: getHeaders(),
+                headers: await getHeaders(),
                 body: JSON.stringify({ collectionId }),
             });
             if (!response.ok) {
