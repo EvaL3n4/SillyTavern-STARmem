@@ -82,6 +82,10 @@ STARmem's design draws on published research:
 - **A-MEM**—Xu et al. 2025, [arXiv:2502.12110](https://arxiv.org/abs/2502.12110)—too weak on multi-hop for roleplay
 - **Zep / Graphiti**—Rasmussen et al. 2025, [arXiv:2501.13956](https://arxiv.org/abs/2501.13956)—full KG engine is overkill at chat scale
 
+## Contributions
+
+Thank you to [adrenalvapor](https://github.com/adrenalvapor) for suggesting changes and live testing the SillyTavern implementation!
+
 ## License
 
 Apache License 2.0—see [LICENSE](LICENSE).
