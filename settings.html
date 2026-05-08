@@ -39,6 +39,63 @@
             </details>
 
             <details class="starmem-settings-section">
+                <summary>Injection</summary>
+                <div class="starmem-settings-row">
+                    <label for="starmem-settings-injection-mode">Mode:</label>
+                    <select id="starmem-settings-injection-mode" class="text_pole">
+                        <option value="automatic">Automatic</option>
+                        <option value="macro">Macro</option>
+                        <option value="off">Off</option>
+                    </select>
+                </div>
+                <div class="starmem-settings-row">
+                    <label for="starmem-settings-injection-position">Position:</label>
+                    <select id="starmem-settings-injection-position" class="text_pole">
+                        <option value="1">In-chat</option>
+                        <option value="0">In-prompt</option>
+                    </select>
+                </div>
+                <div class="starmem-settings-row">
+                    <label for="starmem-settings-injection-depth">Depth:</label>
+                    <input type="range" id="starmem-settings-injection-depth" min="0" max="10" step="1" />
+                    <span id="starmem-settings-injection-depth-value" class="starmem-settings-value"></span>
+                </div>
+                <div class="starmem-settings-row">
+                    <label for="starmem-settings-injection-role">Role:</label>
+                    <select id="starmem-settings-injection-role" class="text_pole">
+                        <option value="0">System</option>
+                        <option value="1">User</option>
+                        <option value="2">Assistant</option>
+                    </select>
+                </div>
+                <div class="starmem-settings-hint">
+                    <p>
+                        <strong>Mode</strong> chooses how memories reach the model.
+                        <em>Automatic</em> places them for you using the controls
+                        above. <em>Macro</em> exposes
+                        <code>{{starmem-memories}}</code> for you to drop into
+                        your preset wherever you want—placement controls do
+                        nothing in this mode. <em>Off</em> disables retrieval
+                        entirely.
+                    </p>
+                    <p>
+                        <strong>Position</strong>: <em>In-chat</em> inserts the
+                        memory block among recent messages, <em>Depth</em>
+                        positions from the latest turn (0 = after the last
+                        message). <em>In-prompt</em> inserts before the chat
+                        history, near the system preamble—depth is ignored.
+                    </p>
+                    <p>
+                        <strong>Role</strong>: most providers handle
+                        <em>System</em> well at any position. Some models
+                        (notably GLM) treat mid-conversation system messages
+                        inconsistently—switch to <em>User</em> or
+                        <em>Assistant</em> if memories seem to be ignored.
+                    </p>
+                </div>
+            </details>
+
+            <details class="starmem-settings-section">
                 <summary>Retrieval</summary>
                 <div class="starmem-settings-row">
                     <label for="starmem-settings-scorer">Scorer:</label>

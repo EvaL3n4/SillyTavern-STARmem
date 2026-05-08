@@ -11,6 +11,9 @@
 
 import {
     SETTINGS_KEY, SETTINGS_DEFAULTS, SETTINGS_BOUNDS,
+    INJECTION_MODES,
+    INJECTION_POSITION_IN_CHAT, INJECTION_POSITION_IN_PROMPT,
+    INJECTION_ROLE_SYSTEM, INJECTION_ROLE_USER, INJECTION_ROLE_ASSISTANT,
 } from './constants.js';
 import { setScorer } from '../retrieval/index.js';
 import { createLogger } from '../core/logger.js';
@@ -116,6 +119,32 @@ export function validateSettings(candidate) {
 
     // Boolean.
     out.debugMode = Boolean(out.debugMode);
+
+    // Injection mode — must be one of the known modes.
+    if (!INJECTION_MODES.includes(out.injectionMode)) {
+        out.injectionMode = SETTINGS_DEFAULTS.injectionMode;
+    }
+
+    // Injection position — must be IN_CHAT or IN_PROMPT.
+    const validPositions = [INJECTION_POSITION_IN_CHAT, INJECTION_POSITION_IN_PROMPT];
+    if (!validPositions.includes(out.injectionPosition)) {
+        out.injectionPosition = SETTINGS_DEFAULTS.injectionPosition;
+    }
+
+    // Injection depth — clamp into bounds, only meaningful when position=IN_CHAT
+    // but persisted unconditionally so toggling position keeps the user's
+    // last value.
+    if (typeof out.injectionDepth !== 'number' || !Number.isFinite(out.injectionDepth)) {
+        out.injectionDepth = SETTINGS_DEFAULTS.injectionDepth;
+    }
+    out.injectionDepth = clamp(Math.round(out.injectionDepth),
+        SETTINGS_BOUNDS.injectionDepth.min, SETTINGS_BOUNDS.injectionDepth.max);
+
+    // Injection role — must be SYSTEM, USER, or ASSISTANT.
+    const validRoles = [INJECTION_ROLE_SYSTEM, INJECTION_ROLE_USER, INJECTION_ROLE_ASSISTANT];
+    if (!validRoles.includes(out.injectionRole)) {
+        out.injectionRole = SETTINGS_DEFAULTS.injectionRole;
+    }
 
     // Scorer: must resolve in the retrieval registry, else fall back.
     const scorerId = typeof out.scorerId === 'string' ? out.scorerId : SETTINGS_DEFAULTS.scorerId;

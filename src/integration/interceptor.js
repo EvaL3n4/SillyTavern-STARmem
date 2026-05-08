@@ -39,11 +39,15 @@ import {
     INJECTION_DEPTH,
     INJECTION_POSITION_IN_CHAT,
     INJECTION_ROLE_SYSTEM,
+    INJECTION_MODE_AUTOMATIC,
+    INJECTION_MODE_MACRO,
+    INJECTION_MODE_OFF,
 } from './constants.js';
 import { retrieve } from '../retrieval/index.js';
 import { loadState, persistState } from '../core/state.js';
 import { createLogger } from '../core/logger.js';
 import { withWriteLock } from '../core/lock.js';
+import { setMemoryBody } from './macro.js';
 
 const log = createLogger({ debug: false }).scope('integration:interceptor');
 
@@ -108,13 +112,28 @@ export function extractLastUserQuery(chat) {
  * Compose the body of an injected memory block. Keeps the format simple and
  * LLM-neutral; Phase 9 can A/B test fancier formats later.
  *
+ * The "Retrieved memories:" header signals provenance when STARmem owns
+ * placement (automatic mode—injected as a standalone system block). In macro
+ * mode the user wraps the body in their own prompt, so the header gets in
+ * the way of their phrasing—call with `{ header: false }`.
+ *
+ * Scope tags (`[episodic]`, `[working]`, `[persona]`) are intentionally
+ * omitted: they leak STARmem's internal taxonomy into the prompt without
+ * giving the model anything actionable to do with it. The model sees the
+ * memories as undifferentiated facts; provenance lives in the Memory Viewer
+ * Traces tab for humans.
+ *
  * @param {{ id: string, content: string, scope: string }[]} entries
+ * @param {{ header?: boolean }} [opts]
  * @returns {string}
  */
-export function formatMemoryMessage(entries) {
+export function formatMemoryMessage(entries, opts = {}) {
     if (!Array.isArray(entries) || entries.length === 0) return '';
-    const lines = entries.map(e => `- [${e.scope}] ${e.content}`);
-    return ['[STARmem] Retrieved memories:', ...lines].join('\n');
+    const { header = true } = opts;
+    const lines = entries.map(e => `- ${e.content}`);
+    return header
+        ? ['Retrieved memories:', ...lines].join('\n')
+        : lines.join('\n');
 }
 
 /**
@@ -122,23 +141,68 @@ export function formatMemoryMessage(entries) {
  * so a previous turn's memories don't bleed into the current one when
  * retrieval returns nothing.
  *
+ * Placement params (position/depth/role) default to the legacy IN_CHAT/4/SYSTEM
+ * triple so older callers and existing tests keep their shape. Production
+ * callers pass values resolved from settings (automatic mode).
+ *
  * @param {(key: string, value: string, position: number, depth: number, scan: boolean, role: number) => void} setExtensionPrompt
  * @param {string} body
+ * @param {number} [position] ST extension_prompt_types value
+ * @param {number} [depth]    chat depth (0–10) — only meaningful for IN_CHAT
+ * @param {number} [role]     ST extension_prompt_roles value
  */
-export function injectMemoryPrompt(setExtensionPrompt, body) {
+export function injectMemoryPrompt(
+    setExtensionPrompt,
+    body,
+    position = INJECTION_POSITION_IN_CHAT,
+    depth = INJECTION_DEPTH,
+    role = INJECTION_ROLE_SYSTEM,
+) {
     setExtensionPrompt(
         INJECTION_PROMPT_KEY,
         typeof body === 'string' ? body : '',
-        INJECTION_POSITION_IN_CHAT,
-        INJECTION_DEPTH,
+        position,
+        depth,
         /* scan */ false,
-        INJECTION_ROLE_SYSTEM,
+        role,
     );
 }
 
 /**
+ * Resolve the active injection settings. Returns hardcoded legacy defaults if
+ * the settings module is unavailable (tests that don't set up an ST context,
+ * degraded environments). The defaults match prior behaviour exactly:
+ * automatic / IN_CHAT / depth 4 / SYSTEM.
+ *
+ * Lazy-imported so the static dep graph doesn't pull settings into tests
+ * that mock the interceptor's context but not the settings context.
+ *
+ * @returns {Promise<{ mode: string, position: number, depth: number, role: number }>}
+ */
+async function resolveInjectionSettings() {
+    try {
+        const { getSettings } = await import('./settings.js');
+        const s = getSettings();
+        return {
+            mode: s.injectionMode,
+            position: s.injectionPosition,
+            depth: s.injectionDepth,
+            role: s.injectionRole,
+        };
+    } catch {
+        return {
+            mode: INJECTION_MODE_AUTOMATIC,
+            position: INJECTION_POSITION_IN_CHAT,
+            depth: INJECTION_DEPTH,
+            role: INJECTION_ROLE_SYSTEM,
+        };
+    }
+}
+
+/**
  * Main entry point — invoked by SillyTavern. Reads `chat` for the user query
- * but never mutates it; injection happens via setExtensionPrompt.
+ * but never mutates it; injection happens via setExtensionPrompt and/or the
+ * {{starmem-memories}} macro depending on the active injection mode.
  *
  * @param {ChatMessage[]} chat
  * @param {number} _contextSize
@@ -150,21 +214,32 @@ export function injectMemoryPrompt(setExtensionPrompt, body) {
  */
 export async function starmemInterceptor(chat, _contextSize, _abort, type) {
     const { chatId, setExtensionPrompt } = resolveContext();
+    const cfg = await resolveInjectionSettings();
     try {
         if (!setExtensionPrompt) {
             log.debug('no setExtensionPrompt in context — skipping injection');
             return;
         }
+
+        // Mode 'off': clear both surfaces and skip retrieval entirely.
+        if (cfg.mode === INJECTION_MODE_OFF) {
+            injectMemoryPrompt(setExtensionPrompt, '', cfg.position, cfg.depth, cfg.role);
+            if (chatId) setMemoryBody(chatId, '');
+            log.debug('injection mode=off — cleared and skipped retrieval');
+            return;
+        }
+
         if (!chatId) {
             log.debug('no chatId — clearing injection and skipping retrieval');
-            injectMemoryPrompt(setExtensionPrompt, '');
+            injectMemoryPrompt(setExtensionPrompt, '', cfg.position, cfg.depth, cfg.role);
             return;
         }
 
         const query = extractLastUserQuery(chat);
         if (!query) {
             log.debug('no user query in chat — clearing injection and skipping retrieval');
-            injectMemoryPrompt(setExtensionPrompt, '');
+            injectMemoryPrompt(setExtensionPrompt, '', cfg.position, cfg.depth, cfg.role);
+            setMemoryBody(chatId, '');
             return;
         }
 
@@ -184,17 +259,40 @@ export async function starmemInterceptor(chat, _contextSize, _abort, type) {
         });
 
         const body = formatMemoryMessage(entries);
-        injectMemoryPrompt(setExtensionPrompt, body);
+        const macroBody = formatMemoryMessage(entries, { header: false });
+
+        // Always cache the headerless body—the macro is meant to be wrapped
+        // by the user's own prompt phrasing, so a "Retrieved memories:"
+        // preamble gets in the way. Cheap to maintain in any mode, so
+        // flipping to macro mid-session never shows a stale value.
+        setMemoryBody(chatId, macroBody);
+
+        if (cfg.mode === INJECTION_MODE_MACRO) {
+            // Macro owns placement; clear our setExtensionPrompt slot so the
+            // two surfaces never stack.
+            injectMemoryPrompt(setExtensionPrompt, '', cfg.position, cfg.depth, cfg.role);
+            log.debug(`mode=macro — cached ${entries.length} entries for {{starmem-memories}}`);
+            return;
+        }
+
+        // Automatic mode — register via setExtensionPrompt at configured
+        // position/depth/role. Keep the header here: STARmem owns the block,
+        // so a "system note" preamble grounds the model.
+        injectMemoryPrompt(setExtensionPrompt, body, cfg.position, cfg.depth, cfg.role);
         if (entries.length === 0) {
             log.debug('retrieval returned zero entries — cleared injection slot');
         } else {
-            log.debug(`injected ${entries.length} entries via setExtensionPrompt (depth=${INJECTION_DEPTH})`);
+            log.debug(`injected ${entries.length} entries (pos=${cfg.position} depth=${cfg.depth} role=${cfg.role})`);
         }
     } catch (err) {
         log.warn('interceptor error (swallowed to protect generation):', err);
         // Clear any prior injection so stale memories don't leak into this turn.
         if (setExtensionPrompt) {
-            try { injectMemoryPrompt(setExtensionPrompt, ''); } catch { /* ignore */ }
+            try { injectMemoryPrompt(setExtensionPrompt, '', cfg.position, cfg.depth, cfg.role); }
+            catch { /* ignore */ }
+        }
+        if (chatId) {
+            try { setMemoryBody(chatId, ''); } catch { /* ignore */ }
         }
     }
 }

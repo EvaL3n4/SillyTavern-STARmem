@@ -75,9 +75,9 @@ describe('interceptor — pure helpers', () => {
             { id: '1', content: 'Alice likes coffee', scope: 'persona' },
             { id: '2', content: 'Alice went to Paris', scope: 'episodic' },
         ]);
-        expect(text).toContain('[STARmem] Retrieved memories:');
-        expect(text).toContain('- [persona] Alice likes coffee');
-        expect(text).toContain('- [episodic] Alice went to Paris');
+        expect(text).toContain('Retrieved memories:');
+        expect(text).toContain('- Alice likes coffee');
+        expect(text).toContain('- Alice went to Paris');
     });
 
     test('formatMemoryMessage returns empty string for zero entries', () => {
@@ -163,7 +163,7 @@ describe('interceptor — flow', () => {
         expect(setExtensionPrompt).toHaveBeenCalledTimes(1);
         const [key, value, position, depth, scan, role] = setExtensionPrompt.mock.calls[0];
         expect(key).toBe(INJECTION_PROMPT_KEY);
-        expect(value).toContain('[STARmem] Retrieved memories:');
+        expect(value).toContain('Retrieved memories:');
         expect(value).toContain('alice traveled to paris');
         expect(position).toBe(INJECTION_POSITION_IN_CHAT);
         expect(depth).toBe(INJECTION_DEPTH);

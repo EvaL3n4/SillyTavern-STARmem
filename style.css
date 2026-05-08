@@ -341,6 +341,39 @@
     border-radius: 0 var(--starmem-radius-1) var(--starmem-radius-1) 0;
 }
 
+/* Inline hint copy under a settings group (e.g. Injection mode caveat). */
+.starmem-settings-hint {
+    margin: var(--starmem-space-2) 0 0;
+    color: var(--starmem-fg-muted);
+    font-size: var(--starmem-fs-meta);
+    line-height: 1.45;
+}
+.starmem-settings-hint p {
+    margin: 0 0 var(--starmem-space-2);
+}
+.starmem-settings-hint p:last-child {
+    margin-bottom: 0;
+}
+.starmem-settings-hint strong {
+    color: var(--starmem-fg);
+    font-weight: 600;
+}
+.starmem-settings-hint code {
+    padding: 0 var(--starmem-space-1);
+    border-radius: var(--starmem-radius-1);
+    background: color-mix(in srgb, var(--starmem-fg) 8%, transparent);
+    font-family: var(--starmem-font-mono);
+    font-size: 0.95em;
+}
+
+/* Disabled inputs inside the settings panel: gray, not hidden, so users
+ * see the setting still exists when their current mode disables it. */
+.starmem-settings-panel input:disabled,
+.starmem-settings-panel select:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
 .starmem-settings-actions {
     display: flex;
     gap: var(--starmem-space-2);

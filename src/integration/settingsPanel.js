@@ -16,7 +16,11 @@
  */
 
 import { getSettings, setSettings, resetSettings } from './settings.js';
-import { CSS_PREFIX } from './constants.js';
+import {
+    CSS_PREFIX,
+    INJECTION_MODE_AUTOMATIC,
+    INJECTION_POSITION_IN_CHAT,
+} from './constants.js';
 import { createLogger } from '../core/logger.js';
 
 const log = createLogger({ debug: false }).scope('integration:settingsPanel');
@@ -111,6 +115,22 @@ function fallbackTemplate() {
             <input type="range" id="${CSS_PREFIX}-settings-traces-max" min="16" max="1024" />
             <span id="${CSS_PREFIX}-settings-traces-max-value"></span>
             <input type="checkbox" id="${CSS_PREFIX}-settings-debug-mode" />
+            <select id="${CSS_PREFIX}-settings-injection-mode">
+                <option value="automatic">Automatic</option>
+                <option value="macro">Macro</option>
+                <option value="off">Off</option>
+            </select>
+            <select id="${CSS_PREFIX}-settings-injection-position">
+                <option value="1">In-chat</option>
+                <option value="0">In-prompt</option>
+            </select>
+            <input type="range" id="${CSS_PREFIX}-settings-injection-depth" min="0" max="10" />
+            <span id="${CSS_PREFIX}-settings-injection-depth-value"></span>
+            <select id="${CSS_PREFIX}-settings-injection-role">
+                <option value="0">System</option>
+                <option value="1">User</option>
+                <option value="2">Assistant</option>
+            </select>
             <button id="${CSS_PREFIX}-settings-reset">Reset</button>
             <button id="${CSS_PREFIX}-settings-open-viewer">Viewer</button>
             <div id="${CSS_PREFIX}-settings-warnings"></div>
@@ -236,6 +256,95 @@ function wireInputs(parent, initial) {
         debug.addEventListener('change', () => {
             setSettings({ debugMode: debug.checked });
         });
+    }
+
+    // --- Injection (mode / position / depth / role) ---
+    const modeSel = /** @type {HTMLSelectElement | null} */ (document.getElementById(`${CSS_PREFIX}-settings-injection-mode`));
+    const posSel = /** @type {HTMLSelectElement | null} */ (document.getElementById(`${CSS_PREFIX}-settings-injection-position`));
+    const depthSlider = /** @type {HTMLInputElement | null} */ (document.getElementById(`${CSS_PREFIX}-settings-injection-depth`));
+    const depthLabel = document.getElementById(`${CSS_PREFIX}-settings-injection-depth-value`);
+    const roleSel = /** @type {HTMLSelectElement | null} */ (document.getElementById(`${CSS_PREFIX}-settings-injection-role`));
+
+    if (modeSel) modeSel.value = String(initial.injectionMode);
+    if (posSel) posSel.value = String(initial.injectionPosition);
+    if (depthSlider) {
+        depthSlider.value = String(initial.injectionDepth);
+        if (depthLabel) depthLabel.textContent = String(initial.injectionDepth);
+    }
+    if (roleSel) roleSel.value = String(initial.injectionRole);
+
+    applyInjectionEnableState({
+        mode: initial.injectionMode,
+        position: initial.injectionPosition,
+    });
+
+    if (modeSel) {
+        modeSel.addEventListener('change', () => {
+            const merged = setSettings({ injectionMode: /** @type {any} */ (modeSel.value) });
+            applyInjectionEnableState({
+                mode: merged.injectionMode,
+                position: merged.injectionPosition,
+            });
+        });
+    }
+    if (posSel) {
+        posSel.addEventListener('change', () => {
+            const merged = setSettings({ injectionPosition: Number(posSel.value) });
+            applyInjectionEnableState({
+                mode: merged.injectionMode,
+                position: merged.injectionPosition,
+            });
+        });
+    }
+    if (depthSlider) {
+        depthSlider.addEventListener('input', () => {
+            const v = Number(depthSlider.value);
+            if (depthLabel) depthLabel.textContent = String(v);
+            setSettings({ injectionDepth: v });
+        });
+    }
+    if (roleSel) {
+        roleSel.addEventListener('change', () => {
+            setSettings({ injectionRole: Number(roleSel.value) });
+        });
+    }
+}
+
+/**
+ * Gray out — never hide — placement controls when they aren't applicable.
+ *
+ *   mode != 'automatic' → position / depth / role are inert. The user's
+ *                         preset (macro mode) or nothing at all (off mode)
+ *                         decides placement; our values are still persisted
+ *                         but unused.
+ *   position != IN_CHAT → depth is inert (depth is only meaningful for
+ *                         depth-anchored in-chat injections).
+ *
+ * Hiding would imply the setting is gone; greying signals "still here, not
+ * doing anything right now."
+ *
+ * @param {{ mode: string, position: number }} state
+ */
+export function applyInjectionEnableState(state) {
+    const ids = [
+        `${CSS_PREFIX}-settings-injection-position`,
+        `${CSS_PREFIX}-settings-injection-depth`,
+        `${CSS_PREFIX}-settings-injection-role`,
+    ];
+    const automatic = state.mode === INJECTION_MODE_AUTOMATIC;
+    for (const id of ids) {
+        const el = /** @type {HTMLInputElement | HTMLSelectElement | null} */ (document.getElementById(id));
+        if (!el) continue;
+        const isDepth = id.endsWith('-depth');
+        const inChatGate = isDepth ? state.position === INJECTION_POSITION_IN_CHAT : true;
+        el.disabled = !(automatic && inChatGate);
+    }
+    // Mirror disabled-state on the label/value span next to the depth slider
+    // so it visibly grays alongside the control.
+    const depthLabel = document.getElementById(`${CSS_PREFIX}-settings-injection-depth-value`);
+    if (depthLabel) {
+        const inChat = state.position === INJECTION_POSITION_IN_CHAT;
+        depthLabel.style.opacity = (automatic && inChat) ? '' : '0.5';
     }
 }
 

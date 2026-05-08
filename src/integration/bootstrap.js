@@ -25,6 +25,7 @@ import {
 } from '../consolidation/index.js';
 import { setScorer } from '../retrieval/index.js';
 import { getSettings } from './settings.js';
+import { registerStarmemMacro } from './macro.js';
 import { createLogger } from '../core/logger.js';
 
 const log = createLogger({ debug: false }).scope('integration:bootstrap');
@@ -385,6 +386,12 @@ export function bootstrap() {
     try { setScorer(settings.scorerId); } catch (err) {
         log.warn(`setScorer failed: ${err?.message || err}`);
     }
+
+    // Register the {{starmem-memories}} macro. Idempotent — safe to call on
+    // every bootstrap. Fire-and-forget; the macro lookup is dynamic-imported
+    // and we don't want to block bootstrap on it.
+    registerStarmemMacro().catch(err =>
+        log.warn(`registerStarmemMacro failed: ${err?.message || err}`));
 
     // Seed lastChatId from current context.
     lastChatId = typeof ctx.chatId === 'string' && ctx.chatId.length > 0 ? ctx.chatId : null;

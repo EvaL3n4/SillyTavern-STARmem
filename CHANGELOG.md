@@ -4,6 +4,48 @@ All notable changes to STARmem are documented here. Format:
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 1.1.0; STARmem
 follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Configurable injection mode (`automatic` / `macro` / `off`).** Settings
+  panel exposes a single mode dropdown that controls how STARmem delivers
+  retrieved memories. `automatic` (default) keeps the prior behaviour:
+  STARmem registers the memory body via `setExtensionPrompt` at a
+  configurable position, depth, and role. `macro` makes STARmem compute
+  the body but defer placement to the user's preset via the new
+  `{{starmem-memories}}` global macro—useful for power users who want
+  exact control over where memories land in their prompt. `off` disables
+  retrieval and injection entirely. Modes are mutually exclusive: in
+  `macro` mode the `setExtensionPrompt` slot is explicitly cleared so the
+  two surfaces never stack.
+
+- **Per-injection placement controls (`automatic` mode only).** New
+  Settings → Injection section exposes Position (in-chat / in-prompt),
+  Depth (0–10), and Role (system / user / assistant). Defaults match the
+  prior hardcoded values (in-chat / depth 4 / system). Motivated by GLM
+  and similar models that handle mid-conversation system roles
+  inconsistently. When mode ≠ automatic, the placement controls are
+  visibly grayed out (not hidden) so users see the setting still exists.
+
+- **`{{starmem-memories}}` global macro.** Resolves to the most recent
+  retrieval body for the active chat. Registered with both the new
+  MacroRegistry (current SillyTavern) and the legacy MacrosParser shim
+  for older builds. The macro is a pure read of a per-chat cache that
+  the interceptor populates before each generation—substituting it
+  never triggers retrieval, so it's safe to drop into any preset.
+
+### Changed
+
+- **Memory block format simplified.** The injected block now leads with
+  `Retrieved memories:` (was `[STARmem] Retrieved memories:`) and entries
+  are listed without scope tags (was `- [episodic] Alice went to Paris`,
+  now `- Alice went to Paris`). Scope provenance leaks STARmem's internal
+  taxonomy into the prompt without giving the model anything actionable;
+  it's still visible in the Memory Viewer Traces tab for humans. The
+  macro form (`{{starmem-memories}}`) drops the header entirely so users
+  can wrap it in their own prompt copy.
+
 ## [2.0.5]—2026-05-01
 
 Patch release. Honest trace labels for swipe / continue / regenerate.

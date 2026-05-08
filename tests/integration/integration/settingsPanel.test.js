@@ -173,3 +173,70 @@ describe('settingsPanel — render', () => {
         expect(label?.textContent).toBe('90s');
     });
 });
+
+describe('settingsPanel — injection controls', () => {
+    test('mode dropdown reflects current setting and persists changes', async () => {
+        ctx.extensionSettings[SETTINGS_KEY] = { ...SETTINGS_DEFAULTS, injectionMode: 'automatic' };
+        await renderSettingsPanel(parent, {});
+        const sel = /** @type {HTMLSelectElement} */ (parent.querySelector('#starmem-settings-injection-mode'));
+        expect(sel.value).toBe('automatic');
+        sel.value = 'macro';
+        sel.dispatchEvent(new Event('change'));
+        expect(ctx.extensionSettings[SETTINGS_KEY].injectionMode).toBe('macro');
+    });
+
+    test('depth slider persists changes', async () => {
+        await renderSettingsPanel(parent, {});
+        const slider = /** @type {HTMLInputElement} */ (parent.querySelector('#starmem-settings-injection-depth'));
+        slider.value = '7';
+        slider.dispatchEvent(new Event('input'));
+        expect(ctx.extensionSettings[SETTINGS_KEY].injectionDepth).toBe(7);
+    });
+
+    test('role select persists changes', async () => {
+        await renderSettingsPanel(parent, {});
+        const sel = /** @type {HTMLSelectElement} */ (parent.querySelector('#starmem-settings-injection-role'));
+        sel.value = '1';  // USER
+        sel.dispatchEvent(new Event('change'));
+        expect(ctx.extensionSettings[SETTINGS_KEY].injectionRole).toBe(1);
+    });
+
+    test('placement controls disabled when mode != automatic', async () => {
+        ctx.extensionSettings[SETTINGS_KEY] = { ...SETTINGS_DEFAULTS, injectionMode: 'macro' };
+        await renderSettingsPanel(parent, {});
+        const pos = /** @type {HTMLSelectElement} */ (parent.querySelector('#starmem-settings-injection-position'));
+        const depth = /** @type {HTMLInputElement} */ (parent.querySelector('#starmem-settings-injection-depth'));
+        const role = /** @type {HTMLSelectElement} */ (parent.querySelector('#starmem-settings-injection-role'));
+        expect(pos.disabled).toBe(true);
+        expect(depth.disabled).toBe(true);
+        expect(role.disabled).toBe(true);
+    });
+
+    test('depth disabled when position != IN_CHAT, even in automatic mode', async () => {
+        ctx.extensionSettings[SETTINGS_KEY] = {
+            ...SETTINGS_DEFAULTS,
+            injectionMode: 'automatic',
+            injectionPosition: 0,  // IN_PROMPT
+        };
+        await renderSettingsPanel(parent, {});
+        const pos = /** @type {HTMLSelectElement} */ (parent.querySelector('#starmem-settings-injection-position'));
+        const depth = /** @type {HTMLInputElement} */ (parent.querySelector('#starmem-settings-injection-depth'));
+        const role = /** @type {HTMLSelectElement} */ (parent.querySelector('#starmem-settings-injection-role'));
+        expect(pos.disabled).toBe(false);   // position itself stays editable
+        expect(depth.disabled).toBe(true);  // depth only meaningful for IN_CHAT
+        expect(role.disabled).toBe(false);  // role applies regardless
+    });
+
+    test('toggling mode automatic→macro→automatic re-enables placement', async () => {
+        await renderSettingsPanel(parent, {});
+        const mode = /** @type {HTMLSelectElement} */ (parent.querySelector('#starmem-settings-injection-mode'));
+        const depth = /** @type {HTMLInputElement} */ (parent.querySelector('#starmem-settings-injection-depth'));
+        expect(depth.disabled).toBe(false);
+        mode.value = 'macro';
+        mode.dispatchEvent(new Event('change'));
+        expect(depth.disabled).toBe(true);
+        mode.value = 'automatic';
+        mode.dispatchEvent(new Event('change'));
+        expect(depth.disabled).toBe(false);
+    });
+});
